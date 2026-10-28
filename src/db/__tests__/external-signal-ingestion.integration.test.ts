@@ -91,6 +91,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       CREATE TABLE "OrderIntent" (id serial PRIMARY KEY);
     `);
     await admin.query(await readFile('prisma/migrations/20261028120000_external_signal_shadow_identity_foundation/migration.sql', 'utf8'));
+    await admin.query(await readFile('prisma/migrations/20261028150000_external_signal_identity_integrity_corrections/migration.sql', 'utf8'));
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -209,6 +210,41 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
     }
   });
+  it('returns an intentional HTTP conflict for source-scoped event-ID reuse across bindings', async () => {
+    const externalStrategyKey = `cross-binding-${randomUUID()}`;
+    const other = await createStrategySignalBinding({ signalSourceId: 1, strategyId: 1, externalStrategyKey }, -1, db);
+    expect(other.revisions).toMatchObject([{ revision: 1, status: 'ACTIVE' }]);
+    const app = express();
+    app.post('/api/external-signals/:webhookKey', createExternalSignalIngressController(db));
+    const server = app.listen(0);
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('No HTTP port');
+      const prefix = `cross-binding-event-${randomUUID()}`;
+      const base = { schemaVersion: 2, externalEventId: `${prefix}:event`, externalTradeCycleRef: `${prefix}:cycle`,
+        strategyRevision: 1, event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '15m', signalTime: '2026-10-28T12:06:00Z' };
+      const post = (strategyKey: string) => fetch(`http://127.0.0.1:${address.port}/api/external-signals/${token}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ ...base, externalStrategyKey: strategyKey }),
+      });
+      expect((await post('test')).status).toBe(201);
+      const beforeCycles = await db.externalSignalTradeCycle.count();
+      const beforeSignals = await db.signal.count();
+      const conflict = await post(externalStrategyKey);
+      expect(conflict.status).toBe(400);
+      const response = await conflict.json() as { requestId: string };
+      const delivery = await db.signalDelivery.findFirstOrThrow({ where: { requestId: response.requestId } });
+      expect(delivery).toMatchObject({ status: 'REJECTED', rejectionCode: 'EVENT_KEY_CONFLICT', signalId: null,
+        rejectionDetails: { externalEventId: `${prefix}:event`, reason: 'cross_binding_event_id_reuse' } });
+      expect(await db.externalSignalTradeCycle.count()).toBe(beforeCycles);
+      expect(await db.signal.count()).toBe(beforeSignals);
+      expect(await db.systemEvent.count({ where: { entityType: 'signal_delivery', entityId: String(delivery.id) } })).toBe(1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
 
   it('uses bar identity while treating changed signalTime or metadata as a payload conflict', async () => {
     const bar = '2025-12-31T23:45:00Z';
@@ -263,6 +299,9 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(await db.strategySignalBinding.count({ where: { externalStrategyKey: 'mean-reversion-v2' } })).toBe(1);
   });
   it('uses database uniqueness for 12 concurrent identical retries', async () => {
+    // This exercises the binding FOR UPDATE lock plus unique/retry behavior. It is
+    // not a forced interleaving test; the shadow-identity suite uses two sessions
+    // and pg_stat_activity lock barriers for that proof.
     const results = await Promise.all(Array.from({ length: 12 }, () => ingest('concurrent')));
     expect(results.filter(row => row?.status === 'NORMALIZED')).toHaveLength(1);
     expect(results.filter(row => row?.status === 'DUPLICATE')).toHaveLength(11);
@@ -297,6 +336,8 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(await db.systemEvent.count({ where: { entityType: 'signal_delivery', entityId: { in: conflicts.map(row => String(row!.id)) } } })).toBe(3);
   });
   it('serializes concurrent distinct event IDs into one ENTRY and one durable cycle conflict', async () => {
+    // The binding FOR UPDATE lock serializes these ingestion transactions. The
+    // partial unique index is tested directly with SQL in the identity suite.
     const prefix = `second-entry-${randomUUID()}`;
     const results = await Promise.all([
       ingestV2(`${prefix}:event:1`, `${prefix}:cycle`),

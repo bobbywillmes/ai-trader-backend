@@ -110,6 +110,18 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         ? { signalSourceId_externalEventId: { signalSourceId: source.id, externalEventId: v2Identity.externalEventId } }
         : { signalSourceId_eventFingerprint: { signalSourceId: source.id, eventFingerprint } } });
       if (existing) {
+        if (v2Identity && existing.strategySignalBindingId !== binding.id) {
+          const delivery = await reject(new SignalRejection('EVENT_KEY_CONFLICT', {
+            externalEventId: v2Identity.externalEventId,
+            existingSignalId: existing.id,
+            reason: 'cross_binding_event_id_reuse',
+          }));
+          await createSystemEvent({ type: 'external_signal_event_fingerprint_conflict', entityType: 'signal_delivery',
+            entityId: delivery.id, severity: 'WARNING', payloadJson: {
+              signalSourceId: source.id, existingSignalId: existing.id, deliveryId: delivery.id,
+            } }, tx);
+          return delivery;
+        }
         // Compare both sides through the same projection. Older immutable hashes
         // included storage fields; do not rewrite them or mix hash representations.
         const previousPayload = canonicalSignalPayload(existing, binding.externalStrategyKey);

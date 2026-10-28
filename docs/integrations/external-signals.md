@@ -1,7 +1,9 @@
 # External signal ingestion, authority, routing, and evaluation
 
 External Signals are immutable, account-independent strategy evidence. **They cannot
-trade.** Backend-owned revision authority may permit deterministic subscription routing.
+trade.** Phase 4A.1 rollout generations are database-enforced `SHADOW`; the schema
+contains a future `EXECUTE` vocabulary value but rejects it. Backend-owned revision
+authority may permit deterministic subscription routing.
 ENTRY_LONG and EXIT_LONG now produce bounded evaluation evidence, never risk gates, entry decisions,
 order intents, brokers or position/exit pipelines.
 The existing n8n `/api/signals` trading pipeline remains separate.
@@ -31,9 +33,11 @@ or otherwise obsolete URL, then update **every** external alert using the old UR
 | externalStrategyKey | Stable algorithm identity, independent of account, subscription, risk profile and revision |
 | StrategySignalBinding | Fixed source/key/Strategy mapping; only enabled can be patched |
 | StrategySignalRevision | Backend-assigned deployed version, numbered 1, 2, 3... per binding |
-| eventFingerprint | Backend-generated logical strategy-event identity |
+| externalEventId | Contract-v2 stable event identity, unique within one source |
+| externalTradeCycleRef | Contract-v2 source trade-cycle identity shared by ENTRY and EXIT |
+| eventFingerprint | Backend-generated version-aware logical strategy-event identity |
 | requestId | Backend-generated identity of an individual delivery |
-| schemaVersion | Internal historical contract evidence; always 1 for new Signals |
+| schemaVersion | Contract selection: implicit v1 or explicitly supplied integer 2 |
 | Signal | Recognized canonical strategy event; insert/read only |
 | SignalDelivery | Terminal transport/processing evidence; insert/read only |
 
@@ -49,7 +53,11 @@ AI Trader combines resolved Strategy and Security to find backend-owned account
 assignments only when the accepting revision permits routing. External providers
 never select Conservative/Core/Aggressive variants. This phase has zero trading authority.
 
-## Minimal provider contract
+## Provider contracts
+
+The legacy/v1 contract remains implicit: omit `schemaVersion`, `externalEventId`, and
+`externalTradeCycleRef`. Existing v1 Signals and fingerprints are never backfilled,
+rewritten, or made executable.
 
 ```json
 {
@@ -67,9 +75,32 @@ never select Conservative/Core/Aggressive variants. This phase has zero trading 
 ```
 
 Required: externalStrategyKey, strategyRevision, event, symbol, timeframe, signalTime.
-Optional: barTime and metadata. The strict pre-release contract rejects supplied
-`eventKey` and `schemaVersion` as unknown fields (INVALID_ENVELOPE). There is no
-compatibility mode or v2 route. The backend stores Signal.schemaVersion = 1.
+Optional: barTime and metadata. Supplying `eventKey` remains invalid. An omitted
+version selects v1 and stores `Signal.schemaVersion = 1`.
+
+Contract v2 must be selected explicitly with the integer `schemaVersion: 2` and adds
+both identifiers:
+
+```json
+{
+  "schemaVersion": 2,
+  "externalEventId": "tv-momentum-entry-20261028-001",
+  "externalTradeCycleRef": "tv-momentum-cycle-20261028-001",
+  "externalStrategyKey": "momentum-stock",
+  "strategyRevision": 2,
+  "event": "ENTRY_LONG",
+  "symbol": "AAPL",
+  "timeframe": "15m",
+  "signalTime": "2026-10-28T15:30:00Z",
+  "barTime": "2026-10-28T15:15:00Z"
+}
+```
+
+Both identifiers are exact, case-sensitive ASCII values of 1-128 bytes. Allowed
+characters are letters, digits, `.`, `_`, `:`, `@`, `/`, and `-`, with an alphanumeric
+first character. ENTRY and EXIT for one source cycle reuse the same
+`externalTradeCycleRef` but always have distinct `externalEventId` values. AI Trader,
+not TradingView, resolves accounts and creates account-specific cycle identities.
 
 Revision must be a positive JSON integer, not a string, and match the binding's
 ACTIVE revision. Events are ENTRY_LONG or EXIT_LONG. Symbols resolve to existing
@@ -126,8 +157,8 @@ Malformed/oversized content is represented by an omission marker, not raw text.
 
 ## Fingerprints, retries and conflicts
 
-The backend SHA-256 hashes the repository's deterministic sorted-key canonical JSON
-serialization of:
+For v1, the backend SHA-256 hashes the repository's deterministic sorted-key canonical
+JSON serialization of:
 
 ```text
 signalSourceId
@@ -138,6 +169,17 @@ event
 timeframe
 eventOccurrenceTime = normalized barTime, otherwise normalized signalTime
 ```
+
+V2 fingerprints add `schemaVersion`, `externalEventId`, and
+`externalTradeCycleRef`. Database uniqueness on `(signalSourceId, externalEventId)`
+is authoritative: event IDs are source-scoped, not binding-scoped. A matching event
+ID is a duplicate only when the original binding and canonical payload also match.
+Reuse across bindings is `EVENT_KEY_CONFLICT` with
+`cross_binding_event_id_reuse`. Changed cycle, Security, timestamps, metadata, or
+other canonical content is also an event-ID conflict. Conflict checks precede cycle
+creation, so rejected reuse cannot create an orphan source cycle. A distinct event ID
+cannot create a second ENTRY for an existing source cycle; the domain rejection is
+also protected by a unique partial database index.
 
 Metadata, receivedAt, requestId and raw JSON field ordering do not participate in
 identity. The complete accepted canonical content, including metadata and both event
@@ -164,13 +206,22 @@ events on the same bar cannot be split with arbitrary UUIDs/counters. Intrabar
 sequencing would require a deliberate future contract change.
 
 Database uniqueness on (signalSourceId, eventFingerprint) is the final concurrency
-guard. A unique-constraint race rolls back and retries comparison in a fresh
+guard for v1; source/event-ID and one-ENTRY-per-cycle uniqueness protect v2. A
+unique-constraint race rolls back and retries comparison in a fresh
 transaction. No successful Signal can be committed without normalized Delivery evidence.
 Conflicts emit WARNING `external_signal_event_fingerprint_conflict`; rejection details
 include existingSignalId, eventFingerprint, differing field names and a safe reason.
 They never include source keys or arbitrary rejected values. Normal success creates
 no noisy SystemEvent. Unexpected failures emit `external_signal_processing_failed`.
 Public rejection responses expose only a generic error and requestId.
+
+Source cycles may fan out to account cycles, but all Phase 4A.1 identity and lifecycle
+records remain observational. Frozen route, account, assignment, Subscription, and
+Security identities cannot be rewritten. Later catalog assignment changes do not
+redirect a cycle. Account-cycle writers lock the source-cycle parent first; source
+terminalization uses the same parent serialization point and cannot hide an unresolved
+account. Historical v1/v2 Signals and the existing n8n trading path remain unaffected,
+and no external signal currently creates an OrderIntent, broker request, or position.
 
 ## Revision deployment lifecycle
 

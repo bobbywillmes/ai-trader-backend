@@ -283,20 +283,20 @@ model ExternalSignalExecutionRolloutGeneration {
   generation               Int
   enabled                  Boolean
   authorityMode            ExternalSignalExecutionAuthorityMode
-  supersedesGenerationId   Int?                                 @unique
+  supersedesGenerationId   Int?                                 @unique(map: "ExternalSignalExecutionRolloutGeneration_supersedesGenerationId")
   configurationJson        Json
   configurationFingerprint String
   effectiveAt              DateTime                             @db.Timestamptz(3)
   createdByUserId          Int?
   createdAt                DateTime                             @default(now()) @db.Timestamptz(3)
 
-  supersedes    ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalExecutionRolloutSupersession", fields: [supersedesGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supersedes    ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalExecutionRolloutSupersession", fields: [supersedesGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalExecutionRolloutGeneration_supersedes_fkey")
   supersededBy  ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalExecutionRolloutSupersession")
-  createdBy     User?                                     @relation("ExternalSignalExecutionRolloutCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  createdBy     User?                                     @relation("ExternalSignalExecutionRolloutCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalExecutionRolloutGeneration_creator_fkey")
   accountCycles ExternalSignalTradeCycleAccount[]
 
-  @@unique([direction, generation])
-  @@index([direction, effectiveAt])
+  @@unique([direction, generation], map: "ExternalSignalExecutionRolloutGeneration_direction_generation_k")
+  @@index([direction, effectiveAt], map: "ExternalSignalExecutionRolloutGeneration_direction_effectiveAt_")
   @@index([createdByUserId])
 }
 
@@ -314,16 +314,16 @@ model ExternalSignalTradeCycle {
   createdAt                DateTime                       @default(now()) @db.Timestamptz(3)
   updatedAt                DateTime                       @updatedAt @db.Timestamptz(3)
 
-  binding       StrategySignalBinding  @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  revision      StrategySignalRevision @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
-  security      Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  binding       StrategySignalBinding  @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycle_binding_fkey")
+  revision      StrategySignalRevision @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycle_revision_fkey")
+  security      Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycle_security_fkey")
   signals       Signal[]
   accountCycles ExternalSignalTradeCycleAccount[]
 
-  @@unique([strategySignalBindingId, externalTradeCycleRef])
+  @@unique([strategySignalBindingId, externalTradeCycleRef], map: "ExternalSignalTradeCycle_binding_reference_key")
   @@unique([id, strategySignalBindingId, strategySignalRevisionId, securityId], map: "ExternalSignalTradeCycle_identity_key")
-  @@index([strategySignalRevisionId, strategySignalBindingId, strategyRevision])
-  @@index([securityId, status])
+  @@index([strategySignalRevisionId, strategySignalBindingId, strategyRevision], map: "ExternalSignalTradeCycle_revision_idx")
+  @@index([securityId, status], map: "ExternalSignalTradeCycle_security_status_idx")
   @@index([status, updatedAt])
 }
 
@@ -349,21 +349,21 @@ model ExternalSignalTradeCycleAccount {
   createdAt                    DateTime                         @default(now()) @db.Timestamptz(3)
   updatedAt                    DateTime                         @updatedAt @db.Timestamptz(3)
 
-  tradeCycle              ExternalSignalTradeCycle                 @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  entryRoute              SignalRoute                              @relation(fields: [entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], references: [id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], onDelete: Restrict, onUpdate: Restrict)
-  tradingAccount          TradingAccount                           @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  accountSubscription     TradingAccountSubscription               @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  subscription            Subscription                             @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  security                Security                                 @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  entryRolloutGeneration  ExternalSignalExecutionRolloutGeneration? @relation(fields: [entryRolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  entryOrderIntent        OrderIntent?                             @relation(fields: [entryOrderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  trackedPosition         TrackedPosition?                         @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradeCycle              ExternalSignalTradeCycle                 @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_cycle_fkey")
+  entryRoute              SignalRoute                              @relation(fields: [entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], references: [id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_route_fkey")
+  tradingAccount          TradingAccount                           @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_account_fkey")
+  accountSubscription     TradingAccountSubscription               @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_assignment_fkey")
+  subscription            Subscription                             @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_subscription_fkey")
+  security                Security                                 @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_security_fkey")
+  entryRolloutGeneration  ExternalSignalExecutionRolloutGeneration? @relation(fields: [entryRolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_rollout_fkey")
+  entryOrderIntent        OrderIntent?                             @relation(fields: [entryOrderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_order_intent_fkey")
+  trackedPosition         TrackedPosition?                         @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_position_fkey")
 
-  @@unique([externalSignalTradeCycleId, tradingAccountId])
+  @@unique([externalSignalTradeCycleId, tradingAccountId], map: "ExternalSignalTradeCycleAccount_cycle_account_key")
   @@unique([entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], map: "ExternalSignalTradeCycleAccount_route_identity_key")
-  @@index([tradingAccountSubscriptionId, status])
-  @@index([subscriptionId, status])
-  @@index([securityId, status])
+  @@index([tradingAccountSubscriptionId, status], map: "ExternalSignalTradeCycleAccount_assignment_status_idx")
+  @@index([subscriptionId, status], map: "ExternalSignalTradeCycleAccount_subscription_status_idx")
+  @@index([securityId, status], map: "ExternalSignalTradeCycleAccount_security_status_idx")
   @@index([status, updatedAt])
 }
 

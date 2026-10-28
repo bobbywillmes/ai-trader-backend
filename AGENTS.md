@@ -370,6 +370,18 @@ configuration; binding source/key/Strategy identity is fixed. Do not add normal
 application update/delete paths for Signal or SignalDelivery. Keep URL credentials
 out of logs and persisted evidence. See `docs/integrations/external-signals.md`.
 
+Phase 4A.1 adds an explicit v2 ingress contract while preserving implicit v1 and all
+historical identities. V2 requires exact 1-128 byte ASCII `externalEventId` and
+`externalTradeCycleRef`; event IDs are unique per source, including across bindings.
+A duplicate must match the original binding and canonical payload. Cross-binding or
+changed-content reuse is a durable conflict checked before source-cycle creation.
+One source cycle permits at most one ENTRY Signal, protected by a partial unique index.
+Source and account cycle identities are frozen evidence. Account-cycle writers lock
+the source-cycle parent before the account cycle so terminalization cannot hide an
+unresolved account; later assignment catalog changes never redirect the frozen cycle.
+All Phase 4A.1 rollout generations are database-enforced `SHADOW`, and none of these
+models authorizes OrderIntent, position, exit, or broker mutation.
+
 Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
 `SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
 Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are

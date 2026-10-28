@@ -92,6 +92,26 @@ describe('external signal ingestion evidence boundary', () => {
     expect(conflict?.rejectionDetails).toMatchObject({ externalEventId: 'Case-Sensitive:1', reason: 'same_external_event_id_different_canonical_payload' });
     expect(signals).toHaveLength(1);
   });
+  it('rejects identical v2 event content reused by a different binding before cycle access', async () => {
+    const input = { ...envelope, schemaVersion: 2, externalEventId: 'shared:event', externalTradeCycleRef: 'shared:cycle' };
+    await ingest(input);
+    mocks.strategySignalBinding.findUnique.mockImplementation(async ({ where }) =>
+      where.signalSourceId_externalStrategyKey.externalStrategyKey === 'other_strategy'
+        ? { ...binding, id: 22, externalStrategyKey: 'other_strategy' }
+        : binding);
+    mocks.strategySignalRevision.findFirst.mockImplementation(async ({ where }) =>
+      ({ id: where.strategySignalBindingId === 22 ? 77 : 7, revision: 1, status: 'ACTIVE' }));
+    mocks.externalSignalTradeCycle.findUnique.mockClear();
+    mocks.externalSignalTradeCycle.create.mockClear();
+    const result = await ingest({ ...input, externalStrategyKey: 'other_strategy' });
+    expect(result).toMatchObject({ status: 'REJECTED', rejectionCode: 'EVENT_KEY_CONFLICT', rejectionDetails: {
+      externalEventId: 'shared:event', existingSignalId: signals[0]!.id, reason: 'cross_binding_event_id_reuse',
+    } });
+    expect(signals).toHaveLength(1); expect(cycles).toHaveLength(1);
+    expect(mocks.externalSignalTradeCycle.findUnique).not.toHaveBeenCalled();
+    expect(mocks.externalSignalTradeCycle.create).not.toHaveBeenCalled();
+    expect(mocks.systemEvent.create).toHaveBeenCalledOnce();
+  });
   it.each([
     ['cycle reference', { externalTradeCycleRef: 'cycle:orphan' }],
     ['security', { symbol: 'SPY' }],
