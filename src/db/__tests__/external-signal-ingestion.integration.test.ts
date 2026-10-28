@@ -97,6 +97,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     await admin.query(await readFile('prisma/migrations/20261028150000_external_signal_identity_integrity_corrections/migration.sql', 'utf8'));
     await admin.query(await readFile('prisma/migrations/20261028200000_external_signal_durable_correlation/migration.sql', 'utf8'));
     await admin.query(await readFile('prisma/migrations/20261028230000_external_signal_correlation_audit_corrections/migration.sql', 'utf8'));
+    await admin.query(await readFile('prisma/migrations/20261028233000_external_signal_decision_route_consistency/migration.sql', 'utf8'));
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -615,6 +616,17 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(await requeueFailedExternalSignalCorrelationWork({workId:completedWork.id,actorUserId:1,db})).toMatchObject({status:'PENDING'});
     expect(await db.systemEvent.count({where:{type:'external_signal_correlation_requeued',entityId:String(completedWork.id)}})).toBe(1);
     await admin.query(`UPDATE "TradingAccount" SET environment='PAPER' WHERE id=2`);
+    const hostileCycleRef=`hostile-route:${randomUUID()}`;
+    const hostileBody=Buffer.from(JSON.stringify({schemaVersion:2,externalEventId:`entry:${randomUUID()}`,externalTradeCycleRef:hostileCycleRef,
+      externalStrategyKey:binding.externalStrategyKey,strategyRevision:revision.revision,event:'ENTRY_LONG',symbol:'QQQ',timeframe:'15m',signalTime:new Date().toISOString()}));
+    const hostileDelivery=await ingestExternalSignal(secondSource,token,{requestId:randomUUID(),receivedAt:new Date(),contentType:'application/json',bodySizeBytes:hostileBody.length,
+      rawPayloadHash:createHash('sha256').update(hostileBody).digest('hex'),body:hostileBody,tooLarge:false,validContentType:true},db);
+    await processExternalSignalCorrelationWork({db,workerId:'hostile-route-fixture',limit:10});
+    const hostileCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:hostileCycleRef}});
+    const hostileAccounts=await db.externalSignalTradeCycleAccount.findMany({where:{externalSignalTradeCycleId:hostileCycle.id},orderBy:{id:'asc'}});
+    expect(hostileAccounts).toHaveLength(2);
+    await expect(admin.query(`INSERT INTO "ExternalSignalCorrelationDecision" ("externalSignalTradeCycleId","accountCycleId","signalRouteId","signalId","decisionType","authorityMode","rolloutGenerationId","reasonCode","evidenceJson") VALUES ($1,$2,$3,$4,'CYCLE_BLOCKED','SHADOW',$5,'HOSTILE_CROSS_WIRE','{}')`,
+      [hostileCycle.id,hostileAccounts[0]!.id,hostileAccounts[1]!.entrySignalRouteId,hostileDelivery!.signalId,rolloutG2.id])).rejects.toThrow(/account\/route mismatch/);
   });
 
   it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {

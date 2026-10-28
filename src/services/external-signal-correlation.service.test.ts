@@ -3,7 +3,9 @@ import { classifyExternalSignalCorrelationError } from './external-signal-correl
 
 describe('external signal correlation retry classification', () => {
   it.each(['40001', '40P01'])('recognizes adapter SQLSTATE %s nested in P2010 metadata', sqlState => {
-    expect(classifyExternalSignalCorrelationError({ code: 'P2010', meta: { database_error: sqlState } }))
+    expect(classifyExternalSignalCorrelationError({ code: 'P2010', meta: {
+      driverAdapterError: { cause: { originalCode: sqlState } },
+    } }))
       .toEqual({ retryable: true, code: `SQLSTATE_${sqlState}` });
   });
   it('sanitizes arbitrary exception messages', () => {

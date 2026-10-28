@@ -36,7 +36,23 @@ async function correlate(tx:Prisma.TransactionClient,signalId:number){
  const accountCount=await tx.externalSignalTradeCycleAccount.count({where:{externalSignalTradeCycleId:cycle.id}});if(pendingExit&&accountCount>0)await tx.externalSignalTradeCycle.update({where:{id:cycle.id},data:{status:'TERMINAL_NO_EXPOSURE',terminalAt:new Date(),terminalReasonCode:'ENTRY_PREEMPTED_BY_ACCEPTED_EXIT'}});else if(cycle.status==='ENTRY_RECEIVED')await tx.externalSignalTradeCycle.update({where:{id:cycle.id},data:{status:'ROUTED'}});
 }
 
-function findSqlState(error:unknown){const seen=new Set<unknown>();let value:unknown=error;for(let depth=0;value&&typeof value==='object'&&depth<8&&!seen.has(value);depth+=1){seen.add(value);const row=value as Record<string,unknown>;const meta=row.meta as Record<string,unknown>|undefined;for(const candidate of [row.sqlState,row.sqlstate,row.database_error,row.code,meta?.code,meta?.sqlState,meta?.database_error])if(candidate==='40001'||candidate==='40P01')return candidate;value=row.cause??row.error??meta?.cause;}return null;}
+function findSqlState(error: unknown) {
+  const pending: unknown[] = [error];
+  const seen = new Set<unknown>();
+  for (let visited = 0; pending.length > 0 && visited < 32; visited += 1) {
+    const value = pending.shift();
+    if (!value || typeof value !== 'object' || seen.has(value)) continue;
+    seen.add(value);
+    const row = value as Record<string, unknown>;
+    for (const candidate of [row.sqlState, row.sqlstate, row.database_error, row.originalCode, row.code]) {
+      if (candidate === '40001' || candidate === '40P01') return candidate;
+    }
+    for (const child of [row.meta, row.driverAdapterError, row.cause, row.error]) {
+      if (child && typeof child === 'object') pending.push(child);
+    }
+  }
+  return null;
+}
 export function classifyExternalSignalCorrelationError(error:unknown){const state=findSqlState(error);if(state)return{retryable:true,code:`SQLSTATE_${state}`};if(error instanceof Prisma.PrismaClientKnownRequestError&&['P2034','P2028'].includes(error.code))return{retryable:true,code:error.code};if(error instanceof Error&&['ELIGIBILITY_CONTINUATION_RETRY','CORRELATION_LEASE_FENCE_FAILED'].includes(error.message))return{retryable:true,code:error.message};return{retryable:false,code:error instanceof Error&&/^[A-Z0-9_]{3,80}$/.test(error.message)?error.message:'UNCLASSIFIED_CORRELATION_FAILURE'};}
 async function complete(db:Db,claim:Claim,workerId:string){await db.$transaction(async tx=>{await fence(tx,claim,workerId);const result=await tx.externalSignalCorrelationWork.updateMany({where:{id:claim.id,status:'CLAIMED',leaseOwner:workerId},data:{status:'COMPLETED',leaseOwner:null,leaseExpiresAt:null,completedAt:new Date(),lastErrorCode:null}});if(result.count!==1)throw new Error('CORRELATION_LEASE_FENCE_FAILED');});}
 
