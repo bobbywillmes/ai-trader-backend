@@ -60,7 +60,7 @@ export const externalSignalListSchema = z.object({
 
 export type ExternalSignalListFilters = z.infer<typeof externalSignalListSchema>;
 
-export const externalSignalEnvelopeSchema = z.object({
+export const externalSignalEnvelopeV1Schema = z.object({
   externalStrategyKey: identity,
   strategyRevision: z.number().int().positive().max(2147483647),
   event: z.enum(SignalEvent),
@@ -72,3 +72,22 @@ export const externalSignalEnvelopeSchema = z.object({
     .refine(value => value === undefined || Buffer.byteLength(JSON.stringify(value)) <= 4096,
       'Metadata exceeds 4096 bytes.'),
 }).strict();
+
+// Contract-v2 identifiers are exact, case-sensitive ASCII. Do not trim, case-fold,
+// normalize Unicode, or otherwise change their bytes before persistence/comparison.
+export const externalSignalV2IdentifierSchema = z.string().min(1).max(128)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:@\/-]{0,127}$/,
+    'Use 1-128 exact ASCII bytes: letters, digits, dot, underscore, colon, at, slash, or hyphen.');
+
+export const externalSignalEnvelopeV2Schema = externalSignalEnvelopeV1Schema.extend({
+  schemaVersion: z.literal(2),
+  externalEventId: externalSignalV2IdentifierSchema,
+  externalTradeCycleRef: externalSignalV2IdentifierSchema,
+}).strict();
+
+// V1 deliberately remains the original implicit contract. V2 must be selected
+// explicitly; the server never infers it from new fields.
+export const externalSignalEnvelopeSchema = z.union([
+  externalSignalEnvelopeV2Schema,
+  externalSignalEnvelopeV1Schema,
+]);

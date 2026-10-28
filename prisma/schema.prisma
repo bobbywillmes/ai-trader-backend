@@ -87,6 +87,45 @@ enum SignalRoutingStatus {
   COMPLETED
 }
 
+enum ExternalSignalExecutionDirection {
+  ENTRY
+  EXIT
+}
+
+enum ExternalSignalExecutionAuthorityMode {
+  SHADOW
+  EXECUTE
+}
+
+enum ExternalSignalTradeCycleStatus {
+  AWAITING_ENTRY
+  ENTRY_RECEIVED
+  ROUTED
+  ACTIVE
+  TERMINAL_NO_EXPOSURE
+  TERMINAL_CLOSED
+  CONFLICT
+}
+
+enum ExternalSignalAccountCycleStatus {
+  ENTRY_ROUTE_PENDING
+  ENTRY_ADMISSION_PENDING
+  ENTRY_SHADOW_ALLOWED
+  ENTRY_SUPPRESSED_BY_EXIT
+  EXIT_PENDING
+  BLOCKED
+  TERMINAL_NO_EXPOSURE
+  TERMINAL_CLOSED
+}
+
+enum ExternalSignalNoExposureProof {
+  ENTRY_SUPPRESSED_BEFORE_ADMISSION
+  ENTRY_REJECTED_WITHOUT_INTENT
+  INTENT_DEFINITELY_NOT_SENT_AND_CLAIM_RELEASED
+  BROKER_REJECTED_SETTLED_AND_VERIFIED_ABSENT
+  ENTRY_CANCELED_BEFORE_FILL_AND_VERIFIED_ABSENT
+}
+
 // Identity and note are immutable; authority is mutable only while PREPARED.
 model StrategySignalRevision {
   id                      Int                          @id @default(autoincrement())
@@ -101,6 +140,7 @@ model StrategySignalRevision {
 
   binding StrategySignalBinding @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   signals Signal[]
+  externalSignalTradeCycles ExternalSignalTradeCycle[]
 
   @@unique([strategySignalBindingId, revision])
   @@unique([id, strategySignalBindingId, revision])
@@ -119,6 +159,7 @@ model StrategySignalBinding {
   strategy     Strategy             @relation(fields: [strategyId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   signals      Signal[]
   revisions    StrategySignalRevision[]
+  externalSignalTradeCycles ExternalSignalTradeCycle[]
 
   @@unique([signalSourceId, externalStrategyKey])
   @@index([strategyId])
@@ -160,11 +201,14 @@ model Signal {
   securityId              Int
   schemaVersion           Int
   externalEventKey        String?
+  externalEventId         String?
+  externalTradeCycleRef   String?
   eventFingerprint        String?
   // Pre-migration label values remain untouched; new evidence uses numeric revisions.
   legacyStrategyRevision  String?
   strategyRevision        Int?
   strategySignalRevisionId Int?
+  externalSignalTradeCycleId Int?
   event                   SignalEvent
   symbol                  String
   timeframe               String
@@ -181,11 +225,14 @@ model Signal {
   deliveries            SignalDelivery[]
   routingRun            SignalRoutingRun?
   strategySignalRevision StrategySignalRevision? @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
+  externalSignalTradeCycle ExternalSignalTradeCycle? @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 
   @@unique([signalSourceId, externalEventKey])
+  @@unique([signalSourceId, externalEventId])
   @@unique([signalSourceId, eventFingerprint])
   @@index([strategySignalBindingId])
   @@index([strategySignalRevisionId, strategySignalBindingId, strategyRevision])
+  @@index([externalSignalTradeCycleId, event])
   @@index([strategyId, signalTime])
   @@index([securityId, signalTime])
   @@index([event, signalTime])
@@ -222,9 +269,102 @@ model SignalRoute {
   createdAt                   DateTime @default(now())
   routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  externalSignalAccountCycle  ExternalSignalTradeCycleAccount?
 
   @@unique([signalRoutingRunId, tradingAccountId])
+  @@unique([id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], map: "SignalRoute_account_cycle_identity_key")
   @@index([tradingAccountSubscriptionId])
+}
+
+// Append-only deployment-owned configuration. Phase 4A.1 database constraints permit SHADOW only.
+model ExternalSignalExecutionRolloutGeneration {
+  id                       Int                                  @id @default(autoincrement())
+  direction                ExternalSignalExecutionDirection
+  generation               Int
+  enabled                  Boolean
+  authorityMode            ExternalSignalExecutionAuthorityMode
+  supersedesGenerationId   Int?                                 @unique
+  configurationJson        Json
+  configurationFingerprint String
+  effectiveAt              DateTime                             @db.Timestamptz(3)
+  createdByUserId          Int?
+  createdAt                DateTime                             @default(now()) @db.Timestamptz(3)
+
+  supersedes    ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalExecutionRolloutSupersession", fields: [supersedesGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  supersededBy  ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalExecutionRolloutSupersession")
+  createdBy     User?                                     @relation("ExternalSignalExecutionRolloutCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountCycles ExternalSignalTradeCycleAccount[]
+
+  @@unique([direction, generation])
+  @@index([direction, effectiveAt])
+  @@index([createdByUserId])
+}
+
+// Source-level TradingView identity. One cycle can fan out into independent account lifecycles.
+model ExternalSignalTradeCycle {
+  id                       Int                            @id @default(autoincrement())
+  strategySignalBindingId  Int
+  strategySignalRevisionId Int
+  strategyRevision         Int
+  securityId               Int
+  externalTradeCycleRef    String
+  status                   ExternalSignalTradeCycleStatus
+  terminalAt               DateTime?                      @db.Timestamptz(3)
+  terminalReasonCode       String?
+  createdAt                DateTime                       @default(now()) @db.Timestamptz(3)
+  updatedAt                DateTime                       @updatedAt @db.Timestamptz(3)
+
+  binding       StrategySignalBinding  @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  revision      StrategySignalRevision @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
+  security      Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signals       Signal[]
+  accountCycles ExternalSignalTradeCycleAccount[]
+
+  @@unique([strategySignalBindingId, externalTradeCycleRef])
+  @@unique([id, strategySignalBindingId, strategySignalRevisionId, securityId], map: "ExternalSignalTradeCycle_identity_key")
+  @@index([strategySignalRevisionId, strategySignalBindingId, strategyRevision])
+  @@index([securityId, status])
+  @@index([status, updatedAt])
+}
+
+// Account-specific projection of one source cycle. Trading links remain null throughout Phase 4A.1.
+model ExternalSignalTradeCycleAccount {
+  id                           Int                              @id @default(autoincrement())
+  externalSignalTradeCycleId   Int
+  entrySignalRouteId           Int                              @unique
+  tradingAccountId             Int
+  tradingAccountSubscriptionId Int
+  subscriptionId               Int
+  securityId                   Int
+  entryRolloutGenerationId     Int?
+  status                       ExternalSignalAccountCycleStatus
+  entryReservationKey          String?                          @unique
+  entryReservationCreatedAt    DateTime?                        @db.Timestamptz(3)
+  entryOrderIntentId           Int?                             @unique
+  trackedPositionId            Int?                             @unique
+  pendingExitAcceptedAt        DateTime?                        @db.Timestamptz(3)
+  terminalAt                   DateTime?                        @db.Timestamptz(3)
+  terminalReasonCode           String?
+  noExposureProof              ExternalSignalNoExposureProof?
+  createdAt                    DateTime                         @default(now()) @db.Timestamptz(3)
+  updatedAt                    DateTime                         @updatedAt @db.Timestamptz(3)
+
+  tradeCycle              ExternalSignalTradeCycle                 @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entryRoute              SignalRoute                              @relation(fields: [entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], references: [id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], onDelete: Restrict, onUpdate: Restrict)
+  tradingAccount          TradingAccount                           @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription     TradingAccountSubscription               @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  subscription            Subscription                             @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security                Security                                 @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entryRolloutGeneration  ExternalSignalExecutionRolloutGeneration? @relation(fields: [entryRolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entryOrderIntent        OrderIntent?                             @relation(fields: [entryOrderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  trackedPosition         TrackedPosition?                         @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([externalSignalTradeCycleId, tradingAccountId])
+  @@unique([entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], map: "ExternalSignalTradeCycleAccount_route_identity_key")
+  @@index([tradingAccountSubscriptionId, status])
+  @@index([subscriptionId, status])
+  @@index([securityId, status])
+  @@index([status, updatedAt])
 }
 
 enum ExitManagementMode {
@@ -388,6 +528,7 @@ model User {
   enforcementRolloutChanges MarketPolicyEnforcementRuntimeRollout[] @relation("MarketPolicyEnforcementRolloutChangedBy")
   enforcementRolloutEvents MarketPolicyEnforcementRuntimeRolloutEvent[] @relation("MarketPolicyEnforcementRolloutEventActor")
   positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision[] @relation("PositionLifecycleProvenanceDecisionActor")
+  externalSignalExecutionRolloutGenerations ExternalSignalExecutionRolloutGeneration[] @relation("ExternalSignalExecutionRolloutCreator")
 }
 
 model UserSetupToken {
@@ -561,6 +702,7 @@ model TradingAccount {
   lifecycleRepairCases      LifecycleRepairCase[]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration[]
   marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount[]
   marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt[]
   marketPolicyBrokerDispatchDecisions      MarketPolicyBrokerDispatchDecision[]
   marketPolicyBrokerUnenforcedDispatches   MarketPolicyBrokerUnenforcedDispatch[]
@@ -1065,6 +1207,7 @@ model TradingAccountSubscription {
   routingStrategyId     Int @default(0)
   routingSecurityId     Int @default(0)
   signalRoutes          SignalRoute[]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount[]
 
   allocationId          Int?
   allocation            TradingAccountAllocation? @relation("TradingAccountAllocationSubscriptions", fields: [allocationId, tradingAccountId], references: [id, tradingAccountId], onDelete: Restrict, onUpdate: Restrict)
@@ -1277,6 +1420,8 @@ model Security {
 
   subscriptions          Subscription[]
   trackedPositions       TrackedPosition[]
+  externalSignalTradeCycles ExternalSignalTradeCycle[]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount[]
   brokerOrders           BrokerOrder[]
   entryDecisions         EntryDecision[]
   momentumUniverseMember MomentumUniverseMember?
@@ -1376,6 +1521,7 @@ model OrderIntent {
   marketPolicyBrokerDispatchDecisions     MarketPolicyBrokerDispatchDecision[]
   marketPolicyBrokerDispatchConsumption   MarketPolicyBrokerDispatchConsumption?
   marketPolicyBrokerUnenforcedDispatch    MarketPolicyBrokerUnenforcedDispatch?
+  externalSignalTradeCycleAccount         ExternalSignalTradeCycleAccount?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -2622,6 +2768,7 @@ model TrackedPosition {
   entryDecision    EntryDecision?
   entryExposureClaim EntryExposureClaim?
   lifecycleProvenanceDecisions PositionLifecycleProvenanceDecision[]
+  externalSignalTradeCycleAccount ExternalSignalTradeCycleAccount?
 
   exitState PositionExitState?
 
@@ -3915,6 +4062,7 @@ model Subscription {
   liveEntryArmings        LiveEntryArming[]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun[]
   marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization[]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount[]
 
   @@index([symbol])
   @@unique([id, strategyId, securityId])

@@ -63,6 +63,12 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
 
     try {
       const normalized = normalizeSignalEnvelope(payload, evidence.receivedAt);
+      // The parser selects v2 explicitly. Keep the exact identifiers in a
+      // separately narrowed value because the legacy/v2 Zod union shares the
+      // remaining envelope shape.
+      const v2Identity = normalized.schemaVersion === 2
+        ? normalized as typeof normalized & { externalEventId: string; externalTradeCycleRef: string }
+        : null;
       const binding = await tx.strategySignalBinding.findUnique({ where: {
         signalSourceId_externalStrategyKey: { signalSourceId: source.id, externalStrategyKey: normalized.externalStrategyKey },
       } });
@@ -75,25 +81,56 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
       });
       const security = await tx.security.findUnique({ where: { symbol: normalized.symbol }, select: { id: true, symbol: true } });
       if (!security) throw new SignalRejection('UNKNOWN_SYMBOL', { fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
-      const eventFingerprint = hashCanonicalPayload({
+      let tradeCycle: { id: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; securityId: number } | null = null;
+      if (v2Identity) {
+        tradeCycle = await tx.externalSignalTradeCycle.findUnique({ where: {
+          strategySignalBindingId_externalTradeCycleRef: {
+            strategySignalBindingId: binding.id,
+            externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+          },
+        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
+        if (tradeCycle && (tradeCycle.strategySignalRevisionId !== active.id || tradeCycle.strategyRevision !== active.revision ||
+          tradeCycle.securityId !== security.id)) {
+          throw new SignalRejection('EVENT_KEY_CONFLICT', {
+            fields: ['externalTradeCycleRef'], reason: 'same_trade_cycle_identity_different_authority',
+          });
+        }
+        tradeCycle ??= await tx.externalSignalTradeCycle.create({ data: {
+          strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
+          strategyRevision: active.revision, securityId: security.id,
+          externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+          status: normalized.event === 'ENTRY_LONG' ? 'ENTRY_RECEIVED' : 'AWAITING_ENTRY',
+        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
+      }
+      const fingerprintIdentity = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
         securityId: security.id, event: normalized.event, timeframe: normalized.timeframe,
         eventOccurrenceTime: (normalized.barTime ?? normalized.signalTime).toISOString(),
-      });
+        ...(v2Identity ? {
+          schemaVersion: 2, externalEventId: v2Identity.externalEventId,
+          externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+        } : {}),
+      };
+      const eventFingerprint = hashCanonicalPayload(fingerprintIdentity);
       const content = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategyId: binding.strategyId,
         strategySignalRevisionId: active.id,
-        securityId: security.id, symbol: security.symbol, schemaVersion: 1,
+        securityId: security.id, symbol: security.symbol, schemaVersion: normalized.schemaVersion,
         eventFingerprint, strategyRevision: normalized.strategyRevision,
         event: normalized.event, timeframe: normalized.timeframe,
         signalTime: normalized.signalTime.toISOString(), barTime: normalized.barTime?.toISOString() ?? null,
         metadata: normalized.metadata ?? null,
+        ...(v2Identity ? {
+          externalEventId: v2Identity.externalEventId,
+          externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+          externalSignalTradeCycleId: tradeCycle!.id,
+        } : {}),
       };
       const incomingPayload = canonicalSignalPayload(content, binding.externalStrategyKey);
       const canonicalPayloadHash = hashCanonicalPayload(incomingPayload);
-      const existing = await tx.signal.findUnique({ where: {
-        signalSourceId_eventFingerprint: { signalSourceId: source.id, eventFingerprint },
-      } });
+      const existing = await tx.signal.findUnique({ where: v2Identity
+        ? { signalSourceId_externalEventId: { signalSourceId: source.id, externalEventId: v2Identity.externalEventId } }
+        : { signalSourceId_eventFingerprint: { signalSourceId: source.id, eventFingerprint } } });
       if (existing) {
         // Compare both sides through the same projection. Older immutable hashes
         // included storage fields; do not rewrite them or mix hash representations.
@@ -101,9 +138,13 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         if (hashCanonicalPayload(previousPayload) !== canonicalPayloadHash) {
           const differingFields = (Object.keys(incomingPayload) as (keyof typeof incomingPayload)[])
             .filter(field => canonicalJson(incomingPayload[field]) !== canonicalJson(previousPayload[field]));
-          const delivery = await reject(new SignalRejection('EVENT_FINGERPRINT_CONFLICT', {
-            eventFingerprint, existingSignalId: existing.id, differingFields,
-            reason: 'same_event_identity_different_canonical_payload',
+          const conflictCode = v2Identity ? 'EVENT_KEY_CONFLICT' : 'EVENT_FINGERPRINT_CONFLICT';
+          const delivery = await reject(new SignalRejection(conflictCode, {
+            ...(v2Identity ? { externalEventId: v2Identity.externalEventId } : { eventFingerprint }),
+            existingSignalId: existing.id, differingFields,
+            reason: v2Identity
+              ? 'same_external_event_id_different_canonical_payload'
+              : 'same_event_identity_different_canonical_payload',
           }));
           await createSystemEvent({ type: 'external_signal_event_fingerprint_conflict', entityType: 'signal_delivery',
             entityId: delivery.id, severity: 'WARNING', payloadJson: {

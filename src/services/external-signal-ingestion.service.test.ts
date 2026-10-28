@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   externalSignalSource: { findUnique: vi.fn() },
   strategySignalBinding: { findUnique: vi.fn() }, security: { findUnique: vi.fn() },
   signal: { findUnique: vi.fn(), create: vi.fn() }, signalDelivery: { create: vi.fn() },
+  externalSignalTradeCycle: { findUnique: vi.fn(), create: vi.fn() },
   systemEvent: { create: vi.fn() }, transaction: vi.fn(),
 }));
 vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: mocks.transaction } }));
@@ -36,19 +37,29 @@ function evidence(value: unknown = envelope): SignalRequestEvidence {
 describe('external signal ingestion evidence boundary', () => {
   let signals: Array<Record<string, unknown>>;
   let deliveries: Array<Record<string, unknown>>;
+  let cycles: Array<Record<string, unknown>>;
   beforeEach(() => {
-    vi.clearAllMocks(); signals = []; deliveries = [];
+    vi.clearAllMocks(); signals = []; deliveries = []; cycles = [];
     mocks.transaction.mockImplementation(async fn => fn(mocks));
     mocks.externalSignalSource.findUnique.mockResolvedValue(source);
     mocks.strategySignalBinding.findUnique.mockResolvedValue(binding);
     mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 7, revision: 1, status: 'ACTIVE' });
     mocks.security.findUnique.mockResolvedValue({ id: 4, symbol: 'QQQ' });
-    mocks.signal.findUnique.mockImplementation(async ({ where }) => signals.find(row => row.eventFingerprint === where.signalSourceId_eventFingerprint.eventFingerprint) ?? null);
+    mocks.signal.findUnique.mockImplementation(async ({ where }) => signals.find(row =>
+      where.signalSourceId_externalEventId
+        ? row.externalEventId === where.signalSourceId_externalEventId.externalEventId
+        : row.eventFingerprint === where.signalSourceId_eventFingerprint.eventFingerprint) ?? null);
     mocks.signal.create.mockImplementation(async ({ data }) => {
       const row = { id: signals.length + 10, ...data }; signals.push(row); return row;
     });
     mocks.signalDelivery.create.mockImplementation(async ({ data }) => {
       const row = { id: deliveries.length + 20, ...data }; deliveries.push(row); return row;
+    });
+    mocks.externalSignalTradeCycle.findUnique.mockImplementation(async ({ where }) => cycles.find(row =>
+      row.strategySignalBindingId === where.strategySignalBindingId_externalTradeCycleRef.strategySignalBindingId &&
+      row.externalTradeCycleRef === where.strategySignalBindingId_externalTradeCycleRef.externalTradeCycleRef) ?? null);
+    mocks.externalSignalTradeCycle.create.mockImplementation(async ({ data }) => {
+      const row = { id: cycles.length + 30, ...data }; cycles.push(row); return row;
     });
   });
   const ingest = (value: unknown = envelope) => ingestExternalSignal(source, token, evidence(value));
@@ -60,6 +71,24 @@ describe('external signal ingestion evidence boundary', () => {
       event: 'ENTRY_LONG', timeframe: '15m', eventOccurrenceTime: '2026-09-07T15:30:00.000Z',
     }) });
     expect(signals[0]).not.toHaveProperty('externalEventKey');
+  });
+  it('requires explicit v2 identity and preserves distinct same-bar events', async () => {
+    const first = { ...envelope, schemaVersion: 2, externalEventId: 'tv:event:1', externalTradeCycleRef: 'tv:cycle:1' };
+    const second = { ...first, externalEventId: 'tv:event:2', externalTradeCycleRef: 'tv:cycle:2' };
+    expect((await ingest(first))?.status).toBe('NORMALIZED');
+    expect((await ingest(second))?.status).toBe('NORMALIZED');
+    expect(signals).toHaveLength(2); expect(cycles).toHaveLength(2);
+    expect(signals[0]).toMatchObject({ schemaVersion: 2, externalEventId: 'tv:event:1', externalTradeCycleRef: 'tv:cycle:1', externalSignalTradeCycleId: 30 });
+    expect(signals[0]!.eventFingerprint).not.toBe(signals[1]!.eventFingerprint);
+  });
+  it('deduplicates exact v2 retries and rejects conflicting event-id reuse', async () => {
+    const input = { ...envelope, schemaVersion: 2, externalEventId: 'Case-Sensitive:1', externalTradeCycleRef: 'cycle:1' };
+    await ingest(input);
+    expect((await ingest(input))?.status).toBe('DUPLICATE');
+    const conflict = await ingest({ ...input, metadata: { changed: true } });
+    expect(conflict?.rejectionCode).toBe('EVENT_KEY_CONFLICT');
+    expect(conflict?.rejectionDetails).toMatchObject({ externalEventId: 'Case-Sensitive:1', reason: 'same_external_event_id_different_canonical_payload' });
+    expect(signals).toHaveLength(1);
   });
   it.each([{ event: 'EXIT_LONG' }, { timeframe: '30m' }, { barTime: '2026-09-07T15:00:00Z' }])('records different logical identity: %j', async change => {
     await ingest();

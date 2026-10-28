@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { SignalDeliveryRejectionCode, type Prisma } from '@prisma/client';
-import { externalSignalEnvelopeSchema } from '../validators/external-signal.schema.js';
+import { externalSignalEnvelopeV1Schema, externalSignalEnvelopeV2Schema } from '../validators/external-signal.schema.js';
 
 export const MAX_SIGNAL_BODY_BYTES = 64 * 1024;
 const secretKey = /^auth$|authorization|authentication|password|passwd|secret|token|apikey|accesskey|credential|cookie|privatekey|signature/i;
@@ -28,14 +28,18 @@ export function hashCanonicalPayload(value: unknown) {
 export function canonicalSignalPayload(value: {
   schemaVersion: number; strategyRevision: number | null; event: string; symbol: string;
   timeframe: string; signalTime: Date | string; barTime: Date | string | null; metadata: unknown;
+  externalEventId?: string | null; externalTradeCycleRef?: string | null;
 }, externalStrategyKey: string) {
-  return {
+  const common = {
     schemaVersion: value.schemaVersion, externalStrategyKey, strategyRevision: value.strategyRevision,
     event: value.event, symbol: value.symbol, timeframe: value.timeframe,
     signalTime: new Date(value.signalTime).toISOString(),
     barTime: value.barTime === null ? null : new Date(value.barTime).toISOString(),
     metadata: value.metadata,
   };
+  return value.schemaVersion === 2
+    ? { ...common, externalEventId: value.externalEventId, externalTradeCycleRef: value.externalTradeCycleRef }
+    : common;
 }
 
 // Bounded recursive traversal before Zod's recursive JSON validator. Never retain
@@ -74,7 +78,13 @@ export class SignalRejection extends Error {
 }
 
 export function normalizeSignalEnvelope(value: unknown, receivedAt: Date) {
-  const result = externalSignalEnvelopeSchema.safeParse(value);
+  // Presence of schemaVersion explicitly selects the v2 parser. It is never
+  // inferred from identifiers, and an unsupported supplied version cannot fall
+  // back to the legacy implicit-v1 contract.
+  const versioned = value !== null && typeof value === 'object' && Object.hasOwn(value, 'schemaVersion');
+  const result = versioned
+    ? externalSignalEnvelopeV2Schema.safeParse(value)
+    : externalSignalEnvelopeV1Schema.safeParse(value);
   if (!result.success) {
     const fields = result.error.issues.map(issue => String(issue.path[0] ?? 'envelope'));
     const code = fields.includes('event') ? 'INVALID_EVENT'
@@ -102,5 +112,6 @@ export function normalizeSignalEnvelope(value: unknown, receivedAt: Date) {
     throw new SignalRejection('INVALID_TIMESTAMP', { fields: ['signalTime'], reason: 'signal_time_in_future', allowedClockSkewSeconds: 300 });
   }
   if (barTime && barTime > signalTime) throw new SignalRejection('INVALID_TIMESTAMP', { fields: ['barTime'], reason: 'bar_time_after_signal_time' });
-  return { ...input, timeframe, signalTime, barTime };
+  if ('schemaVersion' in input) return { ...input, schemaVersion: 2 as const, timeframe, signalTime, barTime };
+  return { ...input, schemaVersion: 1 as const, timeframe, signalTime, barTime };
 }

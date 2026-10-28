@@ -17,4 +17,10 @@ describe('canonical Signal payload comparison', () => {
     const changed = { ...event, [field]: field === 'metadata' ? { test: 'same.' } : field === 'schemaVersion' ? 2 : '2026-09-10T09:31:00Z' };
     expect(hashCanonicalPayload(canonicalSignalPayload(changed, 'momentum-stock'))).not.toBe(hashCanonicalPayload(canonicalSignalPayload(event, 'momentum-stock')));
   });
+  it('includes exact v2 event and cycle identifiers without changing v1 projections', () => {
+    const v2 = canonicalSignalPayload({ ...event, schemaVersion: 2, externalEventId: 'Event:A', externalTradeCycleRef: 'Cycle:A' }, 'momentum-stock');
+    expect(v2).toMatchObject({ schemaVersion: 2, externalEventId: 'Event:A', externalTradeCycleRef: 'Cycle:A' });
+    expect(canonicalSignalPayload(event, 'momentum-stock')).not.toHaveProperty('externalEventId');
+    expect(hashCanonicalPayload(v2)).not.toBe(hashCanonicalPayload({ ...v2, externalEventId: 'event:a' }));
+  });
 });

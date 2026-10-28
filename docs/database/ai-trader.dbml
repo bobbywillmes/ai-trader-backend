@@ -34,6 +34,7 @@ Table StrategySignalRevision {
   retiredAt DateTime
   binding StrategySignalBinding [not null]
   signals Signal [not null]
+  externalSignalTradeCycles ExternalSignalTradeCycle [not null]
 
   indexes {
     (strategySignalBindingId, revision) [unique]
@@ -53,6 +54,7 @@ Table StrategySignalBinding {
   strategy Strategy [not null]
   signals Signal [not null]
   revisions StrategySignalRevision [not null]
+  externalSignalTradeCycles ExternalSignalTradeCycle [not null]
 
   indexes {
     (signalSourceId, externalStrategyKey) [unique]
@@ -86,10 +88,13 @@ Table Signal {
   securityId Int [not null]
   schemaVersion Int [not null]
   externalEventKey String
+  externalEventId String
+  externalTradeCycleRef String
   eventFingerprint String
   legacyStrategyRevision String
   strategyRevision Int
   strategySignalRevisionId Int
+  externalSignalTradeCycleId Int
   event SignalEvent [not null]
   symbol String [not null]
   timeframe String [not null]
@@ -105,9 +110,11 @@ Table Signal {
   deliveries SignalDelivery [not null]
   routingRun SignalRoutingRun
   strategySignalRevision StrategySignalRevision
+  externalSignalTradeCycle ExternalSignalTradeCycle
 
   indexes {
     (signalSourceId, externalEventKey) [unique]
+    (signalSourceId, externalEventId) [unique]
     (signalSourceId, eventFingerprint) [unique]
   }
 }
@@ -139,9 +146,93 @@ Table SignalRoute {
   createdAt DateTime [default: `now()`, not null]
   routingRun SignalRoutingRun [not null]
   accountSubscription TradingAccountSubscription [not null]
+  externalSignalAccountCycle ExternalSignalTradeCycleAccount
 
   indexes {
     (signalRoutingRunId, tradingAccountId) [unique]
+    (id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId) [unique]
+  }
+}
+
+Table ExternalSignalExecutionRolloutGeneration {
+  id Int [pk, increment]
+  direction ExternalSignalExecutionDirection [not null]
+  generation Int [not null]
+  enabled Boolean [not null]
+  authorityMode ExternalSignalExecutionAuthorityMode [not null]
+  supersedesGenerationId Int [unique]
+  configurationJson Json [not null]
+  configurationFingerprint String [not null]
+  effectiveAt DateTime [not null]
+  createdByUserId Int
+  createdAt DateTime [default: `now()`, not null]
+  supersedes ExternalSignalExecutionRolloutGeneration
+  supersededBy ExternalSignalExecutionRolloutGeneration
+  createdBy User
+  accountCycles ExternalSignalTradeCycleAccount [not null]
+
+  indexes {
+    (direction, generation) [unique]
+  }
+}
+
+Table ExternalSignalTradeCycle {
+  id Int [pk, increment]
+  strategySignalBindingId Int [not null]
+  strategySignalRevisionId Int [not null]
+  strategyRevision Int [not null]
+  securityId Int [not null]
+  externalTradeCycleRef String [not null]
+  status ExternalSignalTradeCycleStatus [not null]
+  terminalAt DateTime
+  terminalReasonCode String
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  binding StrategySignalBinding [not null]
+  revision StrategySignalRevision [not null]
+  security Security [not null]
+  signals Signal [not null]
+  accountCycles ExternalSignalTradeCycleAccount [not null]
+
+  indexes {
+    (strategySignalBindingId, externalTradeCycleRef) [unique]
+    (id, strategySignalBindingId, strategySignalRevisionId, securityId) [unique]
+  }
+}
+
+Table ExternalSignalTradeCycleAccount {
+  id Int [pk, increment]
+  externalSignalTradeCycleId Int [not null]
+  entrySignalRouteId Int [unique, not null]
+  tradingAccountId Int [not null]
+  tradingAccountSubscriptionId Int [not null]
+  subscriptionId Int [not null]
+  securityId Int [not null]
+  entryRolloutGenerationId Int
+  status ExternalSignalAccountCycleStatus [not null]
+  entryReservationKey String [unique]
+  entryReservationCreatedAt DateTime
+  entryOrderIntentId Int [unique]
+  trackedPositionId Int [unique]
+  pendingExitAcceptedAt DateTime
+  terminalAt DateTime
+  terminalReasonCode String
+  noExposureProof ExternalSignalNoExposureProof
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  tradeCycle ExternalSignalTradeCycle [not null]
+  entryRoute SignalRoute [not null]
+  tradingAccount TradingAccount [not null]
+  accountSubscription TradingAccountSubscription [not null]
+  subscription Subscription [not null]
+  security Security [not null]
+  entryRolloutGeneration ExternalSignalExecutionRolloutGeneration
+  entryOrderIntent OrderIntent
+  trackedPosition TrackedPosition
+
+  indexes {
+    (externalSignalTradeCycleId, tradingAccountId) [unique]
+    (entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId) [unique]
   }
 }
 
@@ -266,6 +357,7 @@ Table User {
   enforcementRolloutChanges MarketPolicyEnforcementRuntimeRollout [not null]
   enforcementRolloutEvents MarketPolicyEnforcementRuntimeRolloutEvent [not null]
   positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision [not null]
+  externalSignalExecutionRolloutGenerations ExternalSignalExecutionRolloutGeneration [not null]
 }
 
 Table UserSetupToken {
@@ -344,6 +436,7 @@ Table TradingAccount {
   lifecycleRepairCases LifecycleRepairCase [not null]
   marketPolicyEnrollmentGenerations AssignmentMarketPolicyEnrollmentGeneration [not null]
   marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount [not null]
   marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
   marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
   marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
@@ -718,6 +811,7 @@ Table TradingAccountSubscription {
   routingStrategyId Int [not null, default: 0]
   routingSecurityId Int [not null, default: 0]
   signalRoutes SignalRoute [not null]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount [not null]
   allocationId Int
   allocation TradingAccountAllocation
   enabled Boolean [not null, default: true]
@@ -840,6 +934,8 @@ Table Security {
   updatedAt DateTime [not null]
   subscriptions Subscription [not null]
   trackedPositions TrackedPosition [not null]
+  externalSignalTradeCycles ExternalSignalTradeCycle [not null]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount [not null]
   brokerOrders BrokerOrder [not null]
   entryDecisions EntryDecision [not null]
   momentumUniverseMember MomentumUniverseMember
@@ -913,6 +1009,7 @@ Table OrderIntent {
   marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
   marketPolicyBrokerDispatchConsumption MarketPolicyBrokerDispatchConsumption
   marketPolicyBrokerUnenforcedDispatch MarketPolicyBrokerUnenforcedDispatch
+  externalSignalTradeCycleAccount ExternalSignalTradeCycleAccount
 }
 
 Table BrokerOrder {
@@ -1746,6 +1843,7 @@ Table TrackedPosition {
   entryDecision EntryDecision
   entryExposureClaim EntryExposureClaim
   lifecycleProvenanceDecisions PositionLifecycleProvenanceDecision [not null]
+  externalSignalTradeCycleAccount ExternalSignalTradeCycleAccount
   exitState PositionExitState
   configSnapshotJson Json
   configSnapshotCapturedAt DateTime
@@ -2738,6 +2836,7 @@ Table Subscription {
   liveEntryArmings LiveEntryArming [not null]
   liveEntryAcceptanceRuns LiveEntryAcceptanceRun [not null]
   marketPolicyEnforcementAuthorizations AssignmentMarketPolicyEnforcementAuthorization [not null]
+  externalSignalTradeCycleAccounts ExternalSignalTradeCycleAccount [not null]
 
   indexes {
     (id, strategyId, securityId) [unique]
@@ -2798,6 +2897,45 @@ Enum SignalAuthorityMode {
 Enum SignalRoutingStatus {
   STOPPED
   COMPLETED
+}
+
+Enum ExternalSignalExecutionDirection {
+  ENTRY
+  EXIT
+}
+
+Enum ExternalSignalExecutionAuthorityMode {
+  SHADOW
+  EXECUTE
+}
+
+Enum ExternalSignalTradeCycleStatus {
+  AWAITING_ENTRY
+  ENTRY_RECEIVED
+  ROUTED
+  ACTIVE
+  TERMINAL_NO_EXPOSURE
+  TERMINAL_CLOSED
+  CONFLICT
+}
+
+Enum ExternalSignalAccountCycleStatus {
+  ENTRY_ROUTE_PENDING
+  ENTRY_ADMISSION_PENDING
+  ENTRY_SHADOW_ALLOWED
+  ENTRY_SUPPRESSED_BY_EXIT
+  EXIT_PENDING
+  BLOCKED
+  TERMINAL_NO_EXPOSURE
+  TERMINAL_CLOSED
+}
+
+Enum ExternalSignalNoExposureProof {
+  ENTRY_SUPPRESSED_BEFORE_ADMISSION
+  ENTRY_REJECTED_WITHOUT_INTENT
+  INTENT_DEFINITELY_NOT_SENT_AND_CLAIM_RELEASED
+  BROKER_REJECTED_SETTLED_AND_VERIFIED_ABSENT
+  ENTRY_CANCELED_BEFORE_FILL_AND_VERIFIED_ABSENT
 }
 
 Enum ExitManagementMode {
@@ -3389,11 +3527,41 @@ Ref: Signal.securityId > Security.id [delete: Restrict]
 
 Ref: Signal.(strategySignalRevisionId, strategySignalBindingId, strategyRevision) > StrategySignalRevision.(id, strategySignalBindingId, revision) [delete: Restrict]
 
+Ref: Signal.externalSignalTradeCycleId > ExternalSignalTradeCycle.id [delete: Restrict]
+
 Ref: SignalRoutingRun.signalId - Signal.id [delete: Restrict]
 
 Ref: SignalRoute.signalRoutingRunId > SignalRoutingRun.id [delete: Restrict]
 
 Ref: SignalRoute.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: ExternalSignalExecutionRolloutGeneration.supersedesGenerationId - ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalExecutionRolloutGeneration.createdByUserId > User.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycle.strategySignalBindingId > StrategySignalBinding.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycle.(strategySignalRevisionId, strategySignalBindingId, strategyRevision) > StrategySignalRevision.(id, strategySignalBindingId, revision) [delete: Restrict]
+
+Ref: ExternalSignalTradeCycle.securityId > Security.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.externalSignalTradeCycleId > ExternalSignalTradeCycle.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.(entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId) - SignalRoute.(id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId) [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.tradingAccountSubscriptionId > TradingAccountSubscription.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.subscriptionId > Subscription.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.securityId > Security.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.entryRolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.entryOrderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: ExternalSignalTradeCycleAccount.trackedPositionId - TrackedPosition.id [delete: Restrict]
 
 Ref: SignalEvaluation.signalRouteId - SignalRoute.id [delete: Restrict]
 

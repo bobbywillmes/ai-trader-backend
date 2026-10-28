@@ -86,6 +86,11 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       INSERT INTO "TrackedPosition" ("subscriptionId", status) VALUES (1, 'open');
     `);
     await admin.query(await readFile('prisma/migrations/20260914120000_signal_evaluation_exit_ownership/migration.sql', 'utf8'));
+    await admin.query(`
+      CREATE TABLE "User" (id serial PRIMARY KEY);
+      CREATE TABLE "OrderIntent" (id serial PRIMARY KEY);
+    `);
+    await admin.query(await readFile('prisma/migrations/20261028120000_external_signal_shadow_identity_foundation/migration.sql', 'utf8'));
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -109,13 +114,18 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
   }
 
   it('backfills active Revision 1 without rewriting legacy Signal or Delivery evidence', async () => {
-    const { legacyStrategyRevision, strategyRevision, strategySignalRevisionId, eventFingerprint, ...row } = (await admin.query('SELECT * FROM "Signal" WHERE id = 1')).rows[0];
+    const { legacyStrategyRevision, strategyRevision, strategySignalRevisionId, eventFingerprint,
+      externalEventId, externalTradeCycleRef, externalSignalTradeCycleId, ...row } = (await admin.query('SELECT * FROM "Signal" WHERE id = 1')).rows[0];
     expect({ ...row, strategyRevision: legacyStrategyRevision }).toEqual(legacySignal);
     expect(eventFingerprint).toBeNull(); expect(strategyRevision).toBeNull(); expect(strategySignalRevisionId).toBeNull();
+    expect(externalEventId).toBeNull(); expect(externalTradeCycleRef).toBeNull(); expect(externalSignalTradeCycleId).toBeNull();
     expect((await admin.query('SELECT * FROM "SignalDelivery" WHERE id = 1')).rows[0]).toEqual(legacyDelivery);
     expect(await db.strategySignalRevision.findMany({ where: { strategySignalBindingId: 1 } })).toMatchObject([{ revision: 1, status: 'ACTIVE', authorityMode: 'EVIDENCE_ONLY' }]);
-    const { eventFingerprint: fingerprint, ...numeric } = (await admin.query('SELECT * FROM "Signal" WHERE id = 2')).rows[0];
-    expect(fingerprint).toBeNull(); expect(numeric).toEqual(numericLegacySignal);
+    const { eventFingerprint: fingerprint, externalEventId: numericEventId,
+      externalTradeCycleRef: numericCycleRef, externalSignalTradeCycleId: numericCycleId,
+      ...numeric } = (await admin.query('SELECT * FROM "Signal" WHERE id = 2')).rows[0];
+    expect(fingerprint).toBeNull(); expect(numericEventId).toBeNull(); expect(numericCycleRef).toBeNull(); expect(numericCycleId).toBeNull();
+    expect(numeric).toEqual(numericLegacySignal);
   });
 
   it('retrieves the same encrypted source capability across concurrent owner reads', async () => {
@@ -242,15 +252,16 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       await admin.query(`ALTER TABLE "SignalDelivery" DROP CONSTRAINT test_delivery_failure`);
     }
   });
-  it('records entry and exit metadata without execution tables', async () => {
+  it('records entry and exit metadata without execution records', async () => {
     for (const event of ['ENTRY_LONG', 'EXIT_LONG'] as const) {
       const result = await ingest(`no-trading-${event}`, { quantity: 999999, tradingAccountId: 42, bypassRisk: true }, event);
       expect(result?.status).toBe('NORMALIZED');
     }
     const tables = await admin.query(`SELECT table_name FROM information_schema.tables WHERE table_schema = $1`, [schema]);
-    for (const name of ['EntryDecision', 'OrderIntent', 'BrokerOrder', 'BrokerActivity']) {
+    for (const name of ['EntryDecision', 'BrokerOrder', 'BrokerActivity']) {
       expect(tables.rows.map(row => row.table_name)).not.toContain(name);
     }
+    expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
   });
   it('activates transactionally under concurrent requests, fails old revisions closed and preserves evidence', async () => {
     const before = await db.signal.findMany({ orderBy: { id: 'asc' } });
@@ -411,7 +422,8 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       expect(await db.signalRoutingRun.findUnique({ where: { signalId: delivery!.signalId! } })).toMatchObject({ authorityMode: mode, routeCount: 2, status: 'COMPLETED' });
     }
     const tables = (await admin.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', [schema])).rows.map(row => row.table_name);
-    for (const table of ['OrderIntent', 'BrokerOrder', 'BrokerActivity', 'EntryDecision', 'PositionCloseRequest']) expect(tables).not.toContain(table);
+    for (const table of ['BrokerOrder', 'BrokerActivity', 'EntryDecision', 'PositionCloseRequest']) expect(tables).not.toContain(table);
+    expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
   });
 
   it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {
