@@ -149,6 +149,7 @@ Table SignalRoute {
   routingRun SignalRoutingRun [not null]
   accountSubscription TradingAccountSubscription [not null]
   externalSignalAccountCycle ExternalSignalTradeCycleAccount
+  correlationDecisions ExternalSignalCorrelationDecision [not null]
 
   indexes {
     (signalRoutingRunId, tradingAccountId) [unique]
@@ -260,6 +261,7 @@ Table ExternalSignalCorrelationDecision {
   id Int [pk, increment]
   externalSignalTradeCycleId Int [not null]
   accountCycleId Int
+  signalRouteId Int
   signalId Int [not null]
   decisionType ExternalSignalCorrelationDecisionType [not null]
   authorityMode ExternalSignalExecutionAuthorityMode [not null, default: 'SHADOW']
@@ -270,11 +272,12 @@ Table ExternalSignalCorrelationDecision {
   createdAt DateTime [default: `now()`, not null]
   tradeCycle ExternalSignalTradeCycle [not null]
   accountCycle ExternalSignalTradeCycleAccount
+  signalRoute SignalRoute
   signal Signal [not null]
   rolloutGeneration ExternalSignalExecutionRolloutGeneration
 
   indexes {
-    (signalId, accountCycleId, decisionType) [unique]
+    (signalId, accountCycleId, signalRouteId, decisionType) [unique]
   }
 }
 
@@ -2994,6 +2997,8 @@ Enum ExternalSignalCorrelationDecisionType {
   EXIT_PENDING
   ENTRY_SUPPRESSED
   CYCLE_BLOCKED
+  LIVE_ROUTE_BLOCKED
+  ROUTE_EVALUATION_BLOCKED
 }
 
 Enum ExitManagementMode {
@@ -3626,6 +3631,8 @@ Ref: ExternalSignalCorrelationWork.signalId - Signal.id [delete: Restrict]
 Ref: ExternalSignalCorrelationDecision.externalSignalTradeCycleId > ExternalSignalTradeCycle.id [delete: Restrict]
 
 Ref: ExternalSignalCorrelationDecision.accountCycleId > ExternalSignalTradeCycleAccount.id [delete: Restrict]
+
+Ref: ExternalSignalCorrelationDecision.signalRouteId > SignalRoute.id [delete: Restrict]
 
 Ref: ExternalSignalCorrelationDecision.signalId > Signal.id [delete: Restrict]
 

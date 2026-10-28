@@ -140,6 +140,8 @@ enum ExternalSignalCorrelationDecisionType {
   EXIT_PENDING
   ENTRY_SUPPRESSED
   CYCLE_BLOCKED
+  LIVE_ROUTE_BLOCKED
+  ROUTE_EVALUATION_BLOCKED
 }
 
 // Identity and note are immutable; authority is mutable only while PREPARED.
@@ -288,6 +290,7 @@ model SignalRoute {
   routingRun                  SignalRoutingRun @relation(fields: [signalRoutingRunId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   accountSubscription         TradingAccountSubscription @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   externalSignalAccountCycle  ExternalSignalTradeCycleAccount?
+  correlationDecisions       ExternalSignalCorrelationDecision[]
 
   @@unique([signalRoutingRunId, tradingAccountId])
   @@unique([id, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], map: "SignalRoute_account_cycle_identity_key")
@@ -413,6 +416,7 @@ model ExternalSignalCorrelationDecision {
   id                         Int                                   @id @default(autoincrement())
   externalSignalTradeCycleId Int
   accountCycleId             Int?
+  signalRouteId              Int?
   signalId                   Int
   decisionType               ExternalSignalCorrelationDecisionType
   authorityMode              ExternalSignalExecutionAuthorityMode @default(SHADOW)
@@ -422,14 +426,15 @@ model ExternalSignalCorrelationDecision {
   evidenceJson               Json
   createdAt                  DateTime                              @default(now()) @db.Timestamptz(3)
 
-  tradeCycle   ExternalSignalTradeCycle         @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  accountCycle ExternalSignalTradeCycleAccount? @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  signal       Signal                           @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  rolloutGeneration ExternalSignalExecutionRolloutGeneration? @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradeCycle   ExternalSignalTradeCycle         @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalCorrelationDecision_cycle_fkey")
+  accountCycle ExternalSignalTradeCycleAccount? @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalCorrelationDecision_account_fkey")
+  signalRoute  SignalRoute?                     @relation(fields: [signalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalCorrelationDecision_route_fkey")
+  signal       Signal                           @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalCorrelationDecision_signal_fkey")
+  rolloutGeneration ExternalSignalExecutionRolloutGeneration? @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalCorrelationDecision_rollout_fkey")
 
-  @@unique([signalId, accountCycleId, decisionType], map: "ExternalSignalCorrelationDecision_signal_account_type_key")
-  @@index([externalSignalTradeCycleId, createdAt])
-  @@index([accountCycleId, createdAt])
+  @@unique([signalId, accountCycleId, signalRouteId, decisionType], map: "ExternalSignalCorrelationDecision_signal_target_type_key")
+  @@index([externalSignalTradeCycleId, createdAt], map: "ExternalSignalCorrelationDecision_cycle_created_idx")
+  @@index([accountCycleId, createdAt], map: "ExternalSignalCorrelationDecision_account_created_idx")
 }
 
 enum ExitManagementMode {

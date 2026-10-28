@@ -18,13 +18,27 @@ ExternalSignalTradeCycleAccount. Deadlocks and serialization failures are retrie
 the durable work row; webhook evidence is never rolled back merely because later
 correlation is interrupted.
 
-ENTRY routing freezes the original SignalRoute account, assignment, Subscription,
+The worker is operationally default-disabled through
+`EXTERNAL_SIGNAL_CORRELATION_WORKER_ENABLED`. When enabled it is registered with
+worker health, coalesces overlapping local ticks, and drains its current tick during
+shutdown. Eight attempts form the finite escalation boundary. Serialization and
+deadlock SQLSTATEs (`40001`/`40P01`, including Prisma adapter metadata) remain retryable;
+terminal exhaustion records sanitized FAILED work and an ERROR SystemEvent. A SYSTEM_OWNER
+may idempotently requeue FAILED work with
+`npm run external-signals:requeue-correlation -- <workId> <systemOwnerUserId>`.
+
+ENTRY routing freezes only original PAPER SignalRoute account, assignment, Subscription,
 Strategy and Security snapshot into one account cycle per PAPER target. Each account
 cycle receives a deterministic `external-shadow:` reservation and append-only
 `ExternalSignalCorrelationDecision` evidence. Decisions are database-constrained to
 `SHADOW`; a missing ENTRY rollout produces explicit `CYCLE_BLOCKED` evidence and is
 never interpreted as authority. No correlation writer can populate OrderIntent or
 TrackedPosition links during this phase.
+LIVE routes remain distinguishable through route-linked `LIVE_ROUTE_BLOCKED` decisions
+and can never create an account cycle or reservation. The highest effective rollout
+generation is selected using PostgreSQL time even when disabled; a disabled current
+generation blocks instead of falling back. A reservation requires an eligible route,
+a TRADE_ELIGIBLE revision, and an enabled current SHADOW rollout.
 
 An EXIT may create an `AWAITING_ENTRY` source cycle without account cycles. When the
 matching ENTRY arrives, ingress advances it to `ENTRY_RECEIVED`; the worker fans the
@@ -38,6 +52,10 @@ Historical revisions may submit v2 EXIT only for an existing nonterminal cycle w
 binding, revision, Security and cycle reference match exactly. Historical ENTRY and
 new historical cycles remain rejected. Cycle-authority conflicts emit sanitized
 WARNING SystemEvent evidence.
+
+Zero-route terminalization and cleanup policy for abandoned `AWAITING_ENTRY` cycles
+remain deferred to Phase 4A.1C. Their current behavior is intentionally durable and
+nonterminal so an operator can see unresolved evidence rather than an invented result.
 
 ## Operator workflow
 

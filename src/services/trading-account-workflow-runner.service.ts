@@ -12,6 +12,7 @@ import { withTradingAccountWorkflowLock } from './trading-account-workflow-lock.
 export const accountWorkflowProcessInstanceId = randomUUID();
 
 const BACKOFF_CAP_MS: Record<WorkerKey, number> = {
+  external_signal_correlation: 300_000, // Global SHADOW-only durable correlation worker.
   order_intent_broker_comparison: 300_000, // Global compare-only broker-opportunity evidence worker.
   order_intent_market_policy_comparison: 300_000, // Global compare-only evidence worker; does not use account coordination.
   strategy_market_eligibility_shadow: 900_000, // Global shadow evidence worker; does not use account coordination.

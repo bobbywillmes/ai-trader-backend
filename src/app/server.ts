@@ -67,6 +67,7 @@ import { ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS } from '../workers/wo
 import { closeBrokerObservationPrisma } from '../db/broker-observation-prisma.js';
 import { PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { runExternalSignalCorrelationWorker } from '../workers/external-signal-correlation.worker.js';
+import { EXTERNAL_SIGNAL_CORRELATION_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 
 const app = createApp();
 
@@ -175,6 +176,8 @@ async function runTradingWorkers() {
 let participationScheduler: ParticipationScheduler | null = null;
 const intradayWorkerTicks = new Set<Promise<void>>();
 const intradayWorkerIntervals: NodeJS.Timeout[] = [];
+let externalSignalCorrelationTick: Promise<void> | null = null;
+let externalSignalCorrelationInterval: NodeJS.Timeout | null = null;
 
 function runIntradayWorker(key: WorkerKey, execute: () => Promise<WorkerTickResult | void>) {
   const tick = runWorker(key, execute);
@@ -184,10 +187,16 @@ function runIntradayWorker(key: WorkerKey, execute: () => Promise<WorkerTickResu
 
 function startWorkers() {
   workerHealthRegistry.startPersistence();
-  const runExternalCorrelation = () => void runExternalSignalCorrelationWorker().catch(error =>
-    logger.error({ error }, 'External signal shadow correlation worker failed.'));
-  runExternalCorrelation();
-  setInterval(runExternalCorrelation, 5_000);
+  if (env.EXTERNAL_SIGNAL_CORRELATION_WORKER_ENABLED) {
+    workerHealthRegistry.setWorkerEnabled('external_signal_correlation', true);
+    const runExternalCorrelation = () => {
+      if (externalSignalCorrelationTick) { workerHealthRegistry.skipWorkerTick('external_signal_correlation', 'already_running'); return; }
+      externalSignalCorrelationTick = runWorker('external_signal_correlation', runExternalSignalCorrelationWorker)
+        .finally(() => { externalSignalCorrelationTick = null; });
+    };
+    runExternalCorrelation();
+    externalSignalCorrelationInterval = setInterval(runExternalCorrelation, EXTERNAL_SIGNAL_CORRELATION_WORKER_INTERVAL_MS);
+  }
   void runWorker('trend_assessment_publication', runTrendAssessmentWorker);
   void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker);
   setInterval(() => { void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker); }, VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS);
@@ -427,6 +436,8 @@ async function startServer() {
 async function shutdown(signal: NodeJS.Signals) {
   logger.info({ signal }, 'AI Trader Backend shutdown requested.');
   for (const interval of intradayWorkerIntervals) clearInterval(interval);
+  if (externalSignalCorrelationInterval) clearInterval(externalSignalCorrelationInterval);
+  await externalSignalCorrelationTick;
   intradayWorkerIntervals.length = 0;
 
   // Stop new Participation ticks, abort the in-flight publication and wait (bounded) for its rollback before teardown.

@@ -32,6 +32,7 @@ export const ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS = 30_000;
 export const MARKET_MINUTE_EVIDENCE_SYNC_INTERVAL_MS = 30_000;
 export const MARKET_SPLIT_COVERAGE_WORKER_INTERVAL_MS = 15 * 60_000;
 export const PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS = 5 * 60_000;
+export const EXTERNAL_SIGNAL_CORRELATION_WORKER_INTERVAL_MS = 5_000;
 
 function thresholds(
   expectedIntervalMs: number,
@@ -49,6 +50,15 @@ function thresholds(
 }
 
 export const workerDefinitions = [
+  {
+    key: 'external_signal_correlation',
+    displayName: 'External signal correlation',
+    description: 'Processes durable contract-v2 routing and trade-cycle correlation in SHADOW mode only.',
+    criticality: 'important',
+    expectedIntervalMs: EXTERNAL_SIGNAL_CORRELATION_WORKER_INTERVAL_MS,
+    enabledByDefault: false,
+    ...thresholds(EXTERNAL_SIGNAL_CORRELATION_WORKER_INTERVAL_MS, 60_000),
+  },
   {
     key: 'order_intent_broker_comparison',
     displayName: 'Broker-opportunity market-policy comparison',

@@ -7,6 +7,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "external-signals:requeue-correlation": "tsx scripts/requeue-external-signal-correlation.ts",
     "dev": "tsx watch src/app/server.ts",
     "dev:tunnel": "tsx src/dev/ngrok.ts",
     "start": "node dist/app/server.js",
