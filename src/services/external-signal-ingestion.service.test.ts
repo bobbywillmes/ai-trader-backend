@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
   $queryRaw: vi.fn(), strategySignalRevision: { findFirst: vi.fn() },
   externalSignalSource: { findUnique: vi.fn() },
   strategySignalBinding: { findUnique: vi.fn() }, security: { findUnique: vi.fn() },
-  signal: { findUnique: vi.fn(), create: vi.fn() }, signalDelivery: { create: vi.fn() },
+  signal: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() }, signalDelivery: { create: vi.fn() },
   externalSignalTradeCycle: { findUnique: vi.fn(), create: vi.fn() },
   systemEvent: { create: vi.fn() }, transaction: vi.fn(),
 }));
@@ -49,6 +49,8 @@ describe('external signal ingestion evidence boundary', () => {
       where.signalSourceId_externalEventId
         ? row.externalEventId === where.signalSourceId_externalEventId.externalEventId
         : row.eventFingerprint === where.signalSourceId_eventFingerprint.eventFingerprint) ?? null);
+    mocks.signal.findFirst.mockImplementation(async ({ where }) => signals.find(row =>
+      row.externalSignalTradeCycleId === where.externalSignalTradeCycleId && row.event === where.event) ?? null);
     mocks.signal.create.mockImplementation(async ({ data }) => {
       const row = { id: signals.length + 10, ...data }; signals.push(row); return row;
     });
@@ -89,6 +91,33 @@ describe('external signal ingestion evidence boundary', () => {
     expect(conflict?.rejectionCode).toBe('EVENT_KEY_CONFLICT');
     expect(conflict?.rejectionDetails).toMatchObject({ externalEventId: 'Case-Sensitive:1', reason: 'same_external_event_id_different_canonical_payload' });
     expect(signals).toHaveLength(1);
+  });
+  it.each([
+    ['cycle reference', { externalTradeCycleRef: 'cycle:orphan' }],
+    ['security', { symbol: 'SPY' }],
+    ['identity field', { timeframe: '30m' }],
+  ])('rejects changed v2 %s before accessing or creating a trade cycle', async (_label, change) => {
+    const input = { ...envelope, schemaVersion: 2, externalEventId: 'stable:event', externalTradeCycleRef: 'cycle:original' };
+    await ingest(input);
+    mocks.security.findUnique.mockImplementation(async ({ where }) => ({ id: where.symbol === 'SPY' ? 5 : 4, symbol: where.symbol }));
+    mocks.externalSignalTradeCycle.findUnique.mockClear();
+    mocks.externalSignalTradeCycle.create.mockClear();
+    const result = await ingest({ ...input, ...change });
+    expect(result?.rejectionCode).toBe('EVENT_KEY_CONFLICT');
+    expect(mocks.externalSignalTradeCycle.findUnique).not.toHaveBeenCalled();
+    expect(mocks.externalSignalTradeCycle.create).not.toHaveBeenCalled();
+    expect(cycles).toHaveLength(1); expect(signals).toHaveLength(1);
+    expect(mocks.systemEvent.create).toHaveBeenCalledOnce();
+  });
+  it('durably rejects a different event ID attempting a second ENTRY for one cycle', async () => {
+    const first = { ...envelope, schemaVersion: 2, externalEventId: 'entry:1', externalTradeCycleRef: 'cycle:one' };
+    await ingest(first);
+    const result = await ingest({ ...first, externalEventId: 'entry:2' });
+    expect(result).toMatchObject({ status: 'REJECTED', rejectionCode: 'EVENT_KEY_CONFLICT', rejectionDetails: {
+      externalTradeCycleRef: 'cycle:one', existingSignalId: signals[0]!.id, reason: 'trade_cycle_already_has_entry',
+    } });
+    expect(signals).toHaveLength(1); expect(cycles).toHaveLength(1);
+    expect(deliveries).toHaveLength(2); expect(mocks.systemEvent.create).toHaveBeenCalledOnce();
   });
   it.each([{ event: 'EXIT_LONG' }, { timeframe: '30m' }, { barTime: '2026-09-07T15:00:00Z' }])('records different logical identity: %j', async change => {
     await ingest();

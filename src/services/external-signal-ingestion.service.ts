@@ -81,27 +81,6 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
       });
       const security = await tx.security.findUnique({ where: { symbol: normalized.symbol }, select: { id: true, symbol: true } });
       if (!security) throw new SignalRejection('UNKNOWN_SYMBOL', { fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
-      let tradeCycle: { id: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; securityId: number } | null = null;
-      if (v2Identity) {
-        tradeCycle = await tx.externalSignalTradeCycle.findUnique({ where: {
-          strategySignalBindingId_externalTradeCycleRef: {
-            strategySignalBindingId: binding.id,
-            externalTradeCycleRef: v2Identity.externalTradeCycleRef,
-          },
-        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
-        if (tradeCycle && (tradeCycle.strategySignalRevisionId !== active.id || tradeCycle.strategyRevision !== active.revision ||
-          tradeCycle.securityId !== security.id)) {
-          throw new SignalRejection('EVENT_KEY_CONFLICT', {
-            fields: ['externalTradeCycleRef'], reason: 'same_trade_cycle_identity_different_authority',
-          });
-        }
-        tradeCycle ??= await tx.externalSignalTradeCycle.create({ data: {
-          strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
-          strategyRevision: active.revision, securityId: security.id,
-          externalTradeCycleRef: v2Identity.externalTradeCycleRef,
-          status: normalized.event === 'ENTRY_LONG' ? 'ENTRY_RECEIVED' : 'AWAITING_ENTRY',
-        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
-      }
       const fingerprintIdentity = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
         securityId: security.id, event: normalized.event, timeframe: normalized.timeframe,
@@ -123,7 +102,6 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         ...(v2Identity ? {
           externalEventId: v2Identity.externalEventId,
           externalTradeCycleRef: v2Identity.externalTradeCycleRef,
-          externalSignalTradeCycleId: tradeCycle!.id,
         } : {}),
       };
       const incomingPayload = canonicalSignalPayload(content, binding.externalStrategyKey);
@@ -155,8 +133,48 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         await routeSignalInTransaction(existing.id, tx);
         return tx.signalDelivery.create({ data: { ...deliveryBase, processedAt: new Date(), status: 'DUPLICATE', signalId: existing.id } });
       }
+      let tradeCycle: { id: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; securityId: number } | null = null;
+      if (v2Identity) {
+        tradeCycle = await tx.externalSignalTradeCycle.findUnique({ where: {
+          strategySignalBindingId_externalTradeCycleRef: {
+            strategySignalBindingId: binding.id,
+            externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+          },
+        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
+        if (tradeCycle && (tradeCycle.strategySignalRevisionId !== active.id || tradeCycle.strategyRevision !== active.revision ||
+          tradeCycle.securityId !== security.id)) {
+          throw new SignalRejection('EVENT_KEY_CONFLICT', {
+            fields: ['externalTradeCycleRef'], reason: 'same_trade_cycle_identity_different_authority',
+          });
+        }
+        tradeCycle ??= await tx.externalSignalTradeCycle.create({ data: {
+          strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
+          strategyRevision: active.revision, securityId: security.id,
+          externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+          status: normalized.event === 'ENTRY_LONG' ? 'ENTRY_RECEIVED' : 'AWAITING_ENTRY',
+        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
+        if (normalized.event === 'ENTRY_LONG') {
+          const originalEntry = await tx.signal.findFirst({ where: {
+            externalSignalTradeCycleId: tradeCycle.id,
+            event: 'ENTRY_LONG',
+          }, select: { id: true, externalEventId: true } });
+          if (originalEntry) {
+            const delivery = await reject(new SignalRejection('EVENT_KEY_CONFLICT', {
+              externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+              existingSignalId: originalEntry.id,
+              reason: 'trade_cycle_already_has_entry',
+            }));
+            await createSystemEvent({ type: 'external_signal_event_fingerprint_conflict', entityType: 'signal_delivery',
+              entityId: delivery.id, severity: 'WARNING', payloadJson: {
+                signalSourceId: source.id, existingSignalId: originalEntry.id, deliveryId: delivery.id,
+              } }, tx);
+            return delivery;
+          }
+        }
+      }
       const signal = await tx.signal.create({ data: {
-        ...content, signalTime: normalized.signalTime, barTime: normalized.barTime,
+        ...content, ...(tradeCycle ? { externalSignalTradeCycleId: tradeCycle.id } : {}),
+        signalTime: normalized.signalTime, barTime: normalized.barTime,
         metadata: normalized.metadata as Prisma.InputJsonObject | undefined ?? Prisma.DbNull,
         canonicalPayloadHash,
       } });

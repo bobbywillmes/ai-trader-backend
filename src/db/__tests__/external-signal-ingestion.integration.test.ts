@@ -112,6 +112,16 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       bodySizeBytes: body.length, body, rawPayloadHash: createHash('sha256').update(body).digest('hex'), tooLarge: false, validContentType: true };
     return ingestExternalSignal(source, token, evidence, db);
   }
+  async function ingestV2(eventId: string, cycleRef: string, change: Record<string, unknown> = {}) {
+    const source = await db.externalSignalSource.findUniqueOrThrow({ where: { id: 1 } });
+    const body = Buffer.from(JSON.stringify({ schemaVersion: 2, externalEventId: eventId,
+      externalTradeCycleRef: cycleRef, externalStrategyKey: 'test', strategyRevision: 1,
+      event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '15m', signalTime: '2026-10-28T12:00:00Z', ...change }));
+    const evidence: SignalRequestEvidence = { requestId: randomUUID(), receivedAt: new Date('2026-10-28T12:01:00Z'),
+      contentType: 'application/json', bodySizeBytes: body.length, body,
+      rawPayloadHash: createHash('sha256').update(body).digest('hex'), tooLarge: false, validContentType: true };
+    return ingestExternalSignal(source, token, evidence, db);
+  }
 
   it('backfills active Revision 1 without rewriting legacy Signal or Delivery evidence', async () => {
     const { legacyStrategyRevision, strategyRevision, strategySignalRevisionId, eventFingerprint,
@@ -167,6 +177,33 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
       expect(await db.signalDelivery.findFirst({ where: { requestId: conflictResponse.requestId } })).toMatchObject({ status: 'REJECTED', rejectionCode: 'EVENT_FINGERPRINT_CONFLICT', signalId: null });
       expect(await db.signal.count({ where: { signalSourceId: 1, eventFingerprint: original.eventFingerprint } })).toBe(1);
       expect(await db.signal.findUnique({ where: { id: original.id } })).toEqual(original);
+    } finally {
+      server.closeAllConnections();
+      await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
+    }
+  });
+  it('returns an intentional HTTP rejection for a second v2 ENTRY in one cycle', async () => {
+    const app = express();
+    app.post('/api/external-signals/:webhookKey', createExternalSignalIngressController(db));
+    const server = app.listen(0);
+    await new Promise<void>(resolve => server.once('listening', resolve));
+    try {
+      const address = server.address();
+      if (!address || typeof address === 'string') throw new Error('No HTTP port');
+      const prefix = `http-second-entry-${randomUUID()}`;
+      const input = { schemaVersion: 2, externalTradeCycleRef: `${prefix}:cycle`, externalStrategyKey: 'test',
+        strategyRevision: 1, event: 'ENTRY_LONG', symbol: 'QQQ', timeframe: '15m', signalTime: '2026-10-28T12:05:00Z' };
+      const post = (externalEventId: string) => fetch(`http://127.0.0.1:${address.port}/api/external-signals/${token}`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...input, externalEventId }),
+      });
+      expect((await post(`${prefix}:event:1`)).status).toBe(201);
+      const rejected = await post(`${prefix}:event:2`);
+      expect(rejected.status).toBe(400);
+      const response = await rejected.json() as { requestId: string };
+      expect(await db.signalDelivery.findFirst({ where: { requestId: response.requestId } })).toMatchObject({
+        status: 'REJECTED', rejectionCode: 'EVENT_KEY_CONFLICT', signalId: null,
+        rejectionDetails: { externalTradeCycleRef: `${prefix}:cycle`, reason: 'trade_cycle_already_has_entry' },
+      });
     } finally {
       server.closeAllConnections();
       await new Promise<void>((resolve, reject) => server.close(error => error ? reject(error) : resolve()));
@@ -238,6 +275,45 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(results.find(row => row?.status === 'REJECTED')?.rejectionCode).toBe('EVENT_FINGERPRINT_CONFLICT');
     expect(await db.systemEvent.count({ where: { type: 'external_signal_event_fingerprint_conflict' } })).toBeGreaterThanOrEqual(1);
     expect(await db.signal.count({ where: { signalTime: new Date(occurrence('conflicting-race')) } })).toBe(1);
+  });
+  it('rejects v2 event-ID reuse before a changed identity can create a source cycle', async () => {
+    await admin.query(`INSERT INTO "Security" (id, symbol) VALUES (200, 'SPY') ON CONFLICT DO NOTHING`);
+    const prefix = `event-order-${randomUUID()}`;
+    const originalCycle = `${prefix}:original`;
+    expect(await ingestV2(`${prefix}:event`, originalCycle)).toMatchObject({ status: 'NORMALIZED' });
+    const beforeCycles = await db.externalSignalTradeCycle.count();
+    const beforeSignals = await db.signal.count();
+    const conflicts = await Promise.all([
+      ingestV2(`${prefix}:event`, `${prefix}:orphan`),
+      ingestV2(`${prefix}:event`, originalCycle, { symbol: 'SPY' }),
+      ingestV2(`${prefix}:event`, originalCycle, { timeframe: '30m' }),
+    ]);
+    expect(conflicts).toHaveLength(3);
+    expect(conflicts.every(row => row?.status === 'REJECTED' && row.rejectionCode === 'EVENT_KEY_CONFLICT')).toBe(true);
+    expect(await db.externalSignalTradeCycle.count()).toBe(beforeCycles);
+    expect(await db.externalSignalTradeCycle.count({ where: { externalTradeCycleRef: `${prefix}:orphan` } })).toBe(0);
+    expect(await db.signal.count()).toBe(beforeSignals);
+    expect(await db.signalDelivery.count({ where: { id: { in: conflicts.map(row => row!.id) }, status: 'REJECTED' } })).toBe(3);
+    expect(await db.systemEvent.count({ where: { entityType: 'signal_delivery', entityId: { in: conflicts.map(row => String(row!.id)) } } })).toBe(3);
+  });
+  it('serializes concurrent distinct event IDs into one ENTRY and one durable cycle conflict', async () => {
+    const prefix = `second-entry-${randomUUID()}`;
+    const results = await Promise.all([
+      ingestV2(`${prefix}:event:1`, `${prefix}:cycle`),
+      ingestV2(`${prefix}:event:2`, `${prefix}:cycle`),
+    ]);
+    expect(results.map(row => row?.status).sort()).toEqual(['NORMALIZED', 'REJECTED']);
+    const rejected = results.find(row => row?.status === 'REJECTED')!;
+    expect(rejected).toMatchObject({ rejectionCode: 'EVENT_KEY_CONFLICT', rejectionDetails: {
+      externalTradeCycleRef: `${prefix}:cycle`, reason: 'trade_cycle_already_has_entry',
+    } });
+    const cycle = await db.externalSignalTradeCycle.findUniqueOrThrow({ where: {
+      strategySignalBindingId_externalTradeCycleRef: { strategySignalBindingId: 1, externalTradeCycleRef: `${prefix}:cycle` },
+    } });
+    expect(await db.signal.count({ where: { externalSignalTradeCycleId: cycle.id, event: 'ENTRY_LONG' } })).toBe(1);
+    expect(await db.signal.count({ where: { externalEventId: { in: [`${prefix}:event:1`, `${prefix}:event:2`] } } })).toBe(1);
+    expect(await db.signalDelivery.count({ where: { id: { in: results.map(row => row!.id) } } })).toBe(2);
+    expect(await db.systemEvent.count({ where: { entityType: 'signal_delivery', entityId: String(rejected.id) } })).toBe(1);
   });
   it('rolls back Signal creation when normalized Delivery insertion fails', async () => {
     const beforeRuns = await db.signalRoutingRun.count();
