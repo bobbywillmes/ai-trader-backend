@@ -14,6 +14,7 @@ import { createStrategySignalBindingSchema } from '../../validators/external-sig
 import { canonicalSignalPayload, hashCanonicalPayload } from '../../services/external-signal-normalization.js';
 import { routeSignal } from '../../services/signal-routing.service.js';
 import { evaluateSignalRoute } from '../../services/signal-evaluation.service.js';
+import { processExternalSignalCorrelationWork } from '../../services/external-signal-correlation.service.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -92,6 +93,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     `);
     await admin.query(await readFile('prisma/migrations/20261028120000_external_signal_shadow_identity_foundation/migration.sql', 'utf8'));
     await admin.query(await readFile('prisma/migrations/20261028150000_external_signal_identity_integrity_corrections/migration.sql', 'utf8'));
+    await admin.query(await readFile('prisma/migrations/20261028200000_external_signal_durable_correlation/migration.sql', 'utf8'));
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -541,6 +543,43 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     const tables = (await admin.query('SELECT table_name FROM information_schema.tables WHERE table_schema = $1', [schema])).rows.map(row => row.table_name);
     for (const table of ['BrokerOrder', 'BrokerActivity', 'EntryDecision', 'PositionCloseRequest']) expect(tables).not.toContain(table);
     expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
+  });
+
+  it('durably serializes EXIT-before-ENTRY, freezes multi-account routes, and remains idempotent and shadow-only', async () => {
+    const { binding, revision } = await routingFixture('EVALUATION_ONLY');
+    await admin.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled)
+      VALUES (2,2,true) ON CONFLICT ("tradingAccountId","subscriptionId") DO UPDATE SET enabled=true`);
+    await admin.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration"
+      (direction,generation,enabled,"authorityMode","configurationJson","configurationFingerprint","effectiveAt")
+      VALUES ('ENTRY',1,true,'SHADOW','{}',$1,statement_timestamp())`, [randomUUID().replaceAll('-', '').repeat(2).slice(0, 64)]);
+    const cycleRef = `correlation:${randomUUID()}`;
+    const send = async (event: 'ENTRY_LONG' | 'EXIT_LONG', eventId: string) => {
+      const source = await db.externalSignalSource.findUniqueOrThrow({ where: { id: 1 } });
+      const body = Buffer.from(JSON.stringify({ schemaVersion: 2, externalEventId: eventId,
+        externalTradeCycleRef: cycleRef, externalStrategyKey: binding.externalStrategyKey,
+        strategyRevision: revision.revision, event, symbol: 'QQQ', timeframe: '15m', signalTime: new Date().toISOString() }));
+      return ingestExternalSignal(source, token, { requestId: randomUUID(), receivedAt: new Date(), contentType: 'application/json',
+        bodySizeBytes: body.length, rawPayloadHash: createHash('sha256').update(body).digest('hex'), body,
+        tooLarge: false, validContentType: true }, db);
+    };
+    const exit = await send('EXIT_LONG', `exit:${randomUUID()}`);
+    const entry = await send('ENTRY_LONG', `entry:${randomUUID()}`);
+    expect(exit?.status).toBe('NORMALIZED'); expect(entry?.status).toBe('NORMALIZED');
+    expect(await db.externalSignalTradeCycle.findFirst({ where: { externalTradeCycleRef: cycleRef } })).toMatchObject({ status: 'ENTRY_RECEIVED' });
+
+    const runs = await Promise.all(Array.from({ length: 4 }, (_, index) =>
+      processExternalSignalCorrelationWork({ db, workerId: `correlation-test-${index}`, limit: 4 })));
+    expect(runs.reduce((sum, run) => sum + run.completed, 0)).toBeGreaterThanOrEqual(2);
+    const cycle = await db.externalSignalTradeCycle.findFirstOrThrow({ where: { externalTradeCycleRef: cycleRef } });
+    expect(cycle.status).toBe('TERMINAL_NO_EXPOSURE');
+    const accounts = await db.externalSignalTradeCycleAccount.findMany({ where: { externalSignalTradeCycleId: cycle.id }, orderBy: { tradingAccountId: 'asc' } });
+    expect(accounts.map(account => [account.tradingAccountId, account.subscriptionId, account.status]))
+      .toEqual([[1, 1, 'TERMINAL_NO_EXPOSURE'], [2, 2, 'TERMINAL_NO_EXPOSURE']]);
+    expect(accounts.every(account => account.entryOrderIntentId === null && account.trackedPositionId === null && account.entryReservationKey?.startsWith('external-shadow:'))).toBe(true);
+    expect(await db.externalSignalCorrelationDecision.count({ where: { externalSignalTradeCycleId: cycle.id, authorityMode: 'SHADOW' } })).toBe(5);
+    expect(await db.externalSignalCorrelationWork.count({ where: { signalId: { in: [exit!.signalId!, entry!.signalId!] }, status: 'COMPLETED' } })).toBe(2);
+    expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
+    expect(await processExternalSignalCorrelationWork({ db, workerId: 'idempotency-check', limit: 10 })).toMatchObject({ claimed: 0, completed: 0 });
   });
 
   it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {

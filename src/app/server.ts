@@ -66,6 +66,7 @@ import { runOrderIntentBrokerComparisonWorker } from '../workers/order-intent-br
 import { ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeBrokerObservationPrisma } from '../db/broker-observation-prisma.js';
 import { PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS } from '../workers/worker-health.definitions.js';
+import { runExternalSignalCorrelationWorker } from '../workers/external-signal-correlation.worker.js';
 
 const app = createApp();
 
@@ -183,6 +184,10 @@ function runIntradayWorker(key: WorkerKey, execute: () => Promise<WorkerTickResu
 
 function startWorkers() {
   workerHealthRegistry.startPersistence();
+  const runExternalCorrelation = () => void runExternalSignalCorrelationWorker().catch(error =>
+    logger.error({ error }, 'External signal shadow correlation worker failed.'));
+  runExternalCorrelation();
+  setInterval(runExternalCorrelation, 5_000);
   void runWorker('trend_assessment_publication', runTrendAssessmentWorker);
   void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker);
   setInterval(() => { void runWorker('volatility_assessment_publication', runVolatilityAssessmentWorker); }, VOLATILITY_ASSESSMENT_WORKER_INTERVAL_MS);

@@ -55,7 +55,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
     } });
     // Recheck configuration after the body has arrived. Rotation invalidates an
     // in-flight credential; disabling a source or binding applies prospectively.
-    await tx.$queryRaw`SELECT id FROM "ExternalSignalSource" WHERE id = ${source.id} FOR SHARE`;
+    await tx.$queryRaw`SELECT id FROM "ExternalSignalSource" WHERE id = ${source.id} FOR UPDATE`;
     const currentSource = await tx.externalSignalSource.findUnique({ where: { id: source.id } });
     if (!currentSource || currentSource.webhookKeyHash !== hashWebhookKey(webhookKey)) return null;
     if (!currentSource.enabled) return reject(new SignalRejection('SOURCE_DISABLED', { reason: 'source_not_enabled' }));
@@ -76,13 +76,27 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
       await tx.$queryRaw`SELECT id FROM "StrategySignalBinding" WHERE id = ${binding.id} FOR UPDATE`;
       const active = await tx.strategySignalRevision.findFirst({ where: { strategySignalBindingId: binding.id, status: 'ACTIVE' } });
       if (!binding.enabled) throw new SignalRejection('STRATEGY_BINDING_DISABLED', { strategySignalBindingId: binding.id, reason: 'binding_not_enabled' });
-      if (!active || active.revision !== normalized.strategyRevision) throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
+      let acceptedRevision = active;
+      if (!active || active.revision !== normalized.strategyRevision) {
+        const historicalCycle = v2Identity && normalized.event === 'EXIT_LONG'
+          ? await tx.externalSignalTradeCycle.findUnique({ where: { strategySignalBindingId_externalTradeCycleRef: {
+            strategySignalBindingId: binding.id, externalTradeCycleRef: v2Identity.externalTradeCycleRef,
+          } } }) : null;
+        if (!historicalCycle || historicalCycle.strategyRevision !== normalized.strategyRevision ||
+          ['TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED', 'CONFLICT'].includes(historicalCycle.status)) {
+          throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
+            strategySignalBindingId: binding.id, activeRevision: active?.revision ?? null, receivedRevision: normalized.strategyRevision,
+          });
+        }
+        acceptedRevision = await tx.strategySignalRevision.findUnique({ where: { id: historicalCycle.strategySignalRevisionId } });
+      }
+      if (!acceptedRevision) throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
         strategySignalBindingId: binding.id, activeRevision: active?.revision ?? null, receivedRevision: normalized.strategyRevision,
       });
       const security = await tx.security.findUnique({ where: { symbol: normalized.symbol }, select: { id: true, symbol: true } });
       if (!security) throw new SignalRejection('UNKNOWN_SYMBOL', { fields: ['symbol'], reason: 'symbol_not_in_security_catalog' });
       const fingerprintIdentity = {
-        signalSourceId: source.id, strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
+        signalSourceId: source.id, strategySignalBindingId: binding.id, strategySignalRevisionId: acceptedRevision.id,
         securityId: security.id, event: normalized.event, timeframe: normalized.timeframe,
         eventOccurrenceTime: (normalized.barTime ?? normalized.signalTime).toISOString(),
         ...(v2Identity ? {
@@ -93,7 +107,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
       const eventFingerprint = hashCanonicalPayload(fingerprintIdentity);
       const content = {
         signalSourceId: source.id, strategySignalBindingId: binding.id, strategyId: binding.strategyId,
-        strategySignalRevisionId: active.id,
+        strategySignalRevisionId: acceptedRevision.id,
         securityId: security.id, symbol: security.symbol, schemaVersion: normalized.schemaVersion,
         eventFingerprint, strategyRevision: normalized.strategyRevision,
         event: normalized.event, timeframe: normalized.timeframe,
@@ -142,7 +156,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
             } }, tx);
           return delivery;
         }
-        await routeSignalInTransaction(existing.id, tx);
+        if (existing.schemaVersion !== 2) await routeSignalInTransaction(existing.id, tx);
         return tx.signalDelivery.create({ data: { ...deliveryBase, processedAt: new Date(), status: 'DUPLICATE', signalId: existing.id } });
       }
       let tradeCycle: { id: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; securityId: number } | null = null;
@@ -153,15 +167,16 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
             externalTradeCycleRef: v2Identity.externalTradeCycleRef,
           },
         }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
-        if (tradeCycle && (tradeCycle.strategySignalRevisionId !== active.id || tradeCycle.strategyRevision !== active.revision ||
+        if (tradeCycle) await tx.$queryRaw`SELECT id FROM "ExternalSignalTradeCycle" WHERE id = ${tradeCycle.id} FOR UPDATE`;
+        if (tradeCycle && (tradeCycle.strategySignalRevisionId !== acceptedRevision.id || tradeCycle.strategyRevision !== acceptedRevision.revision ||
           tradeCycle.securityId !== security.id)) {
           throw new SignalRejection('EVENT_KEY_CONFLICT', {
             fields: ['externalTradeCycleRef'], reason: 'same_trade_cycle_identity_different_authority',
           });
         }
         tradeCycle ??= await tx.externalSignalTradeCycle.create({ data: {
-          strategySignalBindingId: binding.id, strategySignalRevisionId: active.id,
-          strategyRevision: active.revision, securityId: security.id,
+          strategySignalBindingId: binding.id, strategySignalRevisionId: acceptedRevision.id,
+          strategyRevision: acceptedRevision.revision, securityId: security.id,
           externalTradeCycleRef: v2Identity.externalTradeCycleRef,
           status: normalized.event === 'ENTRY_LONG' ? 'ENTRY_RECEIVED' : 'AWAITING_ENTRY',
         }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
@@ -182,6 +197,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
               } }, tx);
             return delivery;
           }
+          await tx.externalSignalTradeCycle.updateMany({ where: { id: tradeCycle.id, status: 'AWAITING_ENTRY' }, data: { status: 'ENTRY_RECEIVED' } });
         }
       }
       const signal = await tx.signal.create({ data: {
@@ -190,11 +206,22 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         metadata: normalized.metadata as Prisma.InputJsonObject | undefined ?? Prisma.DbNull,
         canonicalPayloadHash,
       } });
-      const routing = await routeSignalInTransaction(signal.id, tx);
-      for (const route of routing.routes) await evaluateNewSignalRoute(route.id, tx);
+      if (v2Identity) {
+        await tx.externalSignalCorrelationWork.create({ data: { signalId: signal.id } });
+      } else {
+        const routing = await routeSignalInTransaction(signal.id, tx);
+        for (const route of routing.routes) await evaluateNewSignalRoute(route.id, tx);
+      }
       return tx.signalDelivery.create({ data: { ...deliveryBase, processedAt: new Date(), status: 'NORMALIZED', signalId: signal.id } });
     } catch (error) {
-      if (error instanceof SignalRejection) return reject(error);
+      if (error instanceof SignalRejection) {
+        const delivery = await reject(error);
+        if (error.code === 'EVENT_KEY_CONFLICT' && (error.details as { reason?: string } | null)?.reason === 'same_trade_cycle_identity_different_authority') {
+          await createSystemEvent({ type: 'external_signal_cycle_authority_conflict', entityType: 'signal_delivery',
+            entityId: delivery.id, severity: 'WARNING', payloadJson: { signalSourceId: source.id, deliveryId: delivery.id } }, tx);
+        }
+        return delivery;
+      }
       throw error;
     }
   });

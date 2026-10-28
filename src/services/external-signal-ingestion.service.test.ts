@@ -4,11 +4,12 @@ import { Prisma, type ExternalSignalSource } from '@prisma/client';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const mocks = vi.hoisted(() => ({
-  $queryRaw: vi.fn(), strategySignalRevision: { findFirst: vi.fn() },
+  $queryRaw: vi.fn(), strategySignalRevision: { findFirst: vi.fn(), findUnique: vi.fn() },
   externalSignalSource: { findUnique: vi.fn() },
   strategySignalBinding: { findUnique: vi.fn() }, security: { findUnique: vi.fn() },
   signal: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() }, signalDelivery: { create: vi.fn() },
-  externalSignalTradeCycle: { findUnique: vi.fn(), create: vi.fn() },
+  externalSignalTradeCycle: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+  externalSignalCorrelationWork: { create: vi.fn() },
   systemEvent: { create: vi.fn() }, transaction: vi.fn(),
 }));
 vi.mock('../db/prisma.js', () => ({ prisma: { ...mocks, $transaction: mocks.transaction } }));

@@ -111,6 +111,8 @@ Table Signal {
   routingRun SignalRoutingRun
   strategySignalRevision StrategySignalRevision
   externalSignalTradeCycle ExternalSignalTradeCycle
+  correlationWork ExternalSignalCorrelationWork
+  correlationDecisions ExternalSignalCorrelationDecision [not null]
 
   indexes {
     (signalSourceId, externalEventKey) [unique]
@@ -170,6 +172,7 @@ Table ExternalSignalExecutionRolloutGeneration {
   supersededBy ExternalSignalExecutionRolloutGeneration
   createdBy User
   accountCycles ExternalSignalTradeCycleAccount [not null]
+  correlationDecisions ExternalSignalCorrelationDecision [not null]
 
   indexes {
     (direction, generation) [unique]
@@ -193,6 +196,7 @@ Table ExternalSignalTradeCycle {
   security Security [not null]
   signals Signal [not null]
   accountCycles ExternalSignalTradeCycleAccount [not null]
+  correlationDecisions ExternalSignalCorrelationDecision [not null]
 
   indexes {
     (strategySignalBindingId, externalTradeCycleRef) [unique]
@@ -229,10 +233,48 @@ Table ExternalSignalTradeCycleAccount {
   entryRolloutGeneration ExternalSignalExecutionRolloutGeneration
   entryOrderIntent OrderIntent
   trackedPosition TrackedPosition
+  correlationDecisions ExternalSignalCorrelationDecision [not null]
 
   indexes {
     (externalSignalTradeCycleId, tradingAccountId) [unique]
     (entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId) [unique]
+  }
+}
+
+Table ExternalSignalCorrelationWork {
+  id Int [pk, increment]
+  signalId Int [unique, not null]
+  status ExternalSignalCorrelationWorkStatus [not null, default: 'PENDING']
+  attemptCount Int [not null, default: 0]
+  leaseOwner String
+  leaseExpiresAt DateTime
+  nextAttemptAt DateTime [default: `now()`, not null]
+  lastErrorCode String
+  completedAt DateTime
+  createdAt DateTime [default: `now()`, not null]
+  updatedAt DateTime [not null]
+  signal Signal [not null]
+}
+
+Table ExternalSignalCorrelationDecision {
+  id Int [pk, increment]
+  externalSignalTradeCycleId Int [not null]
+  accountCycleId Int
+  signalId Int [not null]
+  decisionType ExternalSignalCorrelationDecisionType [not null]
+  authorityMode ExternalSignalExecutionAuthorityMode [not null, default: 'SHADOW']
+  rolloutGenerationId Int
+  reservationKey String
+  reasonCode String [not null]
+  evidenceJson Json [not null]
+  createdAt DateTime [default: `now()`, not null]
+  tradeCycle ExternalSignalTradeCycle [not null]
+  accountCycle ExternalSignalTradeCycleAccount
+  signal Signal [not null]
+  rolloutGeneration ExternalSignalExecutionRolloutGeneration
+
+  indexes {
+    (signalId, accountCycleId, decisionType) [unique]
   }
 }
 
@@ -2938,6 +2980,22 @@ Enum ExternalSignalNoExposureProof {
   ENTRY_CANCELED_BEFORE_FILL_AND_VERIFIED_ABSENT
 }
 
+Enum ExternalSignalCorrelationWorkStatus {
+  PENDING
+  CLAIMED
+  RETRY_WAIT
+  COMPLETED
+  FAILED
+}
+
+Enum ExternalSignalCorrelationDecisionType {
+  ENTRY_RESERVATION
+  ENTRY_SHADOW_AUTHORITY
+  EXIT_PENDING
+  ENTRY_SUPPRESSED
+  CYCLE_BLOCKED
+}
+
 Enum ExitManagementMode {
   BACKEND_MANAGED
   EXTERNAL_SIGNAL
@@ -3562,6 +3620,16 @@ Ref: ExternalSignalTradeCycleAccount.entryRolloutGenerationId > ExternalSignalEx
 Ref: ExternalSignalTradeCycleAccount.entryOrderIntentId - OrderIntent.id [delete: Restrict]
 
 Ref: ExternalSignalTradeCycleAccount.trackedPositionId - TrackedPosition.id [delete: Restrict]
+
+Ref: ExternalSignalCorrelationWork.signalId - Signal.id [delete: Restrict]
+
+Ref: ExternalSignalCorrelationDecision.externalSignalTradeCycleId > ExternalSignalTradeCycle.id [delete: Restrict]
+
+Ref: ExternalSignalCorrelationDecision.accountCycleId > ExternalSignalTradeCycleAccount.id [delete: Restrict]
+
+Ref: ExternalSignalCorrelationDecision.signalId > Signal.id [delete: Restrict]
+
+Ref: ExternalSignalCorrelationDecision.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
 
 Ref: SignalEvaluation.signalRouteId - SignalRoute.id [delete: Restrict]
 

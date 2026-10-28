@@ -126,6 +126,22 @@ enum ExternalSignalNoExposureProof {
   ENTRY_CANCELED_BEFORE_FILL_AND_VERIFIED_ABSENT
 }
 
+enum ExternalSignalCorrelationWorkStatus {
+  PENDING
+  CLAIMED
+  RETRY_WAIT
+  COMPLETED
+  FAILED
+}
+
+enum ExternalSignalCorrelationDecisionType {
+  ENTRY_RESERVATION
+  ENTRY_SHADOW_AUTHORITY
+  EXIT_PENDING
+  ENTRY_SUPPRESSED
+  CYCLE_BLOCKED
+}
+
 // Identity and note are immutable; authority is mutable only while PREPARED.
 model StrategySignalRevision {
   id                      Int                          @id @default(autoincrement())
@@ -226,6 +242,8 @@ model Signal {
   routingRun            SignalRoutingRun?
   strategySignalRevision StrategySignalRevision? @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict)
   externalSignalTradeCycle ExternalSignalTradeCycle? @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  correlationWork       ExternalSignalCorrelationWork?
+  correlationDecisions  ExternalSignalCorrelationDecision[]
 
   @@unique([signalSourceId, externalEventKey])
   @@unique([signalSourceId, externalEventId])
@@ -294,6 +312,7 @@ model ExternalSignalExecutionRolloutGeneration {
   supersededBy  ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalExecutionRolloutSupersession")
   createdBy     User?                                     @relation("ExternalSignalExecutionRolloutCreator", fields: [createdByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalExecutionRolloutGeneration_creator_fkey")
   accountCycles ExternalSignalTradeCycleAccount[]
+  correlationDecisions ExternalSignalCorrelationDecision[]
 
   @@unique([direction, generation], map: "ExternalSignalExecutionRolloutGeneration_direction_generation_k")
   @@index([direction, effectiveAt], map: "ExternalSignalExecutionRolloutGeneration_direction_effectiveAt_")
@@ -319,6 +338,7 @@ model ExternalSignalTradeCycle {
   security      Security               @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycle_security_fkey")
   signals       Signal[]
   accountCycles ExternalSignalTradeCycleAccount[]
+  correlationDecisions ExternalSignalCorrelationDecision[]
 
   @@unique([strategySignalBindingId, externalTradeCycleRef], map: "ExternalSignalTradeCycle_binding_reference_key")
   @@unique([id, strategySignalBindingId, strategySignalRevisionId, securityId], map: "ExternalSignalTradeCycle_identity_key")
@@ -358,6 +378,7 @@ model ExternalSignalTradeCycleAccount {
   entryRolloutGeneration  ExternalSignalExecutionRolloutGeneration? @relation(fields: [entryRolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_rollout_fkey")
   entryOrderIntent        OrderIntent?                             @relation(fields: [entryOrderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_order_intent_fkey")
   trackedPosition         TrackedPosition?                         @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalTradeCycleAccount_position_fkey")
+  correlationDecisions    ExternalSignalCorrelationDecision[]
 
   @@unique([externalSignalTradeCycleId, tradingAccountId], map: "ExternalSignalTradeCycleAccount_cycle_account_key")
   @@unique([entrySignalRouteId, tradingAccountId, tradingAccountSubscriptionId, subscriptionId], map: "ExternalSignalTradeCycleAccount_route_identity_key")
@@ -365,6 +386,50 @@ model ExternalSignalTradeCycleAccount {
   @@index([subscriptionId, status], map: "ExternalSignalTradeCycleAccount_subscription_status_idx")
   @@index([securityId, status], map: "ExternalSignalTradeCycleAccount_security_status_idx")
   @@index([status, updatedAt])
+}
+
+// Durable, lease-based handoff from v2 webhook acceptance to shadow correlation.
+model ExternalSignalCorrelationWork {
+  id             Int                                 @id @default(autoincrement())
+  signalId       Int                                 @unique
+  status         ExternalSignalCorrelationWorkStatus @default(PENDING)
+  attemptCount   Int                                 @default(0)
+  leaseOwner     String?
+  leaseExpiresAt DateTime?                            @db.Timestamptz(3)
+  nextAttemptAt  DateTime                             @default(now()) @db.Timestamptz(3)
+  lastErrorCode  String?
+  completedAt    DateTime?                            @db.Timestamptz(3)
+  createdAt      DateTime                             @default(now()) @db.Timestamptz(3)
+  updatedAt      DateTime                             @updatedAt @db.Timestamptz(3)
+
+  signal Signal @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@index([status, nextAttemptAt, id])
+  @@index([leaseExpiresAt])
+}
+
+// Append-only, explicitly SHADOW evidence. No row can authorize execution.
+model ExternalSignalCorrelationDecision {
+  id                         Int                                   @id @default(autoincrement())
+  externalSignalTradeCycleId Int
+  accountCycleId             Int?
+  signalId                   Int
+  decisionType               ExternalSignalCorrelationDecisionType
+  authorityMode              ExternalSignalExecutionAuthorityMode @default(SHADOW)
+  rolloutGenerationId        Int?
+  reservationKey             String?
+  reasonCode                 String
+  evidenceJson               Json
+  createdAt                  DateTime                              @default(now()) @db.Timestamptz(3)
+
+  tradeCycle   ExternalSignalTradeCycle         @relation(fields: [externalSignalTradeCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountCycle ExternalSignalTradeCycleAccount? @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signal       Signal                           @relation(fields: [signalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  rolloutGeneration ExternalSignalExecutionRolloutGeneration? @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+
+  @@unique([signalId, accountCycleId, decisionType], map: "ExternalSignalCorrelationDecision_signal_account_type_key")
+  @@index([externalSignalTradeCycleId, createdAt])
+  @@index([accountCycleId, createdAt])
 }
 
 enum ExitManagementMode {

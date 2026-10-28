@@ -8,6 +8,37 @@ ENTRY_LONG and EXIT_LONG now produce bounded evaluation evidence, never risk gat
 order intents, brokers or position/exit pipelines.
 The existing n8n `/api/signals` trading pipeline remains separate.
 
+## Phase 4A.1B durable correlation
+
+Accepted contract-v2 Signals commit an `ExternalSignalCorrelationWork` handoff in the
+same transaction as their normalized Delivery. A lease-based worker resumes abandoned
+claims and processes work under serializable transactions. Its lock order is always
+ExternalSignalSource, StrategySignalBinding, ExternalSignalTradeCycle, then each
+ExternalSignalTradeCycleAccount. Deadlocks and serialization failures are retried from
+the durable work row; webhook evidence is never rolled back merely because later
+correlation is interrupted.
+
+ENTRY routing freezes the original SignalRoute account, assignment, Subscription,
+Strategy and Security snapshot into one account cycle per PAPER target. Each account
+cycle receives a deterministic `external-shadow:` reservation and append-only
+`ExternalSignalCorrelationDecision` evidence. Decisions are database-constrained to
+`SHADOW`; a missing ENTRY rollout produces explicit `CYCLE_BLOCKED` evidence and is
+never interpreted as authority. No correlation writer can populate OrderIntent or
+TrackedPosition links during this phase.
+
+An EXIT may create an `AWAITING_ENTRY` source cycle without account cycles. When the
+matching ENTRY arrives, ingress advances it to `ENTRY_RECEIVED`; the worker fans the
+pending EXIT out only to that ENTRY's original account routes and suppresses admission
+before any executable handoff. If an EXIT races an existing admission reservation, it
+is retained as `EXIT_PENDING`; absence of an OrderIntent is explicitly not treated as
+proof that admission never began. Terminal source cycles are absorbing and cannot be
+reopened by delayed events.
+
+Historical revisions may submit v2 EXIT only for an existing nonterminal cycle whose
+binding, revision, Security and cycle reference match exactly. Historical ENTRY and
+new historical cycles remain rejected. Cycle-authority conflicts emit sanitized
+WARNING SystemEvent evidence.
+
 ## Operator workflow
 
 1. Create an ExternalSignalSource, for example TradingView Production.
