@@ -1,12 +1,13 @@
 import { updateOwnedSearchParams } from "../../app/searchParams";
 import { events, rejectionCodes, statuses, timeframes, type Section } from "./types";
-export const sections = { sources: "Sources", bindings: "Strategy Bindings", signals: "Signals", deliveries: "Deliveries" };
-const filterKeys = ["signalSourceId", "strategyId", "symbol", "event", "timeframe", "status", "rejectionCode", "signalId", "from", "to"] as const;
+export const sections = { sources: "Sources", bindings: "Strategy Bindings", signals: "Signals", deliveries: "Deliveries", operations: "Operations" };
+const filterKeys = ["signalSourceId", "strategyId", "symbol", "event", "timeframe", "status", "workStatus", "unresolvedExit", "rejectionCode", "signalId", "from", "to"] as const;
 const ownedKeys = ["section", "page", "pageSize", "detail", ...filterKeys];
 const supported: Record<Section, readonly string[]> = {
   sources: ["signalSourceId"], bindings: ["signalSourceId", "strategyId"],
   signals: ["signalSourceId", "strategyId", "symbol", "event", "timeframe", "from", "to"],
   deliveries: ["signalSourceId", "status", "rejectionCode", "signalId", "from", "to"],
+  operations: ["status", "workStatus", "event", "unresolvedExit"],
 };
 export function positiveId(value: string | null) { return value && /^\d+$/.test(value) && Number(value) > 0 && Number(value) <= 2147483647 ? Number(value) : null; }
 export function readExternalParams(params: URLSearchParams) {
@@ -20,7 +21,8 @@ export function readExternalParams(params: URLSearchParams) {
     if (!value) continue;
     if (key.endsWith("Id") && !positiveId(value)) continue;
     if (key === "event" && !events.some(item => item === value)) continue;
-    if (key === "status" && !statuses.some(item => item === value)) continue;
+    if (key === "status" && section !== 'operations' && !statuses.some(item => item === value)) continue;
+    if (key === 'unresolvedExit' && !['true','false'].includes(value)) continue;
     if (key === "timeframe" && !timeframes.some(item => item === value)) continue;
     if (key === "rejectionCode" && !rejectionCodes.some(item => item === value)) continue;
     if ((key === "from" || key === "to") && !Number.isFinite(Date.parse(value))) continue;

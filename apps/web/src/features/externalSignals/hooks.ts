@@ -15,6 +15,9 @@ export function useExternalDetail<K extends Section>(section: K, id: number | nu
   return useQuery({ queryKey: [...externalSignalKeys.section(section), "detail", id],
     queryFn: () => api.getExternalSignal(section, id!, token), enabled: Boolean(token && id) });
 }
+export function useOperations(query:string,token:string|null){return useQuery({queryKey:[...externalSignalKeys.section('operations'),'list',query],queryFn:()=>api.listExternalSignalOperations(query,token),enabled:Boolean(token)});}
+export function useOperation(id:number|null,token:string|null){return useQuery({queryKey:[...externalSignalKeys.section('operations'),'detail',id],queryFn:()=>api.getExternalSignalOperation(id!,token),enabled:Boolean(token&&id)});}
+export function useCorrelationRequeue(token:string|null){const client=useQueryClient();return useMutation({mutationFn:(id:number)=>api.requeueCorrelationWork(id,token),onSuccess:()=>client.invalidateQueries({queryKey:externalSignalKeys.section('operations')})});}
 export function useSourceCatalog(token: string | null) {
   return useQuery({ queryKey: externalSignalKeys.catalog, queryFn: () => api.getSourceCatalog(token), enabled: Boolean(token) });
 }

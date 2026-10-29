@@ -87,6 +87,13 @@ describe('external signal owner management and read routes', () => {
     expect((await fetch(`${baseUrl}/${resource}`, { headers: { authorization: 'Bearer session' } })).status).toBe(403);
     expect((await fetch(`${baseUrl}/${resource}`, { headers })).status).toBe(200);
   });
+  it('keeps operations and correlation recovery SYSTEM_OWNER-only', async () => {
+    for (const [path,method] of [['/operations','GET'],['/operations/1','GET'],['/correlation-work/1/requeue','POST']] as const) {
+      expect((await fetch(`${baseUrl}${path}`,{method})).status).toBe(401);
+      mocks.session.mockResolvedValue({user:{id:2,platformRole:'ACCOUNT_USER'}});
+      expect((await fetch(`${baseUrl}${path}`,{method,headers:{authorization:'Bearer session','content-type':'application/json'},...(method==='POST'?{body:JSON.stringify({confirm:true})}:{})})).status).toBe(403);
+    }
+  });
   it('allows an owner session and validates pagination bounds', async () => {
     mocks.session.mockResolvedValue({ user: { id: 1, platformRole: 'SYSTEM_OWNER' } });
     expect((await fetch(`${baseUrl}/signals`, { headers: { authorization: 'Bearer session' } })).status).toBe(200);

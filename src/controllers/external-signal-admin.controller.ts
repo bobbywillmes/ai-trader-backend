@@ -6,12 +6,35 @@ import * as schemas from '../validators/external-signal.schema.js';
 import * as config from '../services/external-signal-config.service.js';
 import { changeStrategySignalRevision, listStrategySignalRevisions } from '../services/strategy-signal-revision.service.js';
 import { getExternalSignalResource, listExternalSignalResources, type ExternalSignalResource } from '../services/external-signal-read.service.js';
+import { getExternalSignalOperation, listExternalSignalOperations } from '../services/external-signal-operations.service.js';
+import { requeueFailedExternalSignalCorrelationWork } from '../services/external-signal-correlation.service.js';
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success) throw new HttpError(400, 'Invalid external signal request.',
     result.error.issues.map(issue => ({ path: issue.path, code: issue.code })));
   return result.data;
+}
+
+export async function externalSignalOperationsController(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    const id = req.params.id ? parse(schemas.externalSignalIdSchema, req.params.id) : null;
+    res.json(id ? await getExternalSignalOperation(id) : await listExternalSignalOperations(parse(schemas.externalSignalOperationsListSchema, req.query)));
+  } catch (error) { next(error instanceof HttpError ? error : new HttpError(500, 'External signal operations unavailable.')); }
+}
+
+export async function requeueExternalSignalCorrelationController(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+    if (!req.body || req.body.confirm !== true || Object.keys(req.body).some(key => key !== 'confirm')) throw new HttpError(400, 'Explicit requeue confirmation is required.');
+    res.json(await requeueFailedExternalSignalCorrelationWork({ workId: parse(schemas.externalSignalIdSchema, req.params.id), actorUserId: res.locals.user.id }));
+  } catch (error) {
+    if (error instanceof Error && error.message === 'CORRELATION_WORK_NOT_REQUEUEABLE') return next(new HttpError(409, 'Correlation work is not failed and cannot be requeued.'));
+    next(error instanceof HttpError ? error : new HttpError(500, 'External signal correlation requeue unavailable.'));
+  }
 }
 
 export function strategySignalRevisionController(action: 'list' | 'prepare' | 'activate' | 'retire' | 'authority') {

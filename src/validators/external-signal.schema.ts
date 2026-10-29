@@ -1,5 +1,5 @@
 import { z } from 'zod';
-import { ExternalSignalProvider, SignalDeliveryRejectionCode, SignalDeliveryStatus, SignalEvent, SignalAuthorityMode } from '@prisma/client';
+import { ExternalSignalCorrelationWorkStatus, ExternalSignalProvider, ExternalSignalTradeCycleStatus, SignalDeliveryRejectionCode, SignalDeliveryStatus, SignalEvent, SignalAuthorityMode } from '@prisma/client';
 
 export const externalSignalIdSchema = z.coerce.number().int().positive().max(2147483647);
 const identity = z.string().trim().min(1).max(200);
@@ -59,6 +59,15 @@ export const externalSignalListSchema = z.object({
   'from must be before or equal to to.');
 
 export type ExternalSignalListFilters = z.infer<typeof externalSignalListSchema>;
+
+export const externalSignalOperationsListSchema = z.object({
+  page: z.coerce.number().int().min(1).max(1000000).default(1),
+  pageSize: z.coerce.number().int().min(1).max(100).default(25),
+  status: z.enum(ExternalSignalTradeCycleStatus).optional(),
+  workStatus: z.enum(ExternalSignalCorrelationWorkStatus).optional(),
+  event: z.enum(SignalEvent).optional(),
+  unresolvedExit: z.enum(['true', 'false']).transform(value => value === 'true').optional(),
+}).strict();
 
 export const externalSignalEnvelopeV1Schema = z.object({
   externalStrategyKey: identity,

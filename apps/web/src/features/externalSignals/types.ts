@@ -21,10 +21,14 @@ export type Delivery = {
   bodySizeBytes: number; rawPayloadHash: string; rawPayloadRedacted: unknown;
   rejectionCode: typeof rejectionCodes[number] | null; rejectionDetails: unknown; createdAt: string;
 };
-export type Resources = { sources: Source; bindings: Binding; signals: Signal; deliveries: Delivery };
+export type CorrelationWork = { id: number; signalId: number; event: typeof events[number]; status: 'PENDING'|'CLAIMED'|'RETRY_WAIT'|'COMPLETED'|'FAILED'; attemptCount: number; leaseOwner: string|null; leaseExpiresAt: string|null; nextAttemptAt: string; lastErrorCode: string|null; completedAt: string|null; createdAt: string; updatedAt: string; ageMs: number; stalledLease: boolean };
+export type ExitObligation = { signalId: number; workId: number|null; workStatus: string; acceptedAt: string; decisionCount: number; applied: boolean; unresolved: boolean; reasonCode: string };
+export type OperationsCycle = { id:number; externalTradeCycleRef:string; status:string; terminalAt:string|null; terminalReasonCode:string|null; createdAt:string; updatedAt:string; shadowOnly:true; actualExecutionAuthority:'NONE'; hypotheticalEntryAuthority:string; unresolvedExitCount:number; exitObligations:ExitObligation[]; work:CorrelationWork[]; security:{id:number;symbol:string}; binding:{id:number;externalStrategyKey:string;signalSource:{id:number;name:string};strategy:{id:number;key:string;name:string}}; revision:{id:number;revision:number;authorityMode:AuthorityMode;status:string}; signals:Signal[]; accountCycles:Array<{id:number;status:string;tradingAccountId:number;tradingAccountSubscriptionId:number;subscriptionId:number;entrySignalRouteId:number;entryRolloutGenerationId:number|null;entryReservationKey:string|null;pendingExitAcceptedAt:string|null;terminalAt:string|null;terminalReasonCode:string|null;noExposureProof:string|null;tradingAccount:{id:number;displayName:string;environment:string};correlationDecisions:Array<Record<string,unknown>>}>; correlationDecisions:Array<Record<string,unknown>> };
+export type Resources = { sources: Source; bindings: Binding; signals: Signal; deliveries: Delivery; operations: OperationsCycle };
 export type Section = keyof Resources;
 export type Pagination = { page: number; pageSize: number; total: number; totalPages: number };
 export type ListResult<K extends Section> = { [P in K]: Resources[P][] } & { pagination: Pagination };
+export type OperationsResult = { cycles: OperationsCycle[]; summary:{shadowOnly:true;totalCycles:number;unresolvedExitObligations:number;work:Record<string,number>;stalledLeases:number;evaluatedAt:string};pagination:Pagination };
 export type CreateSource = Pick<Source, "name" | "provider"> & { enabled: boolean };
 export type UpdateSource = Partial<Pick<Source, "name" | "enabled">>;
 export type CreateBinding = Pick<Binding, "signalSourceId" | "strategyId" | "externalStrategyKey" | "enabled">;
