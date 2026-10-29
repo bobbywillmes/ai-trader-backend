@@ -39,7 +39,7 @@ import {
   requireExecutableEntryExposureClaim,
   releaseUnsubmittedEntryExposureClaim,
 } from './entry-exposure-claim.service.js';
-import { admitEntryOrderIntent } from './market-policy-entry-admission.service.js';
+import { admitEntryOrderIntent, type TradingViewEntryExecutionContext } from './market-policy-entry-admission.service.js';
 import { prepareEntryBrokerDispatch } from './market-policy-broker-dispatch.service.js';
 import { recordAdapterInvocationStarted } from './entry-delivery-evidence.service.js';
 import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
@@ -47,6 +47,7 @@ import type { AlpacaOrder } from '../integrations/alpaca/alpaca.types.js';
 type SubmitOrderOptions = {
   entryDecisionKey?: string;
   clientOrderId?: string;
+  tradingViewExecution?: TradingViewEntryExecutionContext;
   liveEntryAcceptanceExecution?: {
     runId: number;
     actorUserId: number;
@@ -255,8 +256,10 @@ export async function submitOrder(
     : await admitEntryOrderIntent({
       ...admissionBase,
       requestSource: 'api',
+      ...(options.tradingViewExecution ? { tradingViewExecution: options.tradingViewExecution } : {}),
       createIntent: (tx) => createOrderIntent(
-        resolvedInput, 'api', clientOrderId, tradingAccountId, intentOptions, tx,
+        resolvedInput, options.tradingViewExecution ? 'tradingview' : 'api', clientOrderId, tradingAccountId,
+        { ...intentOptions, ...(options.tradingViewExecution ? { externalSignalAccountCycleId: options.tradingViewExecution.accountCycleId } : {}) }, tx,
       ),
     });
   const intent = admission.intent;
@@ -264,7 +267,7 @@ export async function submitOrder(
     ? { attemptId: admission.marketPolicy.attemptId, obligationId: admission.marketPolicy.obligationId, disposition: admission.marketPolicy.disposition }
     : null;
 
-  if (admission.duplicate) {
+  if (admission.duplicate && !(options.tradingViewExecution && intent.status === 'received')) {
     return {
       ok: true,
       intentId: intent.id,

@@ -393,6 +393,16 @@ account-cycle origin marker and an immutable execution obligation created atomic
   EXIT and LIVE execution remain
 database-prohibited. See `docs/architecture/tradingview-paper-execution-authority.md`.
 
+Phase 4A.2B admits only post-activation, post-authorization PAPER ENTRY cycles marked
+`ENTRY_EXECUTION_PROSPECTIVE`. Correlation freezes the original Signal, route,
+assignment, Subscription and Security; the durable admission coordinator never
+rediscovers a target. The shared Market Intelligence boundary atomically creates the
+EntryExposureClaim, marked `received` OrderIntent, both immutable obligations and the
+account-cycle link. Accepted EXIT Signals preempt by direct source-cycle evidence.
+Marked intents may become `pending` after centralized risk evaluation but remain
+database-prohibited from entering `submitting`; Phase 4A.2C alone may add dispatch
+authority. See `docs/architecture/tradingview-paper-execution-authority.md`.
+
 Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
 `SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
 Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are

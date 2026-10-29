@@ -40,6 +40,15 @@ type EvaluatedOutcome = 'ALLOWED' | 'BLOCKED' | 'INSUFFICIENT_EVIDENCE';
 
 export type EntryAdmissionDependencies = { evaluator?: Evaluator; db?: PrismaClient };
 
+export type TradingViewEntryExecutionContext = {
+  accountCycleId: number;
+  sourceCycleId: number;
+  entrySignalId: number;
+  entrySignalRouteId: number;
+  authorizationId: number;
+  rolloutGenerationId: number;
+};
+
 export type EntryAdmissionRequest = {
   tradingAccountId: number;
   tradingAccountSubscriptionId: number | null;
@@ -47,11 +56,71 @@ export type EntryAdmissionRequest = {
   clientOrderId: string;
   ownerKey: string;
   requestSource: 'api' | 'live_entry_acceptance';
+  tradingViewExecution?: TradingViewEntryExecutionContext;
   createIntent: (tx: Prisma.TransactionClient) => Promise<OrderIntent>;
   // Optional pre-admission work in the same transaction (for example, live acceptance run claiming).
   // Returning an existing OrderIntent short-circuits admission as a duplicate.
   prepare?: (tx: Prisma.TransactionClient) => Promise<OrderIntent | null>;
 };
+
+async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient, request: EntryAdmissionRequest) {
+  const context = request.tradingViewExecution;
+  if (!context) return null;
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
+  const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null }>>`
+    SELECT ac.id AS "accountCycleId", oi."clientOrderId"
+    FROM "ExternalSignalTradeCycleAccount" ac
+    JOIN "ExternalSignalTradeCycle" c ON c.id=ac."externalSignalTradeCycleId"
+    JOIN "SignalRoute" sr ON sr.id=ac."entrySignalRouteId"
+    JOIN "SignalRoutingRun" rr ON rr.id=sr."signalRoutingRunId"
+    JOIN "Signal" sig ON sig.id=rr."signalId"
+    JOIN "ExternalSignalEntryExecutionAuthorization" auth ON auth.id=${context.authorizationId}
+    JOIN "ExternalSignalExecutionRolloutState" state ON state.id=1
+    JOIN "ExternalSignalExecutionRolloutGeneration" gen ON gen.id=${context.rolloutGenerationId}
+    JOIN "ExternalSignalCorrelationWork" work ON work."signalId"=sig.id
+    JOIN "TradingAccount" ta ON ta.id=ac."tradingAccountId"
+    JOIN "TradingAccountSubscription" tas ON tas.id=ac."tradingAccountSubscriptionId"
+    JOIN "Subscription" sub ON sub.id=ac."subscriptionId"
+    JOIN "Security" sec ON sec.id=ac."securityId"
+    LEFT JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id
+    WHERE ac.id=${context.accountCycleId} AND c.id=${context.sourceCycleId}
+      AND sig.id=${context.entrySignalId} AND sr.id=${context.entrySignalRouteId}
+      AND ac.status='ENTRY_EXECUTION_PROSPECTIVE' AND c.status IN ('ENTRY_RECEIVED','ROUTED')
+      AND work.status='COMPLETED' AND sig.event='ENTRY_LONG'
+      AND NOT EXISTS (SELECT 1 FROM "Signal" x WHERE x."externalSignalTradeCycleId"=c.id AND x.event='EXIT_LONG')
+      AND auth.status='AUTHORIZED' AND auth."rolloutGenerationId"=gen.id
+      AND auth."tradingAccountId"=ac."tradingAccountId" AND auth."tradingAccountSubscriptionId"=ac."tradingAccountSubscriptionId"
+      AND auth."subscriptionId"=ac."subscriptionId" AND auth."securityId"=ac."securityId"
+      AND auth."signalSourceId"=sig."signalSourceId" AND auth."strategySignalBindingId"=sig."strategySignalBindingId"
+      AND auth."strategySignalRevisionId"=sig."strategySignalRevisionId" AND auth."strategyRevision"=sig."strategyRevision"
+      AND state."activeRolloutGenerationId"=gen.id AND state."activatedAt" IS NOT NULL
+      AND gen.enabled=true AND gen.direction='ENTRY' AND gen."authorityMode"='EXECUTE'
+      AND sig."createdAt">=state."activatedAt" AND sig."createdAt">=auth."authorizedAt"
+      AND ac."createdAt">=state."activatedAt" AND ac."createdAt">=auth."authorizedAt"
+      AND ta.environment='PAPER' AND ta.status='ACTIVE' AND ta."tradingEnabled"=true AND ta."killSwitchEnabled"=false
+      AND tas.enabled=true AND tas."entriesEnabled"=true AND tas."tradingAccountId"=ta.id AND tas."subscriptionId"=sub.id
+      AND sub.enabled=true AND sub."securityId"=sec.id AND sec.enabled=true
+      AND ac."tradingAccountId"=${request.tradingAccountId}
+      AND ac."tradingAccountSubscriptionId"=${request.tradingAccountSubscriptionId}
+    FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec`;
+  if (rows.length !== 1) throw new HttpError(409, 'TradingView execution candidate is no longer admissible.', { code: 'TRADINGVIEW_EXECUTION_AUTHORITY_REFUSED' });
+  const [exit] = await tx.$queryRaw<Array<{ accepted: boolean }>>`SELECT EXISTS (SELECT 1 FROM "Signal" WHERE "externalSignalTradeCycleId"=${context.sourceCycleId} AND event='EXIT_LONG') AS accepted`;
+  if (exit?.accepted) throw new HttpError(409, 'An accepted TradingView EXIT preempted ENTRY admission.', { code: 'TRADINGVIEW_EXIT_PREEMPTED' });
+  if (rows[0]!.clientOrderId && rows[0]!.clientOrderId !== request.clientOrderId) throw new HttpError(409, 'TradingView client-order-ID provenance conflict.', { code: 'TRADINGVIEW_CLIENT_ORDER_ID_CONFLICT' });
+  return context;
+}
+
+async function freezeTradingViewExecution(tx: Prisma.TransactionClient, request: EntryAdmissionRequest, intent: OrderIntent) {
+  const context = request.tradingViewExecution;
+  if (!context) return;
+  await tx.externalSignalTradeCycleAccount.update({ where: { id: context.accountCycleId }, data: { status: 'ENTRY_INTENT_CREATED', entryOrderIntentId: intent.id } });
+  await tx.externalSignalEntryExecutionObligation.create({ data: {
+    orderIntentId: intent.id, accountCycleId: context.accountCycleId, sourceCycleId: context.sourceCycleId,
+    entrySignalId: context.entrySignalId, entrySignalRouteId: context.entrySignalRouteId,
+    authorizationId: context.authorizationId, rolloutGenerationId: context.rolloutGenerationId,
+    executionEpochAt: new Date(0), authorizationFingerprint: '0'.repeat(64), obligationFingerprint: '0'.repeat(64), clientOrderId: request.clientOrderId,
+  } });
+}
 
 export type MarketPolicyAdmissionSummary = {
   runtimeActive: boolean;
@@ -229,12 +298,16 @@ function presentRejected(attempt: Prisma.MarketPolicyEnforcementAdmissionAttempt
 }
 
 async function admitInTransaction(tx: Prisma.TransactionClient, request: EntryAdmissionRequest, evaluator: Evaluator, state: AdmissionState): Promise<TransactionOutcome> {
+  await lockAndValidateTradingViewExecution(tx, request);
   const prepared = request.prepare ? await request.prepare(tx) : null;
   if (prepared) return { kind: 'duplicate', intent: prepared, marketPolicy: { runtimeActive: false, disposition: 'NOT_APPLICABLE', enforced: false, attemptId: null, obligationId: null } };
 
   // Lock order step 1: the runtime rollout row (FOR SHARE).
   const rollout = await lockMarketPolicyEnforcementRollout(tx);
-  if (!rollout.enabled) return legacyAdmission(tx, request, { runtimeActive: false, disposition: 'RUNTIME_INACTIVE', enforced: false, attemptId: null, obligationId: null });
+  if (!rollout.enabled) {
+    if (request.tradingViewExecution) throw new HttpError(403, 'TradingView execution requires active Market Intelligence enforcement.', { code: 'TRADINGVIEW_MARKET_POLICY_REQUIRED' });
+    return legacyAdmission(tx, request, { runtimeActive: false, disposition: 'RUNTIME_INACTIVE', enforced: false, attemptId: null, obligationId: null });
+  }
   if (request.tradingAccountSubscriptionId === null) return legacyAdmission(tx, request, { runtimeActive: true, disposition: 'NOT_APPLICABLE', enforced: false, attemptId: null, obligationId: null });
   state.rolloutVersion = rollout.version;
 
@@ -247,6 +320,7 @@ async function admitInTransaction(tx: Prisma.TransactionClient, request: EntryAd
     throw new MarketPolicyEnforcementTechnicalError('AUTHORIZATION_RESOLUTION', error);
   }
   if (NON_ENFORCED_DISPOSITIONS.has(resolution.disposition)) {
+    if (request.tradingViewExecution) throw new HttpError(403, 'TradingView execution requires an effective Market Intelligence authorization.', { code: 'TRADINGVIEW_MARKET_POLICY_REQUIRED' });
     return legacyAdmission(tx, request, { runtimeActive: true, disposition: resolution.disposition, enforced: false, attemptId: null, obligationId: null });
   }
   state.engaged = { resolution };
@@ -344,6 +418,7 @@ async function admitInTransaction(tx: Prisma.TransactionClient, request: EntryAd
         }),
       },
     });
+    await freezeTradingViewExecution(tx, request, acquired.intent);
     return { kind: 'admitted', intent: acquired.intent, marketPolicy: { ...marketPolicy, attemptId: attempt.id, obligationId: obligation.id } };
   } catch (error) {
     throw new MarketPolicyEnforcementTechnicalError('OBLIGATION_FREEZE', error);

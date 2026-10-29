@@ -1,5 +1,38 @@
 # TradingView PAPER execution authority
 
+## Phase 4A.2B admission boundary
+
+`ENTRY_EXECUTION_PROSPECTIVE` is a prospective-only account-cycle state. Correlation
+selects it only when the ENTRY Signal, account cycle, active EXECUTE generation and
+exact assignment authorization all share the same post-activation epoch. SHADOW
+rollout state is independent and historical SHADOW/BLOCKED/terminal cycles cannot
+transition into it.
+
+The coordinator consumes only completed correlation work and passes a typed frozen
+TradingView context to `submitOrder`. The shared admission transaction validates the
+source cycle and direct accepted-EXIT absence, locks execution authority, requires
+effective Market Intelligence enforcement, acquires the existing exposure claim,
+and atomically writes the marked `received` intent, Market Intelligence attempt and
+obligation, TradingView obligation, and account-cycle link. The deterministic client
+order ID and claim owner key make retries recover the same intent; a provenance
+collision is a conflict.
+
+Lock order is: Signal source, binding, source cycle and account cycle during
+correlation; execution rollout serialization and exact authorization during
+admission; then the existing Market Intelligence rollout, account, assignment,
+Subscription, Security and authorization order; finally the account/security entry
+exposure advisory lock. Direct EXIT Signal evidence is checked again in the atomic
+transaction. Serializable correlation retries `40001` through its bounded durable
+work attempts. No broker I/O occurs in either transaction.
+
+Risk evaluation remains after atomic intent admission. Allowed intents use the normal
+`received -> pending` transition. Denied or failed evaluations use the established
+definite-non-send claim release rules; a replay of a still-`received` marked intent
+continues evaluation rather than treating creation alone as completion.
+
+The Phase 4A.2A PostgreSQL quarantine remains authoritative: a marked intent cannot
+transition to `submitting`. Phase 4A.2B adds no broker-time authorization, consumption
+record, adapter call, fallback or LIVE authority.
 ## Phase 4A.2A boundary
 
 Phase 4A.2A establishes independently controlled authority and provenance only. It does not create an admission worker, call `submitOrder`, create an `OrderIntent`, authorize broker dispatch, execute EXIT signals, or grant LIVE authority.
