@@ -66,7 +66,9 @@ export type EntryAdmissionRequest = {
 async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient, request: EntryAdmissionRequest) {
   const context = request.tradingViewExecution;
   if (!context) return null;
-  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
+  // Prisma's PostgreSQL adapter cannot deserialize PostgreSQL's void pseudo-type. Cast the
+  // lock result to text, matching the convention used by the other advisory-lock boundaries.
+  await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)::text`;
   const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null }>>`
     SELECT ac.id AS "accountCycleId", oi."clientOrderId"
     FROM "ExternalSignalTradeCycleAccount" ac
