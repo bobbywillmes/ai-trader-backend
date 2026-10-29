@@ -387,7 +387,10 @@ activated, default-off PAPER ENTRY execution generation and exact append-preserv
 assignment/source/binding/revision authorization. It still has no admission producer or
 broker authority. A future TradingView OrderIntent must carry both an independent
 account-cycle origin marker and an immutable execution obligation created atomically;
-the legacy order worker excludes every marked intent. EXIT and LIVE execution remain
+  the marker is insert-only, the legacy order worker excludes every marked intent and
+  PostgreSQL denies marked `submitting` transitions. `ENTRY_INTENT_CREATED` is distinct
+  from SHADOW reservation states; SHADOW enablement/outcomes are never execution gates.
+  EXIT and LIVE execution remain
 database-prohibited. See `docs/architecture/tradingview-paper-execution-authority.md`.
 
 Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable

@@ -6,6 +6,8 @@ import { createSystemEvent } from './system-event.service.js';
 
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const conflict = (code: string, message: string) => new HttpError(409, message, { code });
+const isConcurrencyError = (error: unknown) => error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034'
+  || error instanceof Error && /serializ|deadlock|40001|40P01/i.test(error.message);
 
 async function requireOwner(actorUserId: number, db: Prisma.TransactionClient) {
   const actor = await db.user.findUnique({ where: { id: actorUserId }, select: { enabled: true, platformRole: true } });
@@ -15,12 +17,12 @@ async function requireOwner(actorUserId: number, db: Prisma.TransactionClient) {
 export async function listExternalSignalExecutionRollouts(actorUserId?: number) {
   return prisma.$transaction(async db => {
     if (actorUserId !== undefined) await requireOwner(actorUserId, db);
-    const [generations, events] = await Promise.all([
+    const [generations, events, state] = await Promise.all([
       db.externalSignalExecutionRolloutGeneration.findMany({ orderBy: [{ direction: 'asc' }, { generation: 'desc' }] }),
       db.externalSignalExecutionRolloutActivation.findMany({ orderBy: { id: 'desc' }, take: 100 }),
+      db.externalSignalExecutionRolloutState.findUniqueOrThrow({ where: { id: 1 } }),
     ]);
-    const latest = events[0] ?? null;
-    return { activeExecutionGenerationId: latest?.action === 'ACTIVATE' ? latest.rolloutGenerationId : null, generations, activationEvents: events };
+    return { activeExecutionGenerationId: state.activeRolloutGenerationId, executionEpochAt: state.activatedAt, rolloutStateVersion: state.version, generations, activationEvents: events };
   });
 }
 
@@ -30,7 +32,7 @@ export async function createExternalSignalExecuteGeneration(input: { configurati
     await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
     const prior = await db.externalSignalExecutionRolloutGeneration.findFirst({ where: { direction: 'ENTRY' }, orderBy: [{ generation: 'desc' }, { id: 'desc' }] });
     const generation = (prior?.generation ?? 0) + 1;
-    const configurationJson = { schemaVersion: 1, authority: 'PAPER_ENTRY', ...input.configuration as object } as Prisma.InputJsonValue;
+    const configurationJson = { ...input.configuration as object, schemaVersion: 1, authority: 'PAPER_ENTRY' } as Prisma.InputJsonValue;
     const configurationFingerprint = fingerprint(configurationJson);
     const row = await db.externalSignalExecutionRolloutGeneration.create({ data: {
       direction: 'ENTRY', generation, enabled: true, authorityMode: 'EXECUTE', supersedesGenerationId: prior?.id ?? null,
@@ -51,6 +53,7 @@ export async function changeExternalSignalExecutionRollout(rolloutGenerationId: 
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   } catch (error) {
     if (error instanceof HttpError) throw error;
+    if (isConcurrencyError(error)) throw conflict('CONCURRENT_ROLLOUT_CHANGE', 'Execution rollout changed concurrently; reload before retrying.');
     throw conflict('ROLLOUT_TRANSITION_REJECTED', 'Execution rollout transition was rejected by the database safety protocol.');
   }
 }
@@ -62,20 +65,24 @@ export async function listExternalSignalEntryExecutionAuthorizations(accountId: 
   });
 }
 
-export async function grantExternalSignalEntryExecutionAuthorization(accountId: number, assignmentId: number, input: { rolloutGenerationId: number; strategySignalBindingId: number; reason: string }, actorUserId: number) {
+export async function grantExternalSignalEntryExecutionAuthorization(accountId: number, assignmentId: number, input: { rolloutGenerationId: number; strategySignalBindingId: number; expectedStrategySignalRevisionId: number; expectedSecurityId: number; reason: string }, actorUserId: number) {
   try {
     return await prisma.$transaction(async db => {
       await requireOwner(actorUserId, db);
+      await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
+      await db.$executeRaw`UPDATE "ExternalSignalExecutionRolloutState" SET version=version WHERE id=1`;
       await db.$queryRaw`SELECT id FROM "ExternalSignalSource" WHERE id=(SELECT "signalSourceId" FROM "StrategySignalBinding" WHERE id=${input.strategySignalBindingId}) FOR UPDATE`;
       await db.$queryRaw`SELECT id FROM "StrategySignalBinding" WHERE id=${input.strategySignalBindingId} FOR UPDATE`;
       const binding = await db.strategySignalBinding.findUnique({ where: { id: input.strategySignalBindingId }, include: { signalSource: true, revisions: { where: { status: 'ACTIVE' }, take: 1 } } });
       if (!binding || !binding.revisions[0]) throw new HttpError(404, 'Active source binding revision not found.');
       const revision = binding.revisions[0];
+      if (revision.id !== input.expectedStrategySignalRevisionId) throw conflict('STALE_STRATEGY_REVISION', 'The active strategy signal revision changed after it was loaded.');
       await db.$queryRaw`SELECT id FROM "ExternalSignalExecutionRolloutGeneration" WHERE id=${input.rolloutGenerationId} FOR UPDATE`;
       await db.$queryRaw`SELECT id FROM "TradingAccount" WHERE id=${accountId} FOR UPDATE`;
       await db.$queryRaw`SELECT id FROM "TradingAccountSubscription" WHERE id=${assignmentId} FOR UPDATE`;
       const assignment = await db.tradingAccountSubscription.findFirst({ where: { id: assignmentId, tradingAccountId: accountId }, include: { tradingAccount: true, subscription: true } });
       if (!assignment) throw new HttpError(404, 'Account assignment not found.');
+      if (assignment.routingSecurityId !== input.expectedSecurityId) throw conflict('STALE_SECURITY_IDENTITY', 'The assignment Security changed after it was loaded.');
       await db.$queryRaw`SELECT id FROM "Subscription" WHERE id=${assignment.subscriptionId} FOR UPDATE`;
       await db.$queryRaw`SELECT id FROM "Security" WHERE id=${assignment.routingSecurityId} FOR UPDATE`;
       const latest = await db.externalSignalEntryExecutionAuthorization.findFirst({ where: { rolloutGenerationId: input.rolloutGenerationId, tradingAccountSubscriptionId: assignmentId, strategySignalBindingId: input.strategySignalBindingId }, orderBy: { authorizationSequence: 'desc' } });
@@ -91,6 +98,7 @@ export async function grantExternalSignalEntryExecutionAuthorization(accountId: 
     }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
   } catch (error) {
     if (error instanceof HttpError) throw error;
+    if (isConcurrencyError(error)) throw conflict('CONCURRENT_AUTHORITY_CHANGE', 'Execution authority changed concurrently; reload before retrying.');
     throw conflict('AUTHORIZATION_REJECTED', 'Execution authorization was rejected by the exact-identity database checks.');
   }
 }
@@ -98,6 +106,8 @@ export async function grantExternalSignalEntryExecutionAuthorization(accountId: 
 export async function revokeExternalSignalEntryExecutionAuthorization(accountId: number, assignmentId: number, authorizationId: number, reason: string, actorUserId: number) {
   return prisma.$transaction(async db => {
     await requireOwner(actorUserId, db);
+    await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
+    await db.$executeRaw`UPDATE "ExternalSignalExecutionRolloutState" SET version=version WHERE id=1`;
     const existing = await db.externalSignalEntryExecutionAuthorization.findFirst({ where: { id: authorizationId, tradingAccountId: accountId, tradingAccountSubscriptionId: assignmentId } });
     if (!existing) throw new HttpError(404, 'Execution authorization not found.');
     await db.$queryRaw`SELECT id FROM "ExternalSignalSource" WHERE id=${existing.signalSourceId} FOR UPDATE`;
@@ -107,5 +117,9 @@ export async function revokeExternalSignalEntryExecutionAuthorization(accountId:
     const row = await db.externalSignalEntryExecutionAuthorization.update({ where: { id: authorizationId }, data: { status: 'REVOKED', revokedByUserId: actorUserId, revocationReason: reason } });
     await createSystemEvent({ type: 'EXTERNAL_SIGNAL_ENTRY_EXECUTION_REVOKED', entityType: 'ExternalSignalEntryExecutionAuthorization', entityId: row.id, tradingAccountId: accountId, actorUserId, message: 'TradingView PAPER ENTRY assignment execution authority revoked.', payloadJson: { assignmentId, authorizationId, futureAdmission: 'BLOCKED', uncommittedDispatch: 'BLOCKED' } }, db);
     return row;
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }).catch(error => {
+    if (error instanceof HttpError) throw error;
+    if (isConcurrencyError(error)) throw conflict('CONCURRENT_AUTHORITY_CHANGE', 'Execution authority changed concurrently; reload before retrying.');
+    throw error;
+  });
 }

@@ -9,6 +9,8 @@ export const externalSignalExecutionRolloutActionSchema = z.object({ reason: aut
 export const grantExternalSignalEntryExecutionAuthorizationSchema = z.object({
   rolloutGenerationId: z.number().int().positive(),
   strategySignalBindingId: z.number().int().positive(),
+  expectedStrategySignalRevisionId: z.number().int().positive(),
+  expectedSecurityId: z.number().int().positive(),
   reason: authorityReasonSchema,
 }).strict();
 export const revokeExternalSignalEntryExecutionAuthorizationSchema = z.object({

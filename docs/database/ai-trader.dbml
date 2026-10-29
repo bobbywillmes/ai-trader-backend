@@ -182,10 +182,20 @@ Table ExternalSignalExecutionRolloutGeneration {
   activationEvents ExternalSignalExecutionRolloutActivation [not null]
   entryExecutionAuthorizations ExternalSignalEntryExecutionAuthorization [not null]
   entryExecutionObligations ExternalSignalEntryExecutionObligation [not null]
+  activeRolloutState ExternalSignalExecutionRolloutState
 
   indexes {
     (direction, generation) [unique]
   }
+}
+
+Table ExternalSignalExecutionRolloutState {
+  id Int [pk]
+  version Int [not null]
+  activeRolloutGenerationId Int [unique]
+  activatedAt DateTime
+  updatedAt DateTime [not null]
+  activeRolloutGeneration ExternalSignalExecutionRolloutGeneration
 }
 
 Table ExternalSignalExecutionRolloutActivation {
@@ -1145,6 +1155,7 @@ Table ExternalSignalEntryExecutionObligation {
   executionEpochAt DateTime [not null]
   authorizationFingerprint String [not null]
   obligationFingerprint String [not null]
+  clientOrderId String [not null]
   createdAt DateTime [default: `now()`, not null]
   orderIntent OrderIntent [not null]
   accountCycle ExternalSignalTradeCycleAccount [not null]
@@ -3078,6 +3089,7 @@ Enum ExternalSignalAccountCycleStatus {
   ENTRY_ROUTE_PENDING
   ENTRY_ADMISSION_PENDING
   ENTRY_SHADOW_ALLOWED
+  ENTRY_INTENT_CREATED
   ENTRY_SUPPRESSED_BY_EXIT
   EXIT_PENDING
   BLOCKED
@@ -3711,6 +3723,8 @@ Ref: SignalRoute.tradingAccountSubscriptionId > TradingAccountSubscription.id [d
 Ref: ExternalSignalExecutionRolloutGeneration.supersedesGenerationId - ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
 
 Ref: ExternalSignalExecutionRolloutGeneration.createdByUserId > User.id [delete: Restrict]
+
+Ref: ExternalSignalExecutionRolloutState.activeRolloutGenerationId - ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
 
 Ref: ExternalSignalExecutionRolloutActivation.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
 

@@ -123,6 +123,7 @@ enum ExternalSignalAccountCycleStatus {
   ENTRY_ROUTE_PENDING
   ENTRY_ADMISSION_PENDING
   ENTRY_SHADOW_ALLOWED
+  ENTRY_INTENT_CREATED
   ENTRY_SUPPRESSED_BY_EXIT
   EXIT_PENDING
   BLOCKED
@@ -335,10 +336,22 @@ model ExternalSignalExecutionRolloutGeneration {
   activationEvents ExternalSignalExecutionRolloutActivation[]
   entryExecutionAuthorizations ExternalSignalEntryExecutionAuthorization[]
   entryExecutionObligations ExternalSignalEntryExecutionObligation[]
+  activeRolloutState ExternalSignalExecutionRolloutState? @relation("ExternalSignalActiveExecutionRollout")
 
   @@unique([direction, generation], map: "ExternalSignalExecutionRolloutGeneration_direction_generation_k")
   @@index([direction, effectiveAt], map: "ExternalSignalExecutionRolloutGeneration_direction_effectiveAt_")
   @@index([createdByUserId])
+}
+
+// Singleton database-owned serialization token for execution activation and all authority use.
+model ExternalSignalExecutionRolloutState {
+  id                        Int       @id
+  version                   Int
+  activeRolloutGenerationId Int?      @unique(map: "ExternalSignalExecutionRolloutSta_activeRolloutGenerationId_key")
+  activatedAt               DateTime? @db.Timestamptz(3)
+  updatedAt                 DateTime  @db.Timestamptz(3)
+
+  activeRolloutGeneration ExternalSignalExecutionRolloutGeneration? @relation("ExternalSignalActiveExecutionRollout", fields: [activeRolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalExecutionRolloutSt_activeRolloutGenerationId_fkey")
 }
 
 model ExternalSignalExecutionRolloutActivation {
@@ -1705,6 +1718,7 @@ model ExternalSignalEntryExecutionObligation {
   executionEpochAt         DateTime @db.Timestamptz(3)
   authorizationFingerprint String
   obligationFingerprint    String
+  clientOrderId            String
   createdAt                DateTime @default(now()) @db.Timestamptz(3)
 
   orderIntent       OrderIntent                               @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)

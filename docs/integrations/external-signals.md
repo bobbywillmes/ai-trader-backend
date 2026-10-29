@@ -698,4 +698,4 @@ Owner-only management endpoints are:
 - `GET/POST /api/external-signal-admin/accounts/:accountId/assignments/:assignmentId/entry-execution-authorizations`
 - `POST /api/external-signal-admin/accounts/:accountId/assignments/:assignmentId/entry-execution-authorizations/revoke`
 
-An active generation or authorization has no trading effect in this checkpoint. No TradingView OrderIntent producer exists, and the legacy order worker excludes all intents carrying the external-signal origin marker.
+An active generation or authorization has no trading effect in this checkpoint. No TradingView OrderIntent producer exists. The legacy order worker excludes marked intents, and PostgreSQL independently rejects marked intents entering `submitting`. Grant requests bind expected strategy-revision and Security IDs. SHADOW enablement and SHADOW outcomes are not execution prerequisites or denials.
