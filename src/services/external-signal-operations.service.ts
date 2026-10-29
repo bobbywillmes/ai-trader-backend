@@ -1,71 +1,40 @@
-import { ExternalSignalCorrelationWorkStatus, ExternalSignalTradeCycleStatus, type Prisma } from '@prisma/client';
+import { ExternalSignalCorrelationWorkStatus, ExternalSignalTradeCycleStatus, Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 
 type Db = typeof prisma;
-export type ExternalSignalOperationsFilters = {
-  page: number; pageSize: number; status?: ExternalSignalTradeCycleStatus | undefined;
-  workStatus?: ExternalSignalCorrelationWorkStatus | undefined; event?: 'ENTRY_LONG' | 'EXIT_LONG' | undefined;
-  unresolvedExit?: boolean | undefined;
-};
+export type ExternalSignalOperationsFilters = { page:number;pageSize:number;status?:ExternalSignalTradeCycleStatus|undefined;workStatus?:ExternalSignalCorrelationWorkStatus|undefined;event?:'ENTRY_LONG'|'EXIT_LONG'|undefined;unresolvedExit?:boolean|undefined };
+export type ExitResolutionState='CORRELATION_PENDING'|'RECORDED_HELD_BEHIND_RESERVATION'|'RECORDED_SHADOW'|'NO_EXPOSURE_TERMINAL'|'RETENTION_EXPIRED'|'FAILED'|'INCONSISTENT';
 
-const cycleInclude = {
-  binding: { select: { id: true, externalStrategyKey: true, signalSource: { select: { id: true, name: true } }, strategy: { select: { id: true, key: true, name: true } } } },
-  revision: { select: { id: true, revision: true, authorityMode: true, status: true } },
-  security: { select: { id: true, symbol: true } },
-  signals: { orderBy: { id: 'asc' as const }, include: {
-    correlationWork: true,
-    routingRun: { include: { routes: { orderBy: { id: 'asc' as const }, include: { marketEligibilityAttempts: { orderBy: { attempt: 'asc' as const } } } } } },
-  } },
-  accountCycles: { orderBy: { id: 'asc' as const }, include: { tradingAccount: { select: { id: true, displayName: true, environment: true } }, correlationDecisions: { orderBy: { id: 'asc' as const } } } },
-  correlationDecisions: { orderBy: { id: 'asc' as const }, include: { rolloutGeneration: true } },
-} satisfies Prisma.ExternalSignalTradeCycleInclude;
+const cycleInclude={binding:{select:{id:true,externalStrategyKey:true,signalSource:{select:{id:true,name:true}},strategy:{select:{id:true,key:true,name:true}}}},revision:{select:{id:true,revision:true,authorityMode:true,status:true}},security:{select:{id:true,symbol:true}},signals:{orderBy:{id:'asc' as const},include:{correlationWork:true,routingRun:{include:{routes:{orderBy:{id:'asc' as const},include:{marketEligibilityAttempts:{orderBy:{attempt:'asc' as const}}}}}}}},accountCycles:{orderBy:{id:'asc' as const},include:{tradingAccount:{select:{id:true,displayName:true,environment:true}},correlationDecisions:{orderBy:{id:'asc' as const}}}},correlationDecisions:{orderBy:{id:'asc' as const},include:{rolloutGeneration:true}}} satisfies Prisma.ExternalSignalTradeCycleInclude;
 
-function exitResolution(cycle: any) {
-  const exits = cycle.signals.filter((signal: any) => signal.schemaVersion === 2 && signal.event === 'EXIT_LONG');
-  const terminal = ['TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(cycle.status);
-  return exits.map((signal: any) => {
-    const decisions = cycle.correlationDecisions.filter((row: any) => row.signalId === signal.id && row.decisionType === 'EXIT_PENDING');
-    const work = signal.correlationWork;
-    const applied = terminal || (decisions.length > 0 && decisions.every((row: any) => row.accountCycleId && cycle.accountCycles.some((account: any) => account.id === row.accountCycleId && ['EXIT_PENDING', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(account.status))));
-    const unresolved = !applied || !work || work.status !== 'COMPLETED';
-    return { signalId: signal.id, workId: work?.id ?? null, workStatus: work?.status ?? 'MISSING',
-      acceptedAt: signal.createdAt, decisionCount: decisions.length, applied, unresolved,
-      reasonCode: unresolved ? !work ? 'CORRELATION_WORK_MISSING' : work.status === 'FAILED' ? 'CORRELATION_FAILED' : work.status !== 'COMPLETED' ? `CORRELATION_${work.status}` : 'EXIT_NOT_APPLIED' : 'EXIT_OBLIGATION_APPLIED' };
-  });
+export function classifyExitObligation(cycle:any,signal:any){
+ const work=signal.correlationWork,decisions=cycle.correlationDecisions.filter((row:any)=>row.signalId===signal.id&&row.decisionType==='EXIT_PENDING'),accountIds=new Set<number>(cycle.accountCycles.map((row:any)=>row.id)),accountDecisionIds=decisions.map((row:any)=>row.accountCycleId).filter((id:number|null):id is number=>id!==null),uniqueDecisionAccounts=new Set(accountDecisionIds),held=decisions.some((row:any)=>row.reasonCode==='EXIT_HELD_BEHIND_ADMISSION_RESERVATION');
+ let resolutionState:ExitResolutionState,unresolved=true,attentionRequired=false,reasonCode:string;
+ if(!work){resolutionState='INCONSISTENT';attentionRequired=true;reasonCode='CORRELATION_WORK_MISSING';}
+ else if(work.status==='FAILED'){resolutionState='FAILED';attentionRequired=true;reasonCode='CORRELATION_FAILED';}
+ else if(work.status!=='COMPLETED'){resolutionState='CORRELATION_PENDING';reasonCode=work.status==='CLAIMED'&&work.leaseExpiresAt&&work.leaseExpiresAt<=new Date()?'CORRELATION_LEASE_EXPIRED':`CORRELATION_${work.status}`;}
+ else if(decisions.length===0||decisions.some((row:any)=>row.accountCycleId!==null&&!accountIds.has(row.accountCycleId))||uniqueDecisionAccounts.size!==accountDecisionIds.length){resolutionState='INCONSISTENT';attentionRequired=true;reasonCode='EXIT_DECISION_EVIDENCE_INCOMPLETE_OR_CONTRADICTORY';}
+ else if(held){resolutionState='RECORDED_HELD_BEHIND_RESERVATION';reasonCode='EXIT_HELD_BEHIND_ADMISSION_RESERVATION';}
+ else if(cycle.accountCycles.length>0&&(decisions.length!==cycle.accountCycles.length||uniqueDecisionAccounts.size!==cycle.accountCycles.length)){resolutionState='INCONSISTENT';attentionRequired=true;reasonCode='EXIT_ACCOUNT_COVERAGE_INCOMPLETE';}
+ else if(cycle.accountCycles.length===0&&(decisions.length!==1||decisions[0].accountCycleId!==null)){resolutionState='INCONSISTENT';attentionRequired=true;reasonCode='EXIT_SOURCE_DECISION_INCONSISTENT';}
+ else if(cycle.status==='AWAITING_ENTRY'){resolutionState='RECORDED_SHADOW';reasonCode='EXIT_RECORDED_AWAITING_ENTRY';}
+ else if(cycle.terminalReasonCode==='UNMATCHED_EXIT_RETENTION_EXPIRED'){resolutionState='RETENTION_EXPIRED';unresolved=false;reasonCode='UNMATCHED_EXIT_RETENTION_EXPIRED';}
+ else if(['TERMINAL_NO_EXPOSURE','TERMINAL_CLOSED'].includes(cycle.status)){resolutionState='NO_EXPOSURE_TERMINAL';unresolved=false;reasonCode=cycle.terminalReasonCode??'TERMINAL_NO_PHASE4A_EXPOSURE';}
+ else{resolutionState='RECORDED_SHADOW';unresolved=false;reasonCode='EXIT_CORRELATION_RECORDED_SHADOW_ONLY';}
+ return{signalId:signal.id,externalEventId:signal.externalEventId,workId:work?.id??null,workStatus:work?.status??'MISSING',acceptedAt:signal.createdAt,decisionCount:decisions.length,resolutionState,unresolved,attentionRequired,reasonCode,brokerExitApplied:false};
 }
+function present(cycle:any,now=new Date()){const exitObligations=cycle.signals.filter((signal:any)=>signal.schemaVersion===2&&signal.event==='EXIT_LONG').map((signal:any)=>classifyExitObligation(cycle,signal));return{...cycle,shadowOnly:true,actualExecutionAuthority:'NONE',hypotheticalEntryAuthority:cycle.accountCycles.some((row:any)=>row.entryReservationKey)?'SHADOW_RESERVATION_ONLY':'NONE',exitObligations,unresolvedExitCount:exitObligations.filter((row:{unresolved:boolean})=>row.unresolved).length,attentionExitCount:exitObligations.filter((row:{attentionRequired:boolean})=>row.attentionRequired).length,work:cycle.signals.map((signal:any)=>signal.correlationWork?{...signal.correlationWork,event:signal.event,ageMs:Math.max(0,now.getTime()-signal.correlationWork.createdAt.getTime()),stalledLease:signal.correlationWork.status==='CLAIMED'&&Boolean(signal.correlationWork.leaseExpiresAt&&signal.correlationWork.leaseExpiresAt<=now)}:null).filter(Boolean)};}
 
-function present(cycle: any, now = new Date()) {
-  const exitObligations = exitResolution(cycle);
-  return { ...cycle, shadowOnly: true, actualExecutionAuthority: 'NONE', hypotheticalEntryAuthority: cycle.accountCycles.some((row: any) => row.entryReservationKey) ? 'SHADOW_RESERVATION_ONLY' : 'NONE',
-    exitObligations, unresolvedExitCount: exitObligations.filter((row: { unresolved: boolean }) => row.unresolved).length,
-    work: cycle.signals.map((signal: any) => signal.correlationWork ? { ...signal.correlationWork, event: signal.event,
-      ageMs: Math.max(0, now.getTime() - signal.correlationWork.createdAt.getTime()),
-      stalledLease: signal.correlationWork.status === 'CLAIMED' && Boolean(signal.correlationWork.leaseExpiresAt && signal.correlationWork.leaseExpiresAt <= now) } : null).filter(Boolean),
-  };
-}
+function baseWhere(filters:ExternalSignalOperationsFilters){const predicates:Prisma.Sql[]=[Prisma.sql`TRUE`];if(filters.status)predicates.push(Prisma.sql`c.status::text=${filters.status}`);if(filters.event)predicates.push(Prisma.sql`EXISTS (SELECT 1 FROM "Signal" fs WHERE fs."externalSignalTradeCycleId"=c.id AND fs.event::text=${filters.event})`);if(filters.workStatus)predicates.push(Prisma.sql`EXISTS (SELECT 1 FROM "Signal" fs JOIN "ExternalSignalCorrelationWork" fw ON fw."signalId"=fs.id WHERE fs."externalSignalTradeCycleId"=c.id AND fw.status::text=${filters.workStatus})`);
+ const unresolvedSignal=Prisma.sql`(ew.id IS NULL OR ew.status<>'COMPLETED' OR c.status='AWAITING_ENTRY' OR EXISTS (SELECT 1 FROM "ExternalSignalCorrelationDecision" hd WHERE hd."signalId"=es.id AND hd."decisionType"='EXIT_PENDING' AND hd."reasonCode"='EXIT_HELD_BEHIND_ADMISSION_RESERVATION') OR ((SELECT count(*) FROM "ExternalSignalTradeCycleAccount" ca WHERE ca."externalSignalTradeCycleId"=c.id)=0 AND NOT (c.status IN ('TERMINAL_NO_EXPOSURE','TERMINAL_CLOSED') AND (SELECT count(*) FROM "ExternalSignalCorrelationDecision" sd WHERE sd."signalId"=es.id AND sd."decisionType"='EXIT_PENDING' AND sd."accountCycleId" IS NULL)=1)) OR ((SELECT count(*) FROM "ExternalSignalTradeCycleAccount" ca WHERE ca."externalSignalTradeCycleId"=c.id)>0 AND ((SELECT count(DISTINCT ad."accountCycleId") FROM "ExternalSignalCorrelationDecision" ad WHERE ad."signalId"=es.id AND ad."decisionType"='EXIT_PENDING')<>(SELECT count(*) FROM "ExternalSignalTradeCycleAccount" ca WHERE ca."externalSignalTradeCycleId"=c.id) OR (SELECT count(*) FROM "ExternalSignalCorrelationDecision" ad WHERE ad."signalId"=es.id AND ad."decisionType"='EXIT_PENDING')<>(SELECT count(*) FROM "ExternalSignalTradeCycleAccount" ca WHERE ca."externalSignalTradeCycleId"=c.id))))`;
+ const unresolved=Prisma.sql`EXISTS (SELECT 1 FROM "Signal" es LEFT JOIN "ExternalSignalCorrelationWork" ew ON ew."signalId"=es.id WHERE es."externalSignalTradeCycleId"=c.id AND es."schemaVersion"=2 AND es.event='EXIT_LONG' AND ${unresolvedSignal})`;
+ if(filters.unresolvedExit!==undefined)predicates.push(filters.unresolvedExit?unresolved:Prisma.sql`NOT ${unresolved}`);return{where:Prisma.join(predicates,' AND '),unresolved,unresolvedSignal};}
 
-export async function listExternalSignalOperations(filters: ExternalSignalOperationsFilters, db: Db = prisma) {
-  const signalPredicates: Prisma.SignalWhereInput[] = [];
-  if (filters.event) signalPredicates.push({ event: filters.event });
-  if (filters.workStatus) signalPredicates.push({ correlationWork: { status: filters.workStatus } });
-  const where: Prisma.ExternalSignalTradeCycleWhereInput = {
-    ...(filters.status ? { status: filters.status } : {}),
-    ...(signalPredicates.length ? { AND: signalPredicates.map(predicate => ({ signals: { some: predicate } })) } : {}),
-  };
-  const rows = await db.externalSignalTradeCycle.findMany({ where, include: cycleInclude, orderBy: { id: 'desc' } });
-  const presented = rows.map(row => present(row)).filter(row => filters.unresolvedExit === undefined || (row.unresolvedExitCount > 0) === filters.unresolvedExit);
-  const start = (filters.page - 1) * filters.pageSize;
-  const workRows = presented.flatMap(row => row.work);
-  const summary = { shadowOnly: true, totalCycles: presented.length, unresolvedExitObligations: presented.reduce((sum, row) => sum + row.unresolvedExitCount, 0),
-    work: Object.fromEntries(Object.values(ExternalSignalCorrelationWorkStatus).map(status => [status, workRows.filter(row => row.status === status).length])),
-    stalledLeases: workRows.filter(row => row.stalledLease).length, evaluatedAt: new Date().toISOString() };
-  return { cycles: presented.slice(start, start + filters.pageSize), summary,
-    pagination: { page: filters.page, pageSize: filters.pageSize, total: presented.length, totalPages: Math.max(1, Math.ceil(presented.length / filters.pageSize)) } };
-}
-
-export async function getExternalSignalOperation(id: number, db: Db = prisma) {
-  const row = await db.externalSignalTradeCycle.findUnique({ where: { id }, include: cycleInclude });
-  if (!row) throw new HttpError(404, 'External signal trade cycle was not found.');
-  return present(row);
-}
+export async function listExternalSignalOperations(filters:ExternalSignalOperationsFilters,db:Db=prisma){const{where,unresolvedSignal}=baseWhere(filters),skip=(filters.page-1)*filters.pageSize;const[pageRows,totalRows,summaryRows,workRows]=await Promise.all([
+ db.$queryRaw<Array<{id:number}>>(Prisma.sql`SELECT c.id FROM "ExternalSignalTradeCycle" c WHERE ${where} ORDER BY c.id DESC LIMIT ${filters.pageSize} OFFSET ${skip}`),
+ db.$queryRaw<Array<{total:bigint}>>(Prisma.sql`SELECT count(*)::bigint total FROM "ExternalSignalTradeCycle" c WHERE ${where}`),
+ db.$queryRaw<Array<{unresolved:bigint}>>(Prisma.sql`SELECT count(*)::bigint unresolved FROM "ExternalSignalTradeCycle" c JOIN "Signal" es ON es."externalSignalTradeCycleId"=c.id AND es."schemaVersion"=2 AND es.event='EXIT_LONG' LEFT JOIN "ExternalSignalCorrelationWork" ew ON ew."signalId"=es.id WHERE ${where} AND ${unresolvedSignal}`),
+ db.$queryRaw<Array<{status:string;count:bigint;stalled:bigint}>>(Prisma.sql`SELECT w.status::text status,count(*)::bigint count,count(*) FILTER (WHERE w.status='CLAIMED' AND w."leaseExpiresAt"<=statement_timestamp())::bigint stalled FROM "ExternalSignalTradeCycle" c JOIN "Signal" s ON s."externalSignalTradeCycleId"=c.id JOIN "ExternalSignalCorrelationWork" w ON w."signalId"=s.id WHERE ${where} GROUP BY w.status`)]);
+ const ids=pageRows.map(row=>row.id),fetched=ids.length?await db.externalSignalTradeCycle.findMany({where:{id:{in:ids}},include:cycleInclude}):[],byId=new Map(fetched.map(row=>[row.id,row])),cycles=ids.map(id=>byId.get(id)).filter(Boolean).map(row=>present(row));const work=Object.fromEntries(Object.values(ExternalSignalCorrelationWorkStatus).map(status=>[status,Number(workRows.find(row=>row.status===status)?.count??0)])),total=Number(totalRows[0]?.total??0);return{cycles,summary:{shadowOnly:true,totalCycles:total,unresolvedExitObligations:Number(summaryRows[0]?.unresolved??0),work,stalledLeases:workRows.reduce((sum,row)=>sum+Number(row.stalled),0),evaluatedAt:new Date().toISOString()},pagination:{page:filters.page,pageSize:filters.pageSize,total,totalPages:Math.max(1,Math.ceil(total/filters.pageSize))}};}
+export async function getExternalSignalOperation(id:number,db:Db=prisma){const row=await db.externalSignalTradeCycle.findUnique({where:{id},include:cycleInclude});if(!row)throw new HttpError(404,'External signal trade cycle was not found.');return present(row);}

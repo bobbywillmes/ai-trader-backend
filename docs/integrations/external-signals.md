@@ -68,13 +68,21 @@ failed or missing work prevents terminalization. The accepted EXIT and terminal
 identity tombstone remain permanently; later ENTRY ingestion is refused as a cycle
 conflict and cannot reopen the cycle.
 
-The owner-only External Signals Operations view derives unresolved EXIT obligations
-from accepted contract-v2 EXIT Signals, their durable work rows, immutable decisions
-and account/source terminal state. It includes pending, claimed, retry-wait, failed,
-expired-lease and EXIT-before-ENTRY cases. Retry exhaustion remains visible as FAILED
-until an explicit audited SYSTEM_OWNER requeue. Phase 4A.2 entry admission must fail
-closed whenever a matching source cycle has an unresolved accepted EXIT obligation;
-Phase 4A.1C records and exposes that invariant but does not enforce real admission.
+The owner-only External Signals Operations view derives informational EXIT resolution
+states from accepted contract-v2 EXIT Signals, their durable work rows, immutable
+decisions and account/source terminal state. `CORRELATION_PENDING`,
+`RECORDED_HELD_BEHIND_RESERVATION`, `RECORDED_SHADOW`, `NO_EXPOSURE_TERMINAL`,
+`RETENTION_EXPIRED`, `FAILED` and `INCONSISTENT` never claim that a broker EXIT was
+applied. A separate unresolved/attention classification includes pending, claimed,
+retry-wait, failed, expired-lease, held-reservation and contradictory evidence.
+Retry exhaustion remains visible as FAILED until an explicit audited SYSTEM_OWNER
+requeue.
+
+Future Phase 4A.2 admission must fail closed whenever a matching source cycle has an
+unresolved accepted EXIT obligation. It must inspect and lock the durable source cycle,
+accepted Signals, correlation work and every account-specific EXIT decision atomically;
+it must not trust the Operations API projection or a previously rendered status.
+Phase 4A.1C records and exposes this invariant but does not enforce real admission.
 
 ## Operator workflow
 

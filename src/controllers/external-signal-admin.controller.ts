@@ -32,6 +32,7 @@ export async function requeueExternalSignalCorrelationController(req: Request, r
     if (!req.body || req.body.confirm !== true || Object.keys(req.body).some(key => key !== 'confirm')) throw new HttpError(400, 'Explicit requeue confirmation is required.');
     res.json(await requeueFailedExternalSignalCorrelationWork({ workId: parse(schemas.externalSignalIdSchema, req.params.id), actorUserId: res.locals.user.id }));
   } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2025') return next(new HttpError(404, 'Correlation work was not found.'));
     if (error instanceof Error && error.message === 'CORRELATION_WORK_NOT_REQUEUEABLE') return next(new HttpError(409, 'Correlation work is not failed and cannot be requeued.'));
     next(error instanceof HttpError ? error : new HttpError(500, 'External signal correlation requeue unavailable.'));
   }

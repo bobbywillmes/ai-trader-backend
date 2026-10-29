@@ -9,6 +9,8 @@ const mocks = vi.hoisted(() => ({
   strategySignalBinding: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn(), create: vi.fn(), update: vi.fn() },
   signal: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
   signalDelivery: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
+  externalSignalTradeCycle: { findMany: vi.fn(), findUnique: vi.fn() },
+  externalSignalCorrelationWork: { findUniqueOrThrow: vi.fn(), update: vi.fn() }, user: { findUnique: vi.fn() },
   strategy: { findUnique: vi.fn() }, systemEvent: { create: vi.fn() },
   session: vi.fn(),
 }));
@@ -27,6 +29,7 @@ describe('external signal owner management and read routes', () => {
   beforeEach(async () => {
     vi.clearAllMocks(); process.env.AI_TRADER_ADMIN_API_KEY = 'admin-test';
     mocks.session.mockResolvedValue(null);
+    mocks.$queryRaw.mockResolvedValue([]);mocks.externalSignalTradeCycle.findMany.mockResolvedValue([]);mocks.externalSignalTradeCycle.findUnique.mockResolvedValue(null);mocks.user.findUnique.mockResolvedValue({platformRole:'SYSTEM_OWNER'});
     for (const delegate of [mocks.externalSignalSource, mocks.strategySignalBinding, mocks.signal, mocks.signalDelivery]) {
       delegate.findMany.mockResolvedValue([]); delegate.findUnique.mockResolvedValue({ id: 1 }); delegate.count.mockResolvedValue(0);
     }
@@ -93,6 +96,12 @@ describe('external signal owner management and read routes', () => {
       mocks.session.mockResolvedValue({user:{id:2,platformRole:'ACCOUNT_USER'}});
       expect((await fetch(`${baseUrl}${path}`,{method,headers:{authorization:'Bearer session','content-type':'application/json'},...(method==='POST'?{body:JSON.stringify({confirm:true})}:{})})).status).toBe(403);
     }
+  });
+  it('provides bounded owner operations and maps missing requeue work to 404',async()=>{
+    const list=await fetch(`${baseUrl}/operations?page=1&pageSize=25&unresolvedExit=true`,{headers});expect(list.status).toBe(200);expect(await list.json()).toMatchObject({cycles:[],pagination:{page:1,pageSize:25,total:0}});
+    expect((await fetch(`${baseUrl}/operations?pageSize=101`,{headers})).status).toBe(400);
+    mocks.externalSignalCorrelationWork.findUniqueOrThrow.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('missing',{code:'P2025',clientVersion:'7'}));
+    expect((await fetch(`${baseUrl}/correlation-work/999/requeue`,{method:'POST',headers,body:JSON.stringify({confirm:true})})).status).toBe(404);
   });
   it('allows an owner session and validates pagination bounds', async () => {
     mocks.session.mockResolvedValue({ user: { id: 1, platformRole: 'SYSTEM_OWNER' } });
