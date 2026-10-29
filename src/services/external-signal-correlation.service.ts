@@ -100,7 +100,7 @@ export async function terminalizeAbandonedExternalSignalCycles(options:{limit?:n
    await tx.externalSignalTradeCycle.update({where:{id:cycle.id},data:{status:'TERMINAL_NO_EXPOSURE',terminalAt:now,terminalReasonCode:'UNMATCHED_EXIT_RETENTION_EXPIRED'}});
    await tx.systemEvent.create({data:{type:'external_signal_unmatched_exit_terminalized',entityType:'external_signal_trade_cycle',entityId:String(cycle.id),severity:'INFO',message:'An unmatched EXIT source cycle reached its retention boundary and was terminalized.',payloadJson:{cycleId:cycle.id,retentionHours:24,acceptedExitCount:cycle.signals.length,tradingEffect:'NONE'}}});
    return true;
-  },{isolationLevel:Prisma.TransactionIsolationLevel.Serializable});
+  },{isolationLevel:Prisma.TransactionIsolationLevel.ReadCommitted});
   if(changed)terminalized+=1;}catch(error){const classified=classifyExternalSignalCorrelationError(error);if(classified.retryable&&['SQLSTATE_40001','SQLSTATE_40P01'].includes(classified.code)){serializationConflicts+=1;continue;}throw error;}
  }
  return{examined:candidates.length,terminalized,serializationConflicts};

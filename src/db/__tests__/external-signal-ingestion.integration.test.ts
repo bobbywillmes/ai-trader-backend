@@ -15,6 +15,7 @@ import { canonicalSignalPayload, hashCanonicalPayload } from '../../services/ext
 import { routeSignal } from '../../services/signal-routing.service.js';
 import { evaluateSignalRoute } from '../../services/signal-evaluation.service.js';
 import { processExternalSignalCorrelationWork, requeueFailedExternalSignalCorrelationWork, terminalizeAbandonedExternalSignalCycles } from '../../services/external-signal-correlation.service.js';
+import { listExternalSignalOperations } from '../../services/external-signal-operations.service.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -98,6 +99,16 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     await admin.query(await readFile('prisma/migrations/20261028200000_external_signal_durable_correlation/migration.sql', 'utf8'));
     await admin.query(await readFile('prisma/migrations/20261028230000_external_signal_correlation_audit_corrections/migration.sql', 'utf8'));
     await admin.query(await readFile('prisma/migrations/20261028233000_external_signal_decision_route_consistency/migration.sql', 'utf8'));
+    await admin.query(`
+      CREATE TYPE "SignalRouteMarketEligibilityStatus" AS ENUM ('PENDING','COMPLETED','FAILED');
+      CREATE TABLE "SignalRouteMarketEligibilityAttempt" (
+        id serial PRIMARY KEY, "signalRouteId" integer NOT NULL, attempt integer NOT NULL,
+        "integrationVersion" text NOT NULL, status "SignalRouteMarketEligibilityStatus" NOT NULL,
+        "strategyId" integer NOT NULL, "eligibilityDecisionId" integer, "reasonCode" text NOT NULL,
+        "startedAt" timestamptz(3) NOT NULL, "completedAt" timestamptz(3) NOT NULL,
+        "evidenceJson" jsonb NOT NULL, "createdAt" timestamptz(3) NOT NULL DEFAULT now(),
+        UNIQUE ("signalRouteId", attempt)
+      )`);
     expect(await db.externalSignalSource.findUnique({ where: { webhookKeyHash: hashWebhookKey(token) } })).toBeNull();
     token = (await getExternalSignalWebhook(1, -1, db)).webhookKey;
   });
@@ -689,6 +700,69 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     const lateEntry=await ingestCycle(abandonedRef,'ENTRY_LONG');
     expect(lateEntry).toMatchObject({status:'REJECTED',rejectionCode:'EVENT_KEY_CONFLICT',rejectionDetails:{reason:'trade_cycle_terminal'}});
     expect(await db.signal.findUnique({where:{id:abandonedExit!.signalId!}})).not.toBeNull();
+
+    const pendingEntryRef=`pending-entry-behind-exit:${randomUUID()}`;
+    const pendingEntryExit=await ingestCycle(pendingEntryRef,'EXIT_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'pending-entry-exit',limit:50});
+    const pendingEntry=await ingestCycle(pendingEntryRef,'ENTRY_LONG');
+    expect(await db.externalSignalCorrelationWork.findUnique({where:{signalId:pendingEntry!.signalId!}})).toMatchObject({status:'PENDING'});
+    expect(await db.externalSignalTradeCycle.findFirst({where:{externalTradeCycleRef:pendingEntryRef}})).toMatchObject({status:'ENTRY_RECEIVED',terminalAt:null});
+    await db.externalSignalCorrelationWork.update({where:{signalId:pendingEntry!.signalId!},data:{status:'RETRY_WAIT',nextAttemptAt:new Date('2999-01-01T00:00:00Z')}});
+
+    const failedEntryRef=`failed-entry-behind-exit:${randomUUID()}`;
+    await ingestCycle(failedEntryRef,'EXIT_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'failed-entry-exit',limit:50});
+    const failedEntry=await ingestCycle(failedEntryRef,'ENTRY_LONG');
+    await db.externalSignalCorrelationWork.update({where:{signalId:failedEntry!.signalId!},data:{status:'FAILED',attemptCount:8,lastErrorCode:'TEST_ENTRY_FAILED'}});
+    await db.externalSignalCorrelationWork.update({where:{signalId:pendingEntry!.signalId!},data:{status:'PENDING',nextAttemptAt:new Date()}});
+
+    const readAll=async(unresolvedExit?:boolean)=>{const first=await listExternalSignalOperations({page:1,pageSize:3,unresolvedExit},db);const rows=[...first.cycles];for(let page=2;page<=first.pagination.totalPages;page+=1)rows.push(...(await listExternalSignalOperations({page,pageSize:3,unresolvedExit},db)).cycles);return{first,rows};};
+    const allOperations=await readAll(),unresolvedOperations=await readAll(true),resolvedOperations=await readAll(false);
+    const allIds=new Set(allOperations.rows.map(row=>row.id)),unresolvedIds=new Set(unresolvedOperations.rows.map(row=>row.id)),resolvedIds=new Set(resolvedOperations.rows.map(row=>row.id));
+    expect([...unresolvedIds].every(id=>!resolvedIds.has(id))).toBe(true);
+    expect(new Set([...unresolvedIds,...resolvedIds])).toEqual(allIds);
+    expect(allOperations.first.summary.unresolvedExitObligations).toBe(allOperations.rows.reduce((sum,row)=>sum+row.unresolvedExitCount,0));
+    expect(unresolvedOperations.first.summary.unresolvedExitObligations).toBe(unresolvedOperations.rows.reduce((sum,row)=>sum+row.unresolvedExitCount,0));
+    expect(allOperations.rows.every(row=>unresolvedIds.has(row.id)===(row.unresolvedExitCount>0))).toBe(true);
+    const pendingEntryOperation=allOperations.rows.find(row=>row.externalTradeCycleRef===pendingEntryRef);
+    expect(pendingEntryOperation).toMatchObject({status:'ENTRY_RECEIVED'});
+    expect(pendingEntryOperation?.exitObligations[0]).toMatchObject({resolutionState:'CORRELATION_PENDING',unresolved:true});
+    expect(allOperations.rows.find(row=>row.externalTradeCycleRef===failedEntryRef)?.exitObligations[0]).toMatchObject({resolutionState:'FAILED',unresolved:true});
+    const preemptedOperation=allOperations.rows.find(row=>row.id===cycle.id);
+    expect(preemptedOperation?.exitObligations[0]).toMatchObject({resolutionState:'NO_EXPOSURE_TERMINAL',unresolved:false,attentionRequired:false,brokerExitApplied:false});
+    expect(allOperations.rows.find(row=>row.id===successCycle.id)?.exitObligations[0]).toMatchObject({resolutionState:'RECORDED_HELD_BEHIND_RESERVATION',unresolved:true});
+
+    const lockWaiters=async()=>Number((await admin.query(`SELECT count(*)::int AS count FROM pg_stat_activity WHERE datname=current_database() AND wait_event_type='Lock'`)).rows[0].count);
+    const waitForAdditionalLockWaiters=async(baseline:number,additional:number)=>{for(let attempt=0;attempt<200;attempt+=1){if(await lockWaiters()>=baseline+additional)return;await new Promise(resolve=>setTimeout(resolve,10));}throw new Error(`Expected ${additional} additional PostgreSQL lock waiters.`);};
+    const lockCycle=async(cycleId:number)=>{const client=new Client({connectionString:databaseUrl});await client.connect();await client.query(`SET search_path TO "${schema}"`);await client.query('BEGIN');await client.query('SELECT id FROM "ExternalSignalTradeCycle" WHERE id=$1 FOR UPDATE',[cycleId]);return client;};
+
+    const ingestionFirstRef=`housekeeping-ingestion-first:${randomUUID()}`,ingestionFirstExit=await ingestCycle(ingestionFirstRef,'EXIT_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'housekeeping-ingestion-first-fixture',limit:50});
+    const ingestionFirstCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:ingestionFirstRef}}),ingestionFirstSignal=await db.signal.findUniqueOrThrow({where:{id:ingestionFirstExit!.signalId!}});
+    const ingestionFirstLock=await lockCycle(ingestionFirstCycle.id),ingestionFirstBaseline=await lockWaiters();
+    const acceptedSecondExitPromise=ingestCycle(ingestionFirstRef,'EXIT_LONG');
+    await waitForAdditionalLockWaiters(ingestionFirstBaseline,1);
+    const ingestionFirstHousekeepingPromise=terminalizeAbandonedExternalSignalCycles({db,limit:50,now:new Date(ingestionFirstSignal.createdAt.getTime()+48*60*60*1000)});
+    await waitForAdditionalLockWaiters(ingestionFirstBaseline,2);
+    await ingestionFirstLock.query('COMMIT');await ingestionFirstLock.end();
+    const acceptedSecondExit=await acceptedSecondExitPromise;
+    expect(acceptedSecondExit).toMatchObject({status:'NORMALIZED'});
+    expect((await ingestionFirstHousekeepingPromise).examined).toBeGreaterThan(0);
+    expect(await db.externalSignalTradeCycle.findUnique({where:{id:ingestionFirstCycle.id}})).toMatchObject({status:'AWAITING_ENTRY'});
+    expect(await db.externalSignalCorrelationWork.findUnique({where:{signalId:acceptedSecondExit!.signalId!}})).toMatchObject({status:'PENDING'});
+
+    const housekeepingFirstRef=`housekeeping-terminal-first:${randomUUID()}`,housekeepingFirstExit=await ingestCycle(housekeepingFirstRef,'EXIT_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'housekeeping-terminal-first-fixture',limit:50});
+    const housekeepingFirstCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:housekeepingFirstRef}}),housekeepingFirstSignal=await db.signal.findUniqueOrThrow({where:{id:housekeepingFirstExit!.signalId!}});
+    const housekeepingFirstLock=await lockCycle(housekeepingFirstCycle.id),housekeepingFirstBaseline=await lockWaiters();
+    const housekeepingFirstPromise=terminalizeAbandonedExternalSignalCycles({db,limit:50,now:new Date(housekeepingFirstSignal.createdAt.getTime()+48*60*60*1000)});
+    await waitForAdditionalLockWaiters(housekeepingFirstBaseline,1);
+    const rejectedSecondExitPromise=ingestCycle(housekeepingFirstRef,'EXIT_LONG');
+    await waitForAdditionalLockWaiters(housekeepingFirstBaseline,2);
+    await housekeepingFirstLock.query('COMMIT');await housekeepingFirstLock.end();
+    expect((await housekeepingFirstPromise).terminalized).toBeGreaterThanOrEqual(1);
+    expect(await rejectedSecondExitPromise).toMatchObject({status:'REJECTED',rejectionCode:'EVENT_KEY_CONFLICT',rejectionDetails:{reason:'trade_cycle_terminal'}});
+    expect(await db.externalSignalTradeCycle.findUnique({where:{id:housekeepingFirstCycle.id}})).toMatchObject({status:'TERMINAL_NO_EXPOSURE'});
     expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
   });
 
