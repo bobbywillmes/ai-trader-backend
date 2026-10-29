@@ -78,12 +78,13 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
       if (!binding.enabled) throw new SignalRejection('STRATEGY_BINDING_DISABLED', { strategySignalBindingId: binding.id, reason: 'binding_not_enabled' });
       let acceptedRevision = active;
       if (!active || active.revision !== normalized.strategyRevision) {
-        const historicalCycle = v2Identity && normalized.event === 'EXIT_LONG'
+        const historicalCycle = v2Identity
           ? await tx.externalSignalTradeCycle.findUnique({ where: { strategySignalBindingId_externalTradeCycleRef: {
             strategySignalBindingId: binding.id, externalTradeCycleRef: v2Identity.externalTradeCycleRef,
           } } }) : null;
-        if (!historicalCycle || historicalCycle.strategyRevision !== normalized.strategyRevision ||
-          ['TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED', 'CONFLICT'].includes(historicalCycle.status)) {
+        const matchingHistoricalCycle = historicalCycle?.strategyRevision === normalized.strategyRevision;
+        const terminalHistoricalCycle = matchingHistoricalCycle && ['TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED', 'CONFLICT'].includes(historicalCycle.status);
+        if (!matchingHistoricalCycle || (normalized.event !== 'EXIT_LONG' && !terminalHistoricalCycle)) {
           throw new SignalRejection('STRATEGY_REVISION_MISMATCH', {
             strategySignalBindingId: binding.id, activeRevision: active?.revision ?? null, receivedRevision: normalized.strategyRevision,
           });
@@ -159,19 +160,27 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
         if (existing.schemaVersion !== 2) await routeSignalInTransaction(existing.id, tx);
         return tx.signalDelivery.create({ data: { ...deliveryBase, processedAt: new Date(), status: 'DUPLICATE', signalId: existing.id } });
       }
-      let tradeCycle: { id: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; securityId: number } | null = null;
+      let tradeCycle: { id: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; securityId: number; status: string } | null = null;
       if (v2Identity) {
         tradeCycle = await tx.externalSignalTradeCycle.findUnique({ where: {
           strategySignalBindingId_externalTradeCycleRef: {
             strategySignalBindingId: binding.id,
             externalTradeCycleRef: v2Identity.externalTradeCycleRef,
           },
-        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
-        if (tradeCycle) await tx.$queryRaw`SELECT id FROM "ExternalSignalTradeCycle" WHERE id = ${tradeCycle.id} FOR UPDATE`;
+        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true, status: true } });
+        if (tradeCycle) {
+          await tx.$queryRaw`SELECT id FROM "ExternalSignalTradeCycle" WHERE id = ${tradeCycle.id} FOR UPDATE`;
+          tradeCycle = await tx.externalSignalTradeCycle.findUniqueOrThrow({ where: { id: tradeCycle.id }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true, status: true } });
+        }
         if (tradeCycle && (tradeCycle.strategySignalRevisionId !== acceptedRevision.id || tradeCycle.strategyRevision !== acceptedRevision.revision ||
           tradeCycle.securityId !== security.id)) {
           throw new SignalRejection('EVENT_KEY_CONFLICT', {
             fields: ['externalTradeCycleRef'], reason: 'same_trade_cycle_identity_different_authority',
+          });
+        }
+        if (tradeCycle && ['TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED', 'CONFLICT'].includes(tradeCycle.status)) {
+          throw new SignalRejection('EVENT_KEY_CONFLICT', {
+            fields: ['externalTradeCycleRef'], reason: 'trade_cycle_terminal',
           });
         }
         tradeCycle ??= await tx.externalSignalTradeCycle.create({ data: {
@@ -179,7 +188,7 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
           strategyRevision: acceptedRevision.revision, securityId: security.id,
           externalTradeCycleRef: v2Identity.externalTradeCycleRef,
           status: normalized.event === 'ENTRY_LONG' ? 'ENTRY_RECEIVED' : 'AWAITING_ENTRY',
-        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true } });
+        }, select: { id: true, strategySignalBindingId: true, strategySignalRevisionId: true, strategyRevision: true, securityId: true, status: true } });
         if (normalized.event === 'ENTRY_LONG') {
           const originalEntry = await tx.signal.findFirst({ where: {
             externalSignalTradeCycleId: tradeCycle.id,
@@ -216,9 +225,14 @@ export async function ingestExternalSignal(source: ExternalSignalSource, webhook
     } catch (error) {
       if (error instanceof SignalRejection) {
         const delivery = await reject(error);
-        if (error.code === 'EVENT_KEY_CONFLICT' && (error.details as { reason?: string } | null)?.reason === 'same_trade_cycle_identity_different_authority') {
+        const reason = (error.details as { reason?: string } | null)?.reason;
+        if (error.code === 'EVENT_KEY_CONFLICT' && reason === 'same_trade_cycle_identity_different_authority') {
           await createSystemEvent({ type: 'external_signal_cycle_authority_conflict', entityType: 'signal_delivery',
             entityId: delivery.id, severity: 'WARNING', payloadJson: { signalSourceId: source.id, deliveryId: delivery.id } }, tx);
+        }
+        if (error.code === 'EVENT_KEY_CONFLICT' && reason === 'trade_cycle_terminal') {
+          await createSystemEvent({ type: 'external_signal_terminal_cycle_conflict', entityType: 'signal_delivery',
+            entityId: delivery.id, severity: 'WARNING', payloadJson: { signalSourceId: source.id, deliveryId: delivery.id, reason } }, tx);
         }
         return delivery;
       }

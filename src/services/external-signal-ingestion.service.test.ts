@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   externalSignalSource: { findUnique: vi.fn() },
   strategySignalBinding: { findUnique: vi.fn() }, security: { findUnique: vi.fn() },
   signal: { findUnique: vi.fn(), findFirst: vi.fn(), create: vi.fn() }, signalDelivery: { create: vi.fn() },
-  externalSignalTradeCycle: { findUnique: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
+  externalSignalTradeCycle: { findUnique: vi.fn(), findUniqueOrThrow: vi.fn(), create: vi.fn(), updateMany: vi.fn() },
   externalSignalCorrelationWork: { create: vi.fn() },
   systemEvent: { create: vi.fn() }, transaction: vi.fn(),
 }));
@@ -45,6 +45,7 @@ describe('external signal ingestion evidence boundary', () => {
     mocks.externalSignalSource.findUnique.mockResolvedValue(source);
     mocks.strategySignalBinding.findUnique.mockResolvedValue(binding);
     mocks.strategySignalRevision.findFirst.mockResolvedValue({ id: 7, revision: 1, status: 'ACTIVE' });
+    mocks.strategySignalRevision.findUnique.mockResolvedValue({ id: 7, revision: 1, status: 'RETIRED' });
     mocks.security.findUnique.mockResolvedValue({ id: 4, symbol: 'QQQ' });
     mocks.signal.findUnique.mockImplementation(async ({ where }) => signals.find(row =>
       where.signalSourceId_externalEventId
@@ -61,6 +62,7 @@ describe('external signal ingestion evidence boundary', () => {
     mocks.externalSignalTradeCycle.findUnique.mockImplementation(async ({ where }) => cycles.find(row =>
       row.strategySignalBindingId === where.strategySignalBindingId_externalTradeCycleRef.strategySignalBindingId &&
       row.externalTradeCycleRef === where.strategySignalBindingId_externalTradeCycleRef.externalTradeCycleRef) ?? null);
+    mocks.externalSignalTradeCycle.findUniqueOrThrow.mockImplementation(async ({where})=>cycles.find(row=>row.id===where.id));
     mocks.externalSignalTradeCycle.create.mockImplementation(async ({ data }) => {
       const row = { id: cycles.length + 30, ...data }; cycles.push(row); return row;
     });
@@ -139,6 +141,21 @@ describe('external signal ingestion evidence boundary', () => {
     } });
     expect(signals).toHaveLength(1); expect(cycles).toHaveLength(1);
     expect(deliveries).toHaveLength(2); expect(mocks.systemEvent.create).toHaveBeenCalledOnce();
+  });
+  it.each(['ENTRY_LONG','EXIT_LONG'] as const)('rejects a new %s for a terminal cycle while preserving exact duplicate semantics',async event=>{
+    const original={...envelope,schemaVersion:2,externalEventId:'terminal:original',externalTradeCycleRef:'terminal:cycle',event};
+    expect((await ingest(original))?.status).toBe('NORMALIZED');cycles[0]!.status='TERMINAL_NO_EXPOSURE';
+    expect((await ingest(original))?.status).toBe('DUPLICATE');
+    const rejected=await ingest({...original,externalEventId:`terminal:new:${event}`});
+    expect(rejected).toMatchObject({status:'REJECTED',rejectionCode:'EVENT_KEY_CONFLICT',rejectionDetails:{reason:'trade_cycle_terminal'}});
+    expect(signals).toHaveLength(1);expect(mocks.externalSignalCorrelationWork.create).toHaveBeenCalledTimes(1);
+    expect(mocks.systemEvent.create).toHaveBeenCalledWith(expect.objectContaining({data:expect.objectContaining({type:'external_signal_terminal_cycle_conflict'})}));
+  });
+  it.each(['ENTRY_LONG','EXIT_LONG'] as const)('applies terminal-cycle conflict before historical revision rejection for %s',async event=>{
+    const original={...envelope,schemaVersion:2,externalEventId:'historical:original',externalTradeCycleRef:'historical:cycle',event};
+    await ingest(original);cycles[0]!.status='TERMINAL_NO_EXPOSURE';mocks.strategySignalRevision.findFirst.mockResolvedValue({id:8,revision:2,status:'ACTIVE'});
+    expect((await ingest(original))?.status).toBe('DUPLICATE');
+    expect(await ingest({...original,externalEventId:`historical:new:${event}`})).toMatchObject({rejectionCode:'EVENT_KEY_CONFLICT',rejectionDetails:{reason:'trade_cycle_terminal'}});
   });
   it.each([{ event: 'EXIT_LONG' }, { timeframe: '30m' }, { barTime: '2026-09-07T15:00:00Z' }])('records different logical identity: %j', async change => {
     await ingest();
