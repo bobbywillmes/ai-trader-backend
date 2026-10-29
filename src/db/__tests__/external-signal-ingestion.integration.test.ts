@@ -14,7 +14,7 @@ import { createStrategySignalBindingSchema } from '../../validators/external-sig
 import { canonicalSignalPayload, hashCanonicalPayload } from '../../services/external-signal-normalization.js';
 import { routeSignal } from '../../services/signal-routing.service.js';
 import { evaluateSignalRoute } from '../../services/signal-evaluation.service.js';
-import { processExternalSignalCorrelationWork, requeueFailedExternalSignalCorrelationWork } from '../../services/external-signal-correlation.service.js';
+import { processExternalSignalCorrelationWork, requeueFailedExternalSignalCorrelationWork, terminalizeAbandonedExternalSignalCycles } from '../../services/external-signal-correlation.service.js';
 
 const databaseUrl = process.env.DATABASE_URL;
 const describeDatabase = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && databaseUrl ? describe : describe.skip;
@@ -665,6 +665,25 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect((await admin.query('SELECT count(*)::int AS count FROM "TrackedPosition"')).rows[0].count).toBe(1);
     const mutationTables=(await admin.query(`SELECT table_name FROM information_schema.tables WHERE table_schema=$1 AND table_name IN ('EntryExposureClaim','BrokerOrder','BrokerActivity')`,[schema])).rows;
     expect(mutationTables).toEqual([]);
+
+    await admin.query('UPDATE "Subscription" SET enabled=false');
+    const zeroRouteRef=`zero-route:${randomUUID()}`,zeroRouteEntry=await ingestCycle(zeroRouteRef,'ENTRY_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'zero-route-terminal',limit:10});
+    expect(await db.externalSignalTradeCycle.findFirst({where:{externalTradeCycleRef:zeroRouteRef}})).toMatchObject({status:'TERMINAL_NO_EXPOSURE',terminalReasonCode:'ROUTING_COMPLETED_ZERO_ELIGIBLE_TARGETS'});
+    expect(await db.externalSignalCorrelationDecision.findFirst({where:{signalId:zeroRouteEntry!.signalId!,decisionType:'CYCLE_BLOCKED'}})).toMatchObject({reasonCode:'ROUTING_COMPLETED_ZERO_ELIGIBLE_TARGETS'});
+    expect(await db.externalSignalTradeCycleAccount.count({where:{tradeCycle:{externalTradeCycleRef:zeroRouteRef}}})).toBe(0);
+    await admin.query('UPDATE "Subscription" SET enabled=true');
+
+    const abandonedRef=`abandoned-exit:${randomUUID()}`,abandonedExit=await ingestCycle(abandonedRef,'EXIT_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'abandoned-exit-correlation',limit:10});
+    const abandonedCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:abandonedRef}});
+    await admin.query(`UPDATE "ExternalSignalTradeCycle" SET "createdAt"=statement_timestamp()-interval '25 hours' WHERE id=$1`,[abandonedCycle.id]);
+    expect(await terminalizeAbandonedExternalSignalCycles({db,limit:10})).toMatchObject({terminalized:1});
+    expect(await db.externalSignalTradeCycle.findUnique({where:{id:abandonedCycle.id}})).toMatchObject({status:'TERMINAL_NO_EXPOSURE',terminalReasonCode:'UNMATCHED_EXIT_RETENTION_EXPIRED'});
+    const lateEntry=await ingestCycle(abandonedRef,'ENTRY_LONG');
+    expect(lateEntry).toMatchObject({status:'REJECTED',rejectionCode:'EVENT_KEY_CONFLICT'});
+    expect(await db.signal.findUnique({where:{id:abandonedExit!.signalId!}})).not.toBeNull();
+    expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
   });
 
   it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {

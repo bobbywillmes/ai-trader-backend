@@ -54,9 +54,27 @@ binding, revision, Security and cycle reference match exactly. Historical ENTRY 
 new historical cycles remain rejected. Cycle-authority conflicts emit sanitized
 WARNING SystemEvent evidence.
 
-Zero-route terminalization and cleanup policy for abandoned `AWAITING_ENTRY` cycles
-remain deferred to Phase 4A.1C. Their current behavior is intentionally durable and
-nonterminal so an operator can see unresolved evidence rather than an invented result.
+Phase 4A.1C terminalizes a completed ENTRY routing run with zero frozen routes as
+`TERMINAL_NO_EXPOSURE` with reason `ROUTING_COMPLETED_ZERO_ELIGIBLE_TARGETS`. This
+means only that the Phase 4A path had no eligible target and could not reserve or
+admit exposure; it never infers broker absence from missing Phase 4A `OrderIntent`
+rows. The immutable Signal, routing run, work row and terminal source tombstone remain.
+
+An EXIT-first `AWAITING_ENTRY` cycle has a 24-hour retention window. The correlation
+worker may terminalize it only while holding the source-cycle lock and only when every
+accepted signal is an EXIT, every correlation work row is completed, every EXIT has
+its pending decision, and there are no account cycles. Pending, claimed, retry-wait,
+failed or missing work prevents terminalization. The accepted EXIT and terminal
+identity tombstone remain permanently; later ENTRY ingestion is refused as a cycle
+conflict and cannot reopen the cycle.
+
+The owner-only External Signals Operations view derives unresolved EXIT obligations
+from accepted contract-v2 EXIT Signals, their durable work rows, immutable decisions
+and account/source terminal state. It includes pending, claimed, retry-wait, failed,
+expired-lease and EXIT-before-ENTRY cases. Retry exhaustion remains visible as FAILED
+until an explicit audited SYSTEM_OWNER requeue. Phase 4A.2 entry admission must fail
+closed whenever a matching source cycle has an unresolved accepted EXIT obligation;
+Phase 4A.1C records and exposes that invariant but does not enforce real admission.
 
 ## Operator workflow
 
