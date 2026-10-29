@@ -594,9 +594,9 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     const rolloutG2 = (await admin.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration"
       (direction,generation,enabled,"authorityMode","supersedesGenerationId","configurationJson","configurationFingerprint","effectiveAt")
       VALUES ('ENTRY',2,false,'SHADOW',$1,'{}',$2,statement_timestamp()) RETURNING id`, [rolloutG1.id, randomUUID().replaceAll('-', '').repeat(2).slice(0,64)])).rows[0];
-    await admin.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration"
+    const rolloutG3=(await admin.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration"
       (direction,generation,enabled,"authorityMode","supersedesGenerationId","configurationJson","configurationFingerprint","effectiveAt")
-      VALUES ('ENTRY',3,true,'SHADOW',$1,'{}',$2,statement_timestamp()+interval '1 day')`, [rolloutG2.id, randomUUID().replaceAll('-', '').repeat(2).slice(0,64)]);
+      VALUES ('ENTRY',3,true,'SHADOW',$1,'{}',$2,statement_timestamp()+interval '1 day') RETURNING id`, [rolloutG2.id, randomUUID().replaceAll('-', '').repeat(2).slice(0,64)])).rows[0];
     const secondCycle = `rollout:${randomUUID()}`;
     const secondBody = Buffer.from(JSON.stringify({ schemaVersion:2, externalEventId:`entry:${randomUUID()}`, externalTradeCycleRef:secondCycle,
       externalStrategyKey:binding.externalStrategyKey,strategyRevision:revision.revision,event:'ENTRY_LONG',symbol:'QQQ',timeframe:'15m',signalTime:new Date().toISOString() }));
@@ -607,6 +607,7 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     const blockedCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:secondCycle}});
     expect(await db.externalSignalTradeCycleAccount.findMany({where:{externalSignalTradeCycleId:blockedCycle.id}})).toMatchObject([{status:'BLOCKED',entryRolloutGenerationId:rolloutG2.id,entryReservationKey:null}]);
     expect(await db.externalSignalCorrelationDecision.findFirst({where:{externalSignalTradeCycleId:blockedCycle.id,decisionType:'ENTRY_SHADOW_AUTHORITY'}})).toBeNull();
+    expect(await db.externalSignalCorrelationDecision.findFirst({where:{externalSignalTradeCycleId:blockedCycle.id,decisionType:'CYCLE_BLOCKED'}})).toMatchObject({reasonCode:'REVISION_NOT_TRADE_ELIGIBLE'});
     const liveDecision=await db.externalSignalCorrelationDecision.findFirstOrThrow({where:{externalSignalTradeCycleId:cycle.id,decisionType:'LIVE_ROUTE_BLOCKED'}});
     await expect(admin.query(`INSERT INTO "ExternalSignalTradeCycleAccount" ("externalSignalTradeCycleId","entrySignalRouteId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId",status,"updatedAt") VALUES ($1,$2,2,2,2,1,'BLOCKED',statement_timestamp())`,[cycle.id,liveDecision.signalRouteId])).rejects.toThrow(/PAPER-only/);
     await expect(admin.query(`INSERT INTO "ExternalSignalCorrelationDecision" ("externalSignalTradeCycleId","signalId","decisionType","reasonCode","evidenceJson") VALUES ($1,1,'EXIT_PENDING','HOSTILE','{}')`,[cycle.id])).rejects.toThrow(/Signal\/source-cycle mismatch/);
@@ -627,6 +628,43 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     expect(hostileAccounts).toHaveLength(2);
     await expect(admin.query(`INSERT INTO "ExternalSignalCorrelationDecision" ("externalSignalTradeCycleId","accountCycleId","signalRouteId","signalId","decisionType","authorityMode","rolloutGenerationId","reasonCode","evidenceJson") VALUES ($1,$2,$3,$4,'CYCLE_BLOCKED','SHADOW',$5,'HOSTILE_CROSS_WIRE','{}')`,
       [hostileCycle.id,hostileAccounts[0]!.id,hostileAccounts[1]!.entrySignalRouteId,hostileDelivery!.signalId,rolloutG2.id])).rejects.toThrow(/account\/route mismatch/);
+
+    const rolloutG4=(await admin.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration" (direction,generation,enabled,"authorityMode","supersedesGenerationId","configurationJson","configurationFingerprint","effectiveAt") VALUES ('ENTRY',4,true,'SHADOW',$1,'{}',$2,statement_timestamp()) RETURNING id`,[rolloutG3.id,randomUUID().replaceAll('-','').repeat(2).slice(0,64)])).rows[0];
+    const eligibleFixture=await routingFixture('TRADE_ELIGIBLE');
+    const ingestCycle=async(cycleReference:string,event:'ENTRY_LONG'|'EXIT_LONG',fixture=eligibleFixture)=>{const body=Buffer.from(JSON.stringify({schemaVersion:2,externalEventId:`${event}:${randomUUID()}`,externalTradeCycleRef:cycleReference,externalStrategyKey:fixture.binding.externalStrategyKey,strategyRevision:fixture.revision.revision,event,symbol:'QQQ',timeframe:'15m',signalTime:new Date().toISOString()}));return ingestExternalSignal(secondSource,token,{requestId:randomUUID(),receivedAt:new Date(),contentType:'application/json',bodySizeBytes:body.length,rawPayloadHash:createHash('sha256').update(body).digest('hex'),body,tooLarge:false,validContentType:true},db);};
+    const successRef=`success:${randomUUID()}`,successEntry=await ingestCycle(successRef,'ENTRY_LONG');
+    await processExternalSignalCorrelationWork({db,workerId:'successful-reservation',limit:10});
+    const successCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:successRef}});
+    const successAccounts=await db.externalSignalTradeCycleAccount.findMany({where:{externalSignalTradeCycleId:successCycle.id},orderBy:{id:'asc'}});
+    expect(successAccounts).toHaveLength(2);expect(successAccounts.every(row=>row.status==='ENTRY_ADMISSION_PENDING'&&row.entryRolloutGenerationId===rolloutG4.id&&row.entryReservationKey?.startsWith('external-shadow:'))).toBe(true);
+    const successDecisions=await db.externalSignalCorrelationDecision.findMany({where:{externalSignalTradeCycleId:successCycle.id},orderBy:[{accountCycleId:'asc'},{decisionType:'asc'}]});
+    expect(successDecisions.filter(row=>row.decisionType==='ENTRY_RESERVATION').every(row=>row.reasonCode==='DETERMINISTIC_SHADOW_RESERVATION'&&row.authorityMode==='SHADOW'&&row.rolloutGenerationId===rolloutG4.id)).toBe(true);
+    expect(successDecisions.filter(row=>row.decisionType==='ENTRY_SHADOW_AUTHORITY').every(row=>row.reasonCode==='SHADOW_ROLLOUT_ONLY'&&row.authorityMode==='SHADOW'&&row.rolloutGenerationId===rolloutG4.id)).toBe(true);
+    expect(successDecisions.filter(row=>row.decisionType==='ENTRY_SHADOW_AUTHORITY')).toHaveLength(2);
+
+    const successWork=await db.externalSignalCorrelationWork.findUniqueOrThrow({where:{signalId:successEntry!.signalId!}});
+    await db.externalSignalCorrelationWork.update({where:{id:successWork.id},data:{status:'RETRY_WAIT',completedAt:null,nextAttemptAt:new Date(Date.now()+60_000)}});
+    const exitAfterCommit=await ingestCycle(successRef,'EXIT_LONG');await processExternalSignalCorrelationWork({db,workerId:'exit-after-entry-commit',limit:10});
+    await db.externalSignalCorrelationWork.update({where:{id:successWork.id},data:{nextAttemptAt:new Date(0)}});await processExternalSignalCorrelationWork({db,workerId:'entry-replay-after-exit',limit:10});
+    expect(await db.externalSignalCorrelationWork.findUnique({where:{id:successWork.id}}).then(row=>row?.status)).toBe('COMPLETED');
+    expect((await db.externalSignalTradeCycleAccount.findMany({where:{externalSignalTradeCycleId:successCycle.id}})).every(row=>row.status==='EXIT_PENDING'&&row.entryRolloutGenerationId===rolloutG4.id)).toBe(true);
+    expect(await db.externalSignalTradeCycle.findUnique({where:{id:successCycle.id}})).toMatchObject({status:'ROUTED',terminalAt:null});
+    expect(await db.externalSignalCorrelationDecision.count({where:{externalSignalTradeCycleId:successCycle.id,decisionType:'ENTRY_SUPPRESSED'}})).toBe(0);
+    expect(await db.externalSignalCorrelationDecision.count({where:{externalSignalTradeCycleId:successCycle.id,signalId:exitAfterCommit!.signalId!,decisionType:'EXIT_PENDING'}})).toBe(2);
+    expect(await db.externalSignalCorrelationWork.findUnique({where:{signalId:exitAfterCommit!.signalId!}})).toMatchObject({status:'COMPLETED'});
+
+    const rolloutReplayRef=`rollout-replay:${randomUUID()}`,rolloutReplayEntry=await ingestCycle(rolloutReplayRef,'ENTRY_LONG');await processExternalSignalCorrelationWork({db,workerId:'rollout-replay-initial',limit:10});
+    const rolloutReplayCycle=await db.externalSignalTradeCycle.findFirstOrThrow({where:{externalTradeCycleRef:rolloutReplayRef}}),rolloutReplayWork=await db.externalSignalCorrelationWork.findUniqueOrThrow({where:{signalId:rolloutReplayEntry!.signalId!}});
+    await db.externalSignalCorrelationWork.update({where:{id:rolloutReplayWork.id},data:{status:'RETRY_WAIT',completedAt:null,nextAttemptAt:new Date(0)}});
+    const rolloutG5=(await admin.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration" (direction,generation,enabled,"authorityMode","supersedesGenerationId","configurationJson","configurationFingerprint","effectiveAt") VALUES ('ENTRY',5,false,'SHADOW',$1,'{}',$2,statement_timestamp()) RETURNING id`,[rolloutG4.id,randomUUID().replaceAll('-','').repeat(2).slice(0,64)])).rows[0];
+    await processExternalSignalCorrelationWork({db,workerId:'entry-replay-after-rollout-change',limit:10});
+    expect((await db.externalSignalTradeCycleAccount.findMany({where:{externalSignalTradeCycleId:rolloutReplayCycle.id}})).every(row=>row.entryRolloutGenerationId===rolloutG4.id&&row.status==='ENTRY_ADMISSION_PENDING')).toBe(true);
+    expect(await db.externalSignalCorrelationDecision.count({where:{externalSignalTradeCycleId:rolloutReplayCycle.id,rolloutGenerationId:rolloutG5.id}})).toBe(0);
+    expect(await db.externalSignalCorrelationWork.findUnique({where:{id:rolloutReplayWork.id}})).toMatchObject({status:'COMPLETED'});
+    expect((await admin.query('SELECT count(*)::int AS count FROM "OrderIntent"')).rows[0].count).toBe(0);
+    expect((await admin.query('SELECT count(*)::int AS count FROM "TrackedPosition"')).rows[0].count).toBe(1);
+    const mutationTables=(await admin.query(`SELECT table_name FROM information_schema.tables WHERE table_schema=$1 AND table_name IN ('EntryExposureClaim','BrokerOrder','BrokerActivity')`,[schema])).rows;
+    expect(mutationTables).toEqual([]);
   });
 
   it('completes zero routes when the catalog is disabled and keeps retries frozen after configuration changes', async () => {

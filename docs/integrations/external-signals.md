@@ -29,7 +29,8 @@ may idempotently requeue FAILED work with
 
 ENTRY routing freezes only original PAPER SignalRoute account, assignment, Subscription,
 Strategy and Security snapshot into one account cycle per PAPER target. Each account
-cycle receives a deterministic `external-shadow:` reservation and append-only
+eligible, `TRADE_ELIGIBLE` PAPER route under the current enabled rollout receives a
+deterministic `external-shadow:` reservation; every processed route receives append-only
 `ExternalSignalCorrelationDecision` evidence. Decisions are database-constrained to
 `SHADOW`; a missing ENTRY rollout produces explicit `CYCLE_BLOCKED` evidence and is
 never interpreted as authority. No correlation writer can populate OrderIntent or
