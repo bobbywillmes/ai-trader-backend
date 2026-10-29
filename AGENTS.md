@@ -382,6 +382,14 @@ unresolved account; later assignment catalog changes never redirect the frozen c
 All Phase 4A.1 rollout generations are database-enforced `SHADOW`, and none of these
 models authorizes OrderIntent, position, exit, or broker mutation.
 
+Phase 4A.2A preserves historical SHADOW correlation while adding an independently
+activated, default-off PAPER ENTRY execution generation and exact append-preserving
+assignment/source/binding/revision authorization. It still has no admission producer or
+broker authority. A future TradingView OrderIntent must carry both an independent
+account-cycle origin marker and an immutable execution obligation created atomically;
+the legacy order worker excludes every marked intent. EXIT and LIVE execution remain
+database-prohibited. See `docs/architecture/tradingview-paper-execution-authority.md`.
+
 Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
 `SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
 Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are

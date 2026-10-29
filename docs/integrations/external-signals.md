@@ -1,8 +1,9 @@
 # External signal ingestion, authority, routing, and evaluation
 
 External Signals are immutable, account-independent strategy evidence. **They cannot
-trade.** Phase 4A.1 rollout generations are database-enforced `SHADOW`; the schema
-contains a future `EXECUTE` vocabulary value but rejects it. Backend-owned revision
+trade through the Phase 4A.1 correlation path.** Historical rollout generations and
+correlation decisions remain database-enforced `SHADOW`. Phase 4A.2A permits separately
+activated PAPER ENTRY `EXECUTE` generations but does not connect them to admission or dispatch. Backend-owned revision
 authority may permit deterministic subscription routing.
 ENTRY_LONG and EXIT_LONG now produce bounded evaluation evidence, never risk gates, entry decisions,
 order intents, brokers or position/exit pipelines.
@@ -685,3 +686,16 @@ No OrderIntent, broker
 submission, sell activity or position/exit-state mutation may originate from evaluation.
 Future entry/exit handoffs must use the existing authoritative safety pipelines;
 those handoffs are intentionally absent here.
+## Phase 4A.2A PAPER execution authority foundation
+
+Phase 4A.2A adds inert, independently controlled PAPER ENTRY authority without connecting external signals to OrderIntent creation or broker dispatch. Historical correlation remains SHADOW-only. Executable rollout creation, activation, exact assignment authorization, immutable origin/obligation constraints, and lock-order findings are specified in [TradingView PAPER execution authority](../architecture/tradingview-paper-execution-authority.md).
+
+Owner-only management endpoints are:
+
+- `GET/POST /api/external-signal-admin/execution-rollouts`
+- `POST /api/external-signal-admin/execution-rollouts/:id/activate`
+- `POST /api/external-signal-admin/execution-rollouts/:id/deactivate`
+- `GET/POST /api/external-signal-admin/accounts/:accountId/assignments/:assignmentId/entry-execution-authorizations`
+- `POST /api/external-signal-admin/accounts/:accountId/assignments/:assignmentId/entry-execution-authorizations/revoke`
+
+An active generation or authorization has no trading effect in this checkpoint. No TradingView OrderIntent producer exists, and the legacy order worker excludes all intents carrying the external-signal origin marker.

@@ -8,12 +8,50 @@ import { changeStrategySignalRevision, listStrategySignalRevisions } from '../se
 import { getExternalSignalResource, listExternalSignalResources, type ExternalSignalResource } from '../services/external-signal-read.service.js';
 import { getExternalSignalOperation, listExternalSignalOperations } from '../services/external-signal-operations.service.js';
 import { requeueFailedExternalSignalCorrelationWork } from '../services/external-signal-correlation.service.js';
+import * as executionAuthority from '../services/external-signal-execution-authority.service.js';
 
 function parse<T>(schema: z.ZodType<T>, value: unknown): T {
   const result = schema.safeParse(value);
   if (!result.success) throw new HttpError(400, 'Invalid external signal request.',
     result.error.issues.map(issue => ({ path: issue.path, code: issue.code })));
   return result.data;
+}
+
+const actorId = (res: Response) => {
+  if (!res.locals.user) throw new HttpError(401, 'Authentication required.');
+  return res.locals.user.id;
+};
+
+export async function listExternalSignalExecutionRolloutsController(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await executionAuthority.listExternalSignalExecutionRollouts(actorId(res))); } catch (error) { next(error); }
+}
+
+export async function createExternalSignalExecutionGenerationController(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.status(201).json(await executionAuthority.createExternalSignalExecuteGeneration(parse(schemas.createExternalSignalExecutionGenerationSchema, req.body), actorId(res))); } catch (error) { next(error); }
+}
+
+export function externalSignalExecutionRolloutController(action: 'ACTIVATE'|'DEACTIVATE') {
+  return async (req: Request, res: Response, next: NextFunction) => {
+    res.setHeader('Cache-Control', 'no-store');
+    try { const input = parse(schemas.externalSignalExecutionRolloutActionSchema, req.body); res.json(await executionAuthority.changeExternalSignalExecutionRollout(parse(schemas.externalSignalIdSchema, req.params.id), action, input.reason, actorId(res))); } catch (error) { next(error); }
+  };
+}
+
+export async function listExternalSignalEntryExecutionAuthorizationsController(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json({ authorizations: await executionAuthority.listExternalSignalEntryExecutionAuthorizations(parse(schemas.externalSignalIdSchema, req.params.accountId), parse(schemas.externalSignalIdSchema, req.params.assignmentId), actorId(res)) }); } catch (error) { next(error); }
+}
+
+export async function grantExternalSignalEntryExecutionAuthorizationController(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.status(201).json(await executionAuthority.grantExternalSignalEntryExecutionAuthorization(parse(schemas.externalSignalIdSchema, req.params.accountId), parse(schemas.externalSignalIdSchema, req.params.assignmentId), parse(schemas.grantExternalSignalEntryExecutionAuthorizationSchema, req.body), actorId(res))); } catch (error) { next(error); }
+}
+
+export async function revokeExternalSignalEntryExecutionAuthorizationController(req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try { const input = parse(schemas.revokeExternalSignalEntryExecutionAuthorizationSchema, req.body); res.json(await executionAuthority.revokeExternalSignalEntryExecutionAuthorization(parse(schemas.externalSignalIdSchema, req.params.accountId), parse(schemas.externalSignalIdSchema, req.params.assignmentId), input.authorizationId, input.reason, actorId(res))); } catch (error) { next(error); }
 }
 
 export async function externalSignalOperationsController(req: Request, res: Response, next: NextFunction) {

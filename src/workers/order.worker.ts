@@ -569,7 +569,9 @@ export async function processPendingOrdersForAccount(
   tradingAccountId: number
 ) {
   const pending = await prisma.orderIntent.findMany({
-    where: { status: 'pending', tradingAccountId },
+    // Phase 4A.2A fail-closed boundary: TradingView-originated intents are never handled by
+    // the legacy worker. A later checkpoint must add the explicit authorization/dispatch path.
+    where: { status: 'pending', tradingAccountId, externalSignalAccountCycleId: null },
     take: PENDING_ORDER_BATCH_LIMIT_PER_ACCOUNT,
     orderBy: { createdAt: 'asc' },
   });

@@ -90,6 +90,20 @@ describe('external signal owner management and read routes', () => {
     expect((await fetch(`${baseUrl}/${resource}`, { headers: { authorization: 'Bearer session' } })).status).toBe(403);
     expect((await fetch(`${baseUrl}/${resource}`, { headers })).status).toBe(200);
   });
+  it('keeps execution rollout and exact authorization management SYSTEM_OWNER-only', async () => {
+    const paths = [
+      '/execution-rollouts',
+      '/execution-rollouts/1/activate',
+      '/accounts/1/assignments/2/entry-execution-authorizations',
+      '/accounts/1/assignments/2/entry-execution-authorizations/revoke',
+    ];
+    for (const platformRole of ['OPERATOR', 'ACCOUNT_USER']) {
+      mocks.session.mockResolvedValue({ user: { id: 1, platformRole } });
+      for (const path of paths) expect((await fetch(`${baseUrl}${path}`, { method: 'POST', headers: { authorization: 'Bearer session', 'content-type': 'application/json' }, body: '{}' })).status).toBe(403);
+    }
+    mocks.session.mockResolvedValue({ user: { id: 1, platformRole: 'SYSTEM_OWNER' } });
+    for (const path of paths) expect((await fetch(`${baseUrl}${path}`, { method: 'POST', headers: { authorization: 'Bearer session', 'content-type': 'application/json' }, body: '{}' })).status).toBe(400);
+  });
   it('keeps operations and correlation recovery SYSTEM_OWNER-only', async () => {
     for (const [path,method] of [['/operations','GET'],['/operations/1','GET'],['/correlation-work/1/requeue','POST']] as const) {
       expect((await fetch(`${baseUrl}${path}`,{method})).status).toBe(401);

@@ -1,4 +1,20 @@
 import { z } from 'zod';
+
+const authorityReasonSchema = z.string().trim().min(8).max(500);
+export const createExternalSignalExecutionGenerationSchema = z.object({
+  configuration: z.record(z.string(), z.json()).default({}),
+  reason: authorityReasonSchema,
+}).strict();
+export const externalSignalExecutionRolloutActionSchema = z.object({ reason: authorityReasonSchema }).strict();
+export const grantExternalSignalEntryExecutionAuthorizationSchema = z.object({
+  rolloutGenerationId: z.number().int().positive(),
+  strategySignalBindingId: z.number().int().positive(),
+  reason: authorityReasonSchema,
+}).strict();
+export const revokeExternalSignalEntryExecutionAuthorizationSchema = z.object({
+  authorizationId: z.number().int().positive(),
+  reason: authorityReasonSchema,
+}).strict();
 import { ExternalSignalCorrelationWorkStatus, ExternalSignalProvider, ExternalSignalTradeCycleStatus, SignalDeliveryRejectionCode, SignalDeliveryStatus, SignalEvent, SignalAuthorityMode } from '@prisma/client';
 
 export const externalSignalIdSchema = z.coerce.number().int().positive().max(2147483647);
