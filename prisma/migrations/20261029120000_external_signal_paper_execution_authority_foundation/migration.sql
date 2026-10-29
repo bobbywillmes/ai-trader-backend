@@ -104,28 +104,54 @@ BEGIN
   SELECT * INTO generation_row FROM "ExternalSignalExecutionRolloutGeneration" WHERE id=NEW."rolloutGenerationId" FOR UPDATE;
   IF generation_row."authorityMode" IS DISTINCT FROM 'EXECUTE' OR generation_row.direction IS DISTINCT FROM 'ENTRY' OR generation_row.enabled IS DISTINCT FROM true OR generation_row."effectiveAt">statement_timestamp() THEN RAISE EXCEPTION 'only an effective enabled ENTRY EXECUTE generation may be activated'; END IF;
   NEW."createdAt":=statement_timestamp();
-  PERFORM set_config('ai_trader.external_signal_rollout_transition','1',true);
   IF NEW.action='ACTIVATE' THEN
     IF state_row."activeRolloutGenerationId" IS NOT NULL THEN RAISE EXCEPTION 'an execution generation is already active'; END IF;
     IF EXISTS (SELECT 1 FROM "ExternalSignalExecutionRolloutGeneration" g WHERE g.direction='ENTRY' AND g."authorityMode"='EXECUTE' AND g.generation>generation_row.generation) THEN RAISE EXCEPTION 'only latest executable generation may activate'; END IF;
-    UPDATE "ExternalSignalExecutionRolloutState" SET version=version+1,"activeRolloutGenerationId"=NEW."rolloutGenerationId","activatedAt"=NEW."createdAt","updatedAt"=NEW."createdAt" WHERE id=1;
   ELSE
     IF state_row."activeRolloutGenerationId" IS DISTINCT FROM NEW."rolloutGenerationId" THEN RAISE EXCEPTION 'only the active execution generation may deactivate'; END IF;
-    UPDATE "ExternalSignalExecutionRolloutState" SET version=version+1,"activeRolloutGenerationId"=NULL,"activatedAt"=NULL,"updatedAt"=NEW."createdAt" WHERE id=1;
   END IF;
-  PERFORM set_config('ai_trader.external_signal_rollout_transition','0',true);
   RETURN NEW;
 END $$;
 CREATE TRIGGER "ExternalSignalExecutionRolloutActivation_guard" BEFORE INSERT OR UPDATE OR DELETE ON "ExternalSignalExecutionRolloutActivation" FOR EACH ROW EXECUTE FUNCTION external_signal_execution_rollout_activation_guard();
 
 CREATE FUNCTION external_signal_execution_rollout_state_guard() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE activation_row "ExternalSignalExecutionRolloutActivation"%ROWTYPE;
 BEGIN
   IF TG_OP<>'UPDATE' THEN RAISE EXCEPTION 'external signal execution rollout state is database-owned'; END IF;
   IF ROW(NEW.id,NEW.version,NEW."activeRolloutGenerationId",NEW."activatedAt",NEW."updatedAt") IS NOT DISTINCT FROM ROW(OLD.id,OLD.version,OLD."activeRolloutGenerationId",OLD."activatedAt",OLD."updatedAt") THEN RETURN NEW; END IF;
-  IF current_setting('ai_trader.external_signal_rollout_transition',true) IS DISTINCT FROM '1' THEN RAISE EXCEPTION 'external signal execution rollout state is database-owned'; END IF;
+  IF pg_trigger_depth() IS DISTINCT FROM 2 THEN RAISE EXCEPTION 'external signal execution rollout state is database-owned'; END IF;
+  SELECT * INTO activation_row FROM "ExternalSignalExecutionRolloutActivation" ORDER BY id DESC LIMIT 1;
+  IF activation_row.id IS NULL OR NEW.version IS DISTINCT FROM OLD.version+1 OR NEW."updatedAt" IS DISTINCT FROM activation_row."createdAt" OR (
+    activation_row.action='ACTIVATE' AND ROW(NEW."activeRolloutGenerationId",NEW."activatedAt") IS DISTINCT FROM ROW(activation_row."rolloutGenerationId",activation_row."createdAt")
+  ) OR (
+    activation_row.action='DEACTIVATE' AND ROW(NEW."activeRolloutGenerationId",NEW."activatedAt") IS DISTINCT FROM ROW(NULL::integer,NULL::timestamptz)
+  ) THEN RAISE EXCEPTION 'rollout state does not match the latest activation event'; END IF;
   RETURN NEW;
 END $$;
 CREATE TRIGGER "ExternalSignalExecutionRolloutState_guard" BEFORE INSERT OR UPDATE OR DELETE ON "ExternalSignalExecutionRolloutState" FOR EACH ROW EXECUTE FUNCTION external_signal_execution_rollout_state_guard();
+
+CREATE FUNCTION external_signal_execution_rollout_activation_apply() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW.action='ACTIVATE' THEN
+    UPDATE "ExternalSignalExecutionRolloutState" SET version=version+1,"activeRolloutGenerationId"=NEW."rolloutGenerationId","activatedAt"=NEW."createdAt","updatedAt"=NEW."createdAt" WHERE id=1;
+  ELSE
+    UPDATE "ExternalSignalExecutionRolloutState" SET version=version+1,"activeRolloutGenerationId"=NULL,"activatedAt"=NULL,"updatedAt"=NEW."createdAt" WHERE id=1;
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER "ExternalSignalExecutionRolloutActivation_apply" AFTER INSERT ON "ExternalSignalExecutionRolloutActivation" FOR EACH ROW EXECUTE FUNCTION external_signal_execution_rollout_activation_apply();
+
+-- Every accepted v2 EXIT creates a new source-cycle row version in the same
+-- transaction. A concurrent admission that locks the cycle must then observe
+-- the EXIT at READ COMMITTED or abort with a serialization failure.
+CREATE FUNCTION external_signal_exit_touch_source_cycle() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  IF NEW."schemaVersion"=2 AND NEW.event='EXIT_LONG' AND NEW."externalSignalTradeCycleId" IS NOT NULL THEN
+    UPDATE "ExternalSignalTradeCycle" SET "updatedAt"=statement_timestamp() WHERE id=NEW."externalSignalTradeCycleId";
+  END IF;
+  RETURN NULL;
+END $$;
+CREATE TRIGGER "Signal_external_exit_touch_source_cycle" AFTER INSERT ON "Signal" FOR EACH ROW EXECUTE FUNCTION external_signal_exit_touch_source_cycle();
 
 CREATE FUNCTION external_signal_entry_authorization_guard() RETURNS trigger LANGUAGE plpgsql AS $$
 DECLARE a RECORD; state_row "ExternalSignalExecutionRolloutState"%ROWTYPE; assignment_payload text; source_payload text; authorization_payload text;

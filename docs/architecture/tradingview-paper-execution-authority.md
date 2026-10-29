@@ -8,7 +8,7 @@ Authority requires an immutable ENTRY/EXECUTE generation, a SYSTEM_OWNER activat
 
 ## Rollout and epoch semantics
 
-Historical SHADOW generations remain unchanged. Correlation explicitly selects only SHADOW generations, so an EXECUTE generation cannot alter evidence behavior. The database-owned singleton `ExternalSignalExecutionRolloutState` defines current activation, version, and epoch; activation events are immutable audit history. ACTIVATE and DEACTIVATE serialize on that state, and DEACTIVATE clears it before invalidating effective authorizations. A later generation requires its own activation and new exact authorizations. EXIT EXECUTE generations and LIVE authorizations are database-rejected.
+Historical SHADOW generations remain unchanged. Correlation explicitly selects only SHADOW generations, so an EXECUTE generation cannot alter evidence behavior. The database-owned singleton `ExternalSignalExecutionRolloutState` defines current activation, version, and epoch; activation events are immutable audit history. ACTIVATE and DEACTIVATE serialize on that state, and DEACTIVATE clears it before invalidating effective authorizations. State changes are applied only by the nested AFTER trigger of the matching latest append-only activation event; a caller-provided custom setting cannot authorize a direct state update. A later generation requires its own activation and new exact authorizations. EXIT EXECUTE generations and LIVE authorizations are database-rejected.
 
 ## Exact authorization
 
@@ -22,11 +22,15 @@ The database validates PAPER environment, account holder, assignment mirrors, Su
 
 A deferred constraint requires a matching obligation in the same transaction as every marked OrderIntent. Obligation insertion requires `received` status, `ENTRY_INTENT_CREATED`, exact source/binding/revision/account/assignment/Subscription/Security/symbol identity, no accepted EXIT, nonterminal cycles, post-epoch evidence, and currently active authorization. The obligation is immutable.
 
+Every accepted v2 `EXIT_LONG`, including a direct SQL insert, updates the owning source-cycle row in the same transaction. This creates a new MVCC row version without changing Signal identity. An admission transaction that later locks that cycle therefore either sees the EXIT under READ COMMITTED or aborts under SERIALIZABLE if its snapshot predates the EXIT. Ingress continues to lock source before binding and source cycle; the trigger only updates the already-locked cycle on the normal path.
+
 The legacy order worker selects only intents with a null origin marker. Independently, PostgreSQL rejects every marked transition into `submitting` and direct marked inserts outside `received`. Marked intents may still move to `blocked` or `failed`. No marked TradingView intent can reach today's broker path.
 
 ## SHADOW and EXECUTE independence
 
-SHADOW generations and decisions retain their evidence meaning permanently. An enabled SHADOW generation is not an execution prerequisite, and a SHADOW BLOCKED decision neither grants nor denies execution authority. Phase 4A.2B must derive execution eligibility independently from frozen route/correlation identity, the execution epoch, and exact PAPER authorization. `ENTRY_INTENT_CREATED` is the distinct post-admission account-cycle state; timestamp and obligation guards prevent historical or pre-epoch cycles from being promoted.
+SHADOW generations and decisions retain their evidence meaning permanently. An enabled SHADOW generation is not an execution prerequisite, and a SHADOW BLOCKED decision neither grants nor denies execution authority. Phase 4A.2B must derive execution eligibility independently from frozen route/correlation identity, the execution epoch, and exact PAPER authorization. Historical `BLOCKED`, terminal, `EXIT_PENDING`, SHADOW-reserved, and pre-epoch account cycles are never promotion candidates.
+
+The intended 4A.2B state path is a new prospective execution-admission state entered only from a nonterminal frozen ENTRY route after the execution epoch, followed by `ENTRY_INTENT_CREATED` only in the transaction that successfully creates the claim, marked `received` OrderIntent, and obligation. That migration must add the prospective state and narrow transition rules; it must not reinterpret `ENTRY_ADMISSION_PENDING` or `ENTRY_SHADOW_ALLOWED`, because those are historical SHADOW evidence. Failure before intent creation must end in an explicit blocked/no-exposure state. Accepted EXIT must preempt the prospective state, while terminal-to-active and historical-to-executable transitions remain prohibited.
 
 The existing `ExternalSignalTradeCycleAccount_shadow_links_check` still requires `entryOrderIntentId` and `trackedPositionId` to remain null. Phase 4A.2B must replace that constraint only in the migration that atomically wires legitimate OrderIntent linkage. TrackedPosition linkage belongs to a later fill/lifecycle checkpoint and must not be enabled prematurely.
 
@@ -36,7 +40,7 @@ The existing `ExternalSignalTradeCycleAccount_shadow_links_check` still requires
 | --- | --- |
 | v2 ingress | source -> binding -> source cycle parent -> account cycle writers |
 | correlation | work lease -> source -> binding -> source cycle -> account cycle |
-| rollout transition | execution advisory lock -> rollout state -> actor -> generation -> activation event -> authorization invalidation |
+| rollout transition | execution advisory lock -> rollout state -> actor -> generation -> activation event -> nested state apply -> authorization invalidation |
 | grant | execution advisory lock -> rollout state validation -> source -> binding/revision -> generation -> account -> assignment -> Subscription -> Security -> authorization |
 | revoke | execution advisory lock -> rollout state validation -> source -> binding -> authorization |
 | obligation | execution advisory lock -> rollout state validation -> intent/cycles/signal/route/authorization and exact identity rows |
