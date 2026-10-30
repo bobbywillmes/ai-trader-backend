@@ -183,6 +183,10 @@ Table ExternalSignalExecutionRolloutGeneration {
   entryExecutionAuthorizations ExternalSignalEntryExecutionAuthorization [not null]
   entryExecutionObligations ExternalSignalEntryExecutionObligation [not null]
   activeRolloutState ExternalSignalExecutionRolloutState
+  activeBrokerDispatchState ExternalSignalBrokerDispatchState
+  brokerDispatchActivations ExternalSignalBrokerDispatchActivation [not null]
+  brokerWorkerClaims ExternalSignalBrokerWorkerClaim [not null]
+  brokerDispatchConsumptions ExternalSignalBrokerDispatchConsumption [not null]
 
   indexes {
     (direction, generation) [unique]
@@ -202,6 +206,27 @@ Table ExternalSignalExecutionRolloutActivation {
   id Int [pk, increment]
   rolloutGenerationId Int [not null]
   action ExternalSignalExecutionRolloutAction [not null]
+  reason String [not null]
+  actorUserId Int [not null]
+  createdAt DateTime [default: `now()`, not null]
+  rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
+  actor User [not null]
+}
+
+Table ExternalSignalBrokerDispatchState {
+  id Int [pk]
+  version Int [not null]
+  activeRolloutGenerationId Int [unique]
+  activatedAt DateTime
+  updatedAt DateTime [not null]
+  activeRolloutGeneration ExternalSignalExecutionRolloutGeneration
+}
+
+Table ExternalSignalBrokerDispatchActivation {
+  id Int [pk, increment]
+  rolloutGenerationId Int [not null]
+  action ExternalSignalBrokerDispatchAction [not null]
+  stateVersion Int [unique, not null]
   reason String [not null]
   actorUserId Int [not null]
   createdAt DateTime [default: `now()`, not null]
@@ -247,6 +272,7 @@ Table ExternalSignalEntryExecutionAuthorization {
   authorizedBy User [not null]
   revokedBy User
   obligations ExternalSignalEntryExecutionObligation [not null]
+  brokerDispatchConsumptions ExternalSignalBrokerDispatchConsumption [not null]
 
   indexes {
     (rolloutGenerationId, tradingAccountSubscriptionId, strategySignalBindingId, authorizationSequence) [unique]
@@ -311,6 +337,7 @@ Table ExternalSignalTradeCycleAccount {
   correlationDecisions ExternalSignalCorrelationDecision [not null]
   entryExecutionObligation ExternalSignalEntryExecutionObligation
   originatedOrderIntent OrderIntent
+  brokerWorkerClaim ExternalSignalBrokerWorkerClaim
 
   indexes {
     (externalSignalTradeCycleId, tradingAccountId) [unique]
@@ -460,6 +487,7 @@ Table User {
   liveEntryAcceptanceRunsCreated LiveEntryAcceptanceRun [not null]
   liveEntryAcceptanceExecutions LiveEntryAcceptanceRun [not null]
   liveEntryAcceptanceTerminations LiveEntryAcceptanceRun [not null]
+  externalSignalBrokerDispatchActions ExternalSignalBrokerDispatchActivation [not null]
   lifecycleRepairCasesCreated LifecycleRepairCase [not null]
   lifecycleRepairExecutions LifecycleRepairExecution [not null]
   lifecycleRepairActionDecisions LifecycleRepairAction [not null]
@@ -1141,6 +1169,8 @@ Table OrderIntent {
   externalSignalAccountCycleId Int [unique]
   externalSignalOriginAccountCycle ExternalSignalTradeCycleAccount
   externalSignalEntryExecutionObligation ExternalSignalEntryExecutionObligation
+  externalSignalBrokerWorkerClaim ExternalSignalBrokerWorkerClaim
+  externalSignalBrokerDispatchConsumption ExternalSignalBrokerDispatchConsumption
 }
 
 Table ExternalSignalEntryExecutionObligation {
@@ -1164,6 +1194,47 @@ Table ExternalSignalEntryExecutionObligation {
   entrySignalRoute SignalRoute [not null]
   authorization ExternalSignalEntryExecutionAuthorization [not null]
   rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
+  brokerWorkerClaim ExternalSignalBrokerWorkerClaim
+  brokerDispatchConsumption ExternalSignalBrokerDispatchConsumption
+}
+
+Table ExternalSignalBrokerWorkerClaim {
+  id Int [pk, increment]
+  orderIntentId Int [unique, not null]
+  executionObligationId Int [unique, not null]
+  accountCycleId Int [unique, not null]
+  rolloutGenerationId Int [not null]
+  dispatchStateVersion Int [not null]
+  clientOrderId String [not null]
+  claimFingerprint String [unique, not null]
+  claimedAt DateTime [default: `now()`, not null]
+  orderIntent OrderIntent [not null]
+  executionObligation ExternalSignalEntryExecutionObligation [not null]
+  accountCycle ExternalSignalTradeCycleAccount [not null]
+  rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
+  dispatchConsumption ExternalSignalBrokerDispatchConsumption
+}
+
+Table ExternalSignalBrokerDispatchConsumption {
+  id Int [pk, increment]
+  orderIntentId Int [unique, not null]
+  executionObligationId Int [unique, not null]
+  workerClaimId Int [unique, not null]
+  marketPolicyDispatchConsumptionId Int [unique, not null]
+  rolloutGenerationId Int [not null]
+  executionAuthorizationId Int [not null]
+  dispatchStateVersion Int [not null]
+  clientOrderId String [not null]
+  brokerPostOpportunityId Int
+  consumedAt DateTime [default: `now()`, not null]
+  evidenceJson Json [not null]
+  orderIntent OrderIntent [not null]
+  executionObligation ExternalSignalEntryExecutionObligation [not null]
+  workerClaim ExternalSignalBrokerWorkerClaim [not null]
+  marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption [not null]
+  rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
+  executionAuthorization ExternalSignalEntryExecutionAuthorization [not null]
+  brokerPostOpportunity OrderIntentBrokerPostOpportunity
 }
 
 Table BrokerOrder {
@@ -2423,6 +2494,7 @@ Table OrderIntentBrokerPostOpportunity {
   events OrderIntentBrokerOpportunityEvent [not null]
   marketPolicyBrokerDispatchConsumptions MarketPolicyBrokerDispatchConsumption [not null]
   marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
+  externalSignalBrokerDispatchConsumptions ExternalSignalBrokerDispatchConsumption [not null]
 
   indexes {
     (orderIntentId, opportunitySequence) [unique]
@@ -2874,6 +2946,7 @@ Table MarketPolicyBrokerDispatchConsumption {
   decision MarketPolicyBrokerDispatchDecision [not null]
   orderIntent OrderIntent [not null]
   brokerPostOpportunity OrderIntentBrokerPostOpportunity
+  externalSignalDispatchConsumption ExternalSignalBrokerDispatchConsumption
 }
 
 Table MarketPolicyBrokerUnenforcedDispatch {
@@ -3065,6 +3138,11 @@ Enum ExternalSignalExecutionAuthorityMode {
 }
 
 Enum ExternalSignalExecutionRolloutAction {
+  ACTIVATE
+  DEACTIVATE
+}
+
+Enum ExternalSignalBrokerDispatchAction {
   ACTIVATE
   DEACTIVATE
 }
@@ -3732,6 +3810,12 @@ Ref: ExternalSignalExecutionRolloutActivation.rolloutGenerationId > ExternalSign
 
 Ref: ExternalSignalExecutionRolloutActivation.actorUserId > User.id [delete: Restrict]
 
+Ref: ExternalSignalBrokerDispatchState.activeRolloutGenerationId - ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchActivation.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchActivation.actorUserId > User.id [delete: Restrict]
+
 Ref: ExternalSignalEntryExecutionAuthorization.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
 
 Ref: ExternalSignalEntryExecutionAuthorization.tradingAccountId > TradingAccount.id [delete: Restrict]
@@ -3943,6 +4027,28 @@ Ref: ExternalSignalEntryExecutionObligation.entrySignalRouteId > SignalRoute.id 
 Ref: ExternalSignalEntryExecutionObligation.authorizationId > ExternalSignalEntryExecutionAuthorization.id [delete: Restrict]
 
 Ref: ExternalSignalEntryExecutionObligation.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerWorkerClaim.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerWorkerClaim.executionObligationId - ExternalSignalEntryExecutionObligation.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerWorkerClaim.accountCycleId - ExternalSignalTradeCycleAccount.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerWorkerClaim.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.executionObligationId - ExternalSignalEntryExecutionObligation.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.workerClaimId - ExternalSignalBrokerWorkerClaim.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.marketPolicyDispatchConsumptionId - MarketPolicyBrokerDispatchConsumption.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.rolloutGenerationId > ExternalSignalExecutionRolloutGeneration.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.executionAuthorizationId > ExternalSignalEntryExecutionAuthorization.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerDispatchConsumption.brokerPostOpportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
 
 Ref: BrokerOrder.securityId > Security.id
 

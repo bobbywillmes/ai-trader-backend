@@ -105,14 +105,17 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
 
   it('is default-off and SHADOW evidence cannot authorize execution', async () => {
     expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalExecutionRolloutActivation"`)).rows[0].n).toBe(0);
+    expect((await db.query(`SELECT version,"activeRolloutGenerationId","activatedAt" FROM "ExternalSignalBrokerDispatchState" WHERE id=1`)).rows[0])
+      .toEqual({ version: 1, activeRolloutGenerationId: null, activatedAt: null });
+    expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerDispatchActivation"`)).rows[0].n).toBe(0);
     await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionAuthorization" ("rolloutGenerationId","authorizationSequence",status,"tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId","signalSourceId","strategySignalBindingId","strategySignalRevisionId","strategyRevision","accountHolderUserId","assignmentFingerprint","sourceFingerprint","authorizationFingerprint","authorizedByUserId","grantReason") SELECT id,1,'AUTHORIZED',$1,$2,$3,$4,$5,$6,$7,1,$8,$9,$9,$9,$8,'forged shadow' FROM "ExternalSignalExecutionRolloutGeneration" WHERE "authorityMode"='SHADOW'`, [paperId, assignmentId, subscriptionId, securityId, sourceId, bindingId, revisionId, ownerId, '0'.repeat(64)])).rejects.toThrow(/rollout is not active/);
   });
 
-  it('upgrades the accepted 4A.2A schema through 4A.2B without Prisma drift', () => {
+  it('replays the accepted schema through 4A.2C1 without Prisma drift', () => {
     const result = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], {
       env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000,
     });
-    expect(result.status, result.stderr || result.stdout).toBe(0);
+    expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.stdout).toContain('No difference detected');
   }, 70_000);
 
@@ -128,6 +131,13 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     ]);
     expect(results.filter(r => r.status === 'fulfilled')).toHaveLength(1);
     expect((await svc.listExternalSignalExecutionRollouts()).activeExecutionGenerationId).toBe(generation.id);
+    const dispatchActivation = await svc.changeExternalSignalBrokerDispatchState(generation.id, 'ACTIVATE', 'Exercise inert C1 dispatch authority', ownerId);
+    expect(dispatchActivation).toMatchObject({ action: 'ACTIVATE', stateVersion: 2 });
+    await expect(db.query(`UPDATE "ExternalSignalBrokerDispatchState" SET version=version+1 WHERE id=1`)).rejects.toThrow(/database-owned/);
+    await expect(db.query(`UPDATE "ExternalSignalBrokerDispatchActivation" SET reason='forged' WHERE id=$1`, [dispatchActivation.id])).rejects.toThrow(/append-only/);
+    const dispatchDeactivation = await svc.changeExternalSignalBrokerDispatchState(generation.id, 'DEACTIVATE', 'Return C1 dispatch authority to disabled', ownerId);
+    expect(dispatchDeactivation).toMatchObject({ action: 'DEACTIVATE', stateVersion: 3 });
+    expect((await svc.listExternalSignalBrokerDispatchState(ownerId)).state.activeRolloutGenerationId).toBeNull();
     await db.query('BEGIN');
     try {
       await db.query(`SELECT set_config('ai_trader.external_signal_rollout_transition','1',true)`);
@@ -390,6 +400,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       const obligationId = (await db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9) RETURNING id`, [intentId, accountCycleId, cycleId, signalId, routeId, authorizationId, executeGenerationId, '0'.repeat(64), clientOrderId])).rows[0].id;
       await db.query('COMMIT');
       provenance = { cycleId, signalId, routeId, accountCycleId, intentId, obligationId, clientOrderId };
+      await expect(db.query(`UPDATE "Signal" SET "createdAt"=now() WHERE id=$1`, [signalId])).rejects.toThrow(/timestamps are immutable/);
+      await expect(db.query(`DELETE FROM "Signal" WHERE id=$1`, [signalId])).rejects.toThrow(/cannot be deleted/);
       await expect(db.query(`UPDATE "ExternalSignalEntryExecutionObligation" SET "entrySignalId"=$2 WHERE id=$1`, [obligationId, signalId])).rejects.toThrow(/immutable/);
       await expect(db.query(`DELETE FROM "ExternalSignalEntryExecutionObligation" WHERE id=$1`, [obligationId])).rejects.toThrow(/immutable/);
     } catch (error) { await db.query('ROLLBACK'); throw error; }
@@ -448,6 +460,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [provenance.intentId])).rejects.toThrow(/dispatch is quarantined/);
     await db.query(`UPDATE "OrderIntent" SET status='blocked',"blockReason"='test' WHERE id=$1`, [provenance.intentId]);
     await db.query(`UPDATE "OrderIntent" SET status='failed' WHERE id=$1`, [provenance.intentId]);
+    await expect(db.query(`INSERT INTO "BrokerOrder" ("orderIntentId",broker,"brokerOrderId","clientOrderId",symbol,side,status,"rawBrokerJson","securityId","tradingAccountId","createdAt","updatedAt") VALUES ($1,'alpaca','forged',$2,'EXE','buy','accepted','{}',$3,$4,now(),now())`, [provenance.intentId, provenance.clientOrderId, securityId, paperId])).rejects.toThrow(/broker evidence is quarantined/);
+    await expect(db.query(`INSERT INTO "ExternalSignalBrokerWorkerClaim" ("orderIntentId","executionObligationId","accountCycleId","rolloutGenerationId","dispatchStateVersion","clientOrderId","claimFingerprint") VALUES ($1,$2,$3,$4,3,$5,$6)`, [provenance.intentId, provenance.obligationId, provenance.accountCycleId, executeGenerationId, provenance.clientOrderId, '0'.repeat(64)])).rejects.toThrow(/post-activation authority/);
     expect((await db.query(`SELECT status FROM "OrderIntent" WHERE id=$1`, [provenance.intentId])).rows[0].status).toBe('failed');
     await expect(db.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"clientOrderId","rawRequestJson","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","externalSignalAccountCycleId","createdAt","updatedAt") VALUES ('tradingview','EXE','buy','market','day','pending','hostile-pending','{}',$1,$2,$3,$4,now(),now())`, [paperId, assignmentId, subscriptionId, provenance.accountCycleId])).rejects.toThrow(/must be created in received status/);
   });

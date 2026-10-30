@@ -58,6 +58,37 @@ export async function changeExternalSignalExecutionRollout(rolloutGenerationId: 
   }
 }
 
+export async function listExternalSignalBrokerDispatchState(actorUserId: number) {
+  return prisma.$transaction(async db => {
+    await requireOwner(actorUserId, db);
+    const [state, activationEvents] = await Promise.all([
+      db.externalSignalBrokerDispatchState.findUniqueOrThrow({ where: { id: 1 } }),
+      db.externalSignalBrokerDispatchActivation.findMany({ orderBy: { id: 'desc' }, take: 100 }),
+    ]);
+    return { state, activationEvents };
+  });
+}
+
+export async function changeExternalSignalBrokerDispatchState(rolloutGenerationId: number, action: 'ACTIVATE'|'DEACTIVATE', reason: string, actorUserId: number) {
+  try {
+    return await prisma.$transaction(async db => {
+      await requireOwner(actorUserId, db);
+      const event = await db.externalSignalBrokerDispatchActivation.create({ data: { rolloutGenerationId, action, stateVersion: 0, reason, actorUserId } });
+      await createSystemEvent({
+        type: `EXTERNAL_SIGNAL_BROKER_DISPATCH_${action}D`, entityType: 'ExternalSignalExecutionRolloutGeneration', entityId: rolloutGenerationId,
+        actorUserId, severity: action === 'ACTIVATE' ? 'WARNING' : 'INFO',
+        message: action === 'ACTIVATE' ? 'TradingView PAPER broker-dispatch epoch activated; Phase 4A.2C1 still has no worker or dispatch integration.' : 'TradingView PAPER broker-dispatch epoch deactivated.',
+        payloadJson: { activationEventId: event.id, dispatchStateVersion: event.stateVersion, action, tradingEffect: 'NONE_IN_4A_2C1' },
+      }, db);
+      return event;
+    }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable });
+  } catch (error) {
+    if (error instanceof HttpError) throw error;
+    if (isConcurrencyError(error)) throw conflict('CONCURRENT_DISPATCH_STATE_CHANGE', 'Broker-dispatch authority changed concurrently; reload before retrying.');
+    throw conflict('DISPATCH_STATE_TRANSITION_REJECTED', 'Broker-dispatch authority transition was rejected by the database safety protocol.');
+  }
+}
+
 export async function listExternalSignalEntryExecutionAuthorizations(accountId: number, assignmentId: number, actorUserId: number) {
   return prisma.$transaction(async db => {
     await requireOwner(actorUserId, db);

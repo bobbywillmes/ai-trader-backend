@@ -110,6 +110,80 @@ The future combined admission order remains unapproved. Phase 4A.2B must reconci
 
 Phase 4A.2B must add admission coordination, fresh authorization/epoch validation, existing risk/sizing admission, and atomic marker/obligation/claim/OrderIntent creation. Phase 4A.2C must replace the temporary deny-all dispatch quarantine with database-validated one-shot broker authorization and evidence consumption. Market Intelligence and PAPER broker-write authority remain independent mandatory boundaries.
 
+## Phase 4A.2C1 broker-dispatch safety foundation
+
+Phase 4A.2C1 adds schema and database enforcement only. `ExternalSignalBrokerDispatchState`
+is a separate singleton that is inserted disabled at version 1. A SYSTEM_OWNER can append an
+ACTIVATE event only for the exact currently active, enabled ENTRY/EXECUTE generation. The database
+owns the event timestamp and next version. DEACTIVATE clears the current generation while retaining
+the immutable event chain. Both operations take the existing
+`external-signal-execution-rollout` advisory lock and lock execution state before dispatch state.
+No event is inserted by the migration.
+
+The dispatch activation timestamp is a strict epoch. A worker claim requires the Signal,
+OrderIntent and execution obligation to have been created at or after that timestamp, and requires
+the frozen account-cycle generation, obligation generation, authorization generation and active
+dispatch generation to agree. Activation therefore never drains an older accepted or quarantined
+backlog. Deactivation takes the same locks that claim/consumption validation takes and fences an
+uncommitted authorization before it can commit.
+
+`ExternalSignalBrokerWorkerClaim` is one-per-intent and freezes the exact obligation, account cycle,
+execution generation, dispatch-state version and client order ID. PostgreSQL supplies its timestamp
+and canonical SHA-256 fingerprint. C1 deliberately provides no application caller and does not add
+the `pending -> submitting` exception. The complete marked-intent status allowlist remains
+`received`, `pending`, `blocked`, and `failed`; all broker-progress statuses, broker-order evidence,
+position linkage and broker sync timestamps are rejected.
+
+`ExternalSignalBrokerDispatchConsumption` is the TradingView half of the future final-dispatch
+linearization point. It freezes the worker claim, execution obligation and authorization, generation,
+dispatch version, client order ID, broker opportunity and exact
+`MarketPolicyBrokerDispatchConsumption`. Deferred constraints require both halves at transaction
+commit. A marked intent cannot commit a lone Market Intelligence consumption and can never use
+`MarketPolicyBrokerUnenforcedDispatch`. Both records are immutable. Legacy unmarked PAPER and LIVE
+paths retain their existing behavior.
+
+### Required 4A.2C2 transaction
+
+The future worker must use one database transaction and this lock order:
+
+1. Take `external-signal-execution-rollout`, then lock execution rollout state, dispatch state and
+   the exact execution generation.
+2. Lock source, binding, source cycle and account cycle, followed by the frozen TradingView
+   authorization and obligation.
+3. Follow the existing Market Intelligence order without modification: runtime rollout,
+   TradingAccount, assignment, Subscription, Security, latest/frozen authorization and revision.
+4. Take the existing account/security entry-exposure advisory lock and lock the existing
+   `EntryExposureClaim` plus its event history boundary.
+5. Revalidate post-dispatch-epoch freshness and identity, insert the worker claim, transition only
+   `pending -> submitting`, and append the existing claim transition event atomically.
+
+The final-dispatch transaction must again take the rollout/identity locks in that order, create the
+Market Intelligence decision as today, then insert its consumption and the matching TradingView
+consumption in the same transaction. The pair must commit immediately before the adapter. No session
+variable or application boolean is an authority input.
+
+Direct EXIT ingestion does not acquire these locks; its Signal insert updates the source-cycle MVCC
+row. C2 must retain the current READ COMMITTED re-read/SERIALIZABLE conflict behavior after locking
+the source cycle. Trigger-driven assignment/authorization invalidation locks catalog rows and then
+updates authorizations, so C2 must never take those identities in reverse order. Assignment-less
+legacy order paths remain outside TradingView eligibility and must continue through their current
+Market Intelligence behavior.
+
+### Rollout, rollback, and deferred lifecycle work
+
+Deploy C1 first and leave dispatch state disabled. Deploy C2 code while the state remains disabled,
+run readiness checks, then append a deliberate owner activation only for a newly activated execution
+generation. To roll back, append DEACTIVATE first and wait for in-flight database transactions to
+drain before deploying older code. Never remove the C1 pairing or quarantine triggers during a code
+rollback. This ordering means an old worker cannot claim marked intents and old dispatch code cannot
+commit a lone Market Intelligence consumption.
+
+Before activation, later checkpoints must implement: terminalization of pre-epoch pending intents;
+definite-non-send claim release; proven-no-exposure `EXIT_PENDING` reconciliation; broker-time
+120-second freshness; Operational Attention resolution; unattributed broker-exposure handling;
+accurate Market Intelligence request-source/result labels; and existing-order recovery when Alpaca
+has the client ID but local TradingView dispatch provenance is absent.
+
 ## Deployment and rollback floor
 
 The foundation migration is forward-only once EXECUTE generations, activation history, authorizations, or marked intents exist. Rolling application code back before Phase 4A.2A would remove recognition and quarantine of marked intents and is unsafe without a separately reviewed compatibility fix. This checkpoint does not apply or activate the migration.

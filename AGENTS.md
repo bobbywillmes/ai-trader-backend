@@ -403,6 +403,15 @@ Marked intents may become `pending` after centralized risk evaluation but remain
 database-prohibited from entering `submitting`; Phase 4A.2C alone may add dispatch
 authority. See `docs/architecture/tradingview-paper-execution-authority.md`.
 
+Phase 4A.2C1 adds only the inert TradingView broker-dispatch database foundation. Its
+separate SYSTEM_OWNER activation state starts disabled, uses the existing execution-rollout
+serialization lock, and establishes a strict post-activation epoch. Immutable worker claims and
+paired TradingView/Market Intelligence final-dispatch consumption evidence are schema-protected,
+but no application worker creates them and marked intents remain unable to enter `submitting` or
+create broker evidence. Never relax the complete marked-intent quarantine until the reviewed C2
+combined claim transaction and deferred lifecycle work are implemented. See
+`docs/architecture/tradingview-paper-execution-authority.md`.
+
 Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
 `SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
 Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are
