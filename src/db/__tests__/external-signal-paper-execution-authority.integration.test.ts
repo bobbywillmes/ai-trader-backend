@@ -31,6 +31,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   let executeGenerationId: number, authorizationId: number;
   let prospectiveCycleId: number;
   let provenance: { cycleId: number; signalId: number; routeId: number; accountCycleId: number; intentId: number; obligationId: number; clientOrderId: string };
+  let validWorkerClaim: { id: number; fixture: Awaited<ReturnType<typeof createAdmissionFixture>>; intentId: number; obligationId: number; clientOrderId: string; dispatchVersion: number };
 
   beforeAll(async () => {
     admin = new Client({ connectionString: process.env.DATABASE_URL }); await admin.connect();
@@ -63,18 +64,18 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); await admin.end(); }
   });
 
-  async function createAdmissionFixture(label: string) {
+  async function createAdmissionFixture(label: string, target = { securityId, assignmentId, subscriptionId, symbol: 'EXE' }) {
     const cycleRef = `${label}:${randomUUID()}`;
-    const cycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycle" ("strategySignalBindingId","strategySignalRevisionId","strategyRevision","securityId","externalTradeCycleRef",status,"createdAt","updatedAt") VALUES ($1,$2,1,$3,$4,'ENTRY_RECEIVED',now(),now()) RETURNING id`, [bindingId, revisionId, securityId, cycleRef])).rows[0].id;
+    const cycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycle" ("strategySignalBindingId","strategySignalRevisionId","strategyRevision","securityId","externalTradeCycleRef",status,"createdAt","updatedAt") VALUES ($1,$2,1,$3,$4,'ENTRY_RECEIVED',now(),now()) RETURNING id`, [bindingId, revisionId, target.securityId, cycleRef])).rows[0].id;
     await db.query('BEGIN');
-    const signalId = (await db.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","createdAt") VALUES ($1,$2,$3,$4,2,$5,$6,$7,1,$8,$9,'ENTRY_LONG','EXE','15m',now(),$10,now()) RETURNING id`, [sourceId, bindingId, strategyId, securityId, `entry:${randomUUID()}`, cycleRef, randomUUID(), revisionId, cycleId, 'a'.repeat(64)])).rows[0].id;
+    const signalId = (await db.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","createdAt") VALUES ($1,$2,$3,$4,2,$5,$6,$7,1,$8,$9,'ENTRY_LONG',$11,'15m',now(),$10,now()) RETURNING id`, [sourceId, bindingId, strategyId, target.securityId, `entry:${randomUUID()}`, cycleRef, randomUUID(), revisionId, cycleId, 'a'.repeat(64), target.symbol])).rows[0].id;
     await db.query(`INSERT INTO "ExternalSignalCorrelationWork" ("signalId",status,"attemptCount","nextAttemptAt","createdAt","updatedAt") VALUES ($1,'PENDING',0,now(),now(),now())`, [signalId]);
     await db.query('COMMIT');
     await db.query('BEGIN');
     const runId = (await db.query(`INSERT INTO "SignalRoutingRun" ("signalId","authorityMode",status,"startedAt","completedAt","routeCount","createdAt") VALUES ($1,'TRADE_ELIGIBLE','COMPLETED',now(),now(),1,now()) RETURNING id`, [signalId])).rows[0].id;
-    const routeId = (await db.query(`INSERT INTO "SignalRoute" ("signalRoutingRunId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","targetSnapshot","createdAt") VALUES ($1,$2,$3,$4,'{}',now()) RETURNING id`, [runId, paperId, assignmentId, subscriptionId])).rows[0].id;
+    const routeId = (await db.query(`INSERT INTO "SignalRoute" ("signalRoutingRunId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","targetSnapshot","createdAt") VALUES ($1,$2,$3,$4,'{}',now()) RETURNING id`, [runId, paperId, target.assignmentId, target.subscriptionId])).rows[0].id;
     await db.query('COMMIT');
-    const accountCycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycleAccount" ("externalSignalTradeCycleId","entrySignalRouteId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId",status,"createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,'ENTRY_ROUTE_PENDING',now(),now()) RETURNING id`, [cycleId, routeId, paperId, assignmentId, subscriptionId, securityId])).rows[0].id;
+    const accountCycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycleAccount" ("externalSignalTradeCycleId","entrySignalRouteId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId",status,"createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,'ENTRY_ROUTE_PENDING',now(),now()) RETURNING id`, [cycleId, routeId, paperId, target.assignmentId, target.subscriptionId, target.securityId])).rows[0].id;
     return { cycleId, cycleRef, signalId, routeId, accountCycleId };
   }
 
@@ -84,23 +85,23 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     return signalId;
   }
 
-  async function insertUncorrelatedEntry(label: string) {
+  async function insertUncorrelatedEntry(label: string, target = { securityId, symbol: 'EXE' }) {
     const cycleRef = `${label}:${randomUUID()}`;
-    const cycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycle" ("strategySignalBindingId","strategySignalRevisionId","strategyRevision","securityId","externalTradeCycleRef",status,"createdAt","updatedAt") VALUES ($1,$2,1,$3,$4,'ENTRY_RECEIVED',now(),now()) RETURNING id`, [bindingId, revisionId, securityId, cycleRef])).rows[0].id;
+    const cycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycle" ("strategySignalBindingId","strategySignalRevisionId","strategyRevision","securityId","externalTradeCycleRef",status,"createdAt","updatedAt") VALUES ($1,$2,1,$3,$4,'ENTRY_RECEIVED',now(),now()) RETURNING id`, [bindingId, revisionId, target.securityId, cycleRef])).rows[0].id;
     await db.query('BEGIN');
-    const signalId = (await db.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","createdAt") VALUES ($1,$2,$3,$4,2,$5,$6,$7,1,$8,$9,'ENTRY_LONG','EXE','15m',now(),$10,now()) RETURNING id`, [sourceId, bindingId, strategyId, securityId, `entry:${randomUUID()}`, cycleRef, randomUUID(), revisionId, cycleId, randomUUID().replaceAll('-', '').repeat(2)])).rows[0].id;
+    const signalId = (await db.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","createdAt") VALUES ($1,$2,$3,$4,2,$5,$6,$7,1,$8,$9,'ENTRY_LONG',$11,'15m',now(),$10,now()) RETURNING id`, [sourceId, bindingId, strategyId, target.securityId, `entry:${randomUUID()}`, cycleRef, randomUUID(), revisionId, cycleId, randomUUID().replaceAll('-', '').repeat(2), target.symbol])).rows[0].id;
     await db.query(`INSERT INTO "ExternalSignalCorrelationWork" ("signalId",status,"attemptCount","nextAttemptAt","createdAt","updatedAt") VALUES ($1,'PENDING',0,now(),now(),now())`, [signalId]);
     await db.query('COMMIT');
     return { cycleId, signalId };
   }
 
-  async function insertIntentAndObligation(client: Client, fixture: Awaited<ReturnType<typeof createAdmissionFixture>>, label: string) {
+  async function insertIntentAndObligation(client: Client, fixture: Awaited<ReturnType<typeof createAdmissionFixture>>, label: string, target = { securityId, assignmentId, subscriptionId, symbol: 'EXE', authorizationId }) {
     const clientOrderId = `${label}-${randomUUID()}`;
-    const intentId = (await client.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"clientOrderId","rawRequestJson","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","externalSignalAccountCycleId","createdAt","updatedAt") VALUES ('tradingview','EXE','buy','market','day','received',$5,'{}',$1,$2,$3,$4,now(),now()) RETURNING id`, [paperId, assignmentId, subscriptionId, fixture.accountCycleId, clientOrderId])).rows[0].id;
-    await client.query(`INSERT INTO "EntryExposureClaim" ("tradingAccountId","securityId","orderIntentId","ownerKey",status,"acquiredAt","createdAt","updatedAt") VALUES ($1,$2,$3,$4,'ENTRY_PENDING',now(),now(),now())`, [paperId, securityId, intentId, `tv-test:${fixture.accountCycleId}:${randomUUID()}`]);
+    const intentId = (await client.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"clientOrderId","rawRequestJson","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","externalSignalAccountCycleId","createdAt","updatedAt") VALUES ('tradingview',$6,'buy','market','day','received',$5,'{}',$1,$2,$3,$4,now(),now()) RETURNING id`, [paperId, target.assignmentId, target.subscriptionId, fixture.accountCycleId, clientOrderId, target.symbol])).rows[0].id;
+    await client.query(`INSERT INTO "EntryExposureClaim" ("tradingAccountId","securityId","orderIntentId","ownerKey",status,"acquiredAt","createdAt","updatedAt") VALUES ($1,$2,$3,$4,'ENTRY_PENDING',now(),now(),now())`, [paperId, target.securityId, intentId, `tv-test:${fixture.accountCycleId}:${randomUUID()}`]);
     await client.query(`UPDATE "ExternalSignalTradeCycleAccount" SET status='ENTRY_EXECUTION_PROSPECTIVE',"entryRolloutGenerationId"=$2 WHERE id=$1`, [fixture.accountCycleId, executeGenerationId]);
     await client.query(`UPDATE "ExternalSignalTradeCycleAccount" SET status='ENTRY_INTENT_CREATED',"entryOrderIntentId"=$2 WHERE id=$1`, [fixture.accountCycleId, intentId]);
-    return client.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [intentId, fixture.accountCycleId, fixture.cycleId, fixture.signalId, fixture.routeId, authorizationId, executeGenerationId, '0'.repeat(64), clientOrderId]);
+    return client.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9) RETURNING id`, [intentId, fixture.accountCycleId, fixture.cycleId, fixture.signalId, fixture.routeId, target.authorizationId, executeGenerationId, '0'.repeat(64), clientOrderId]);
   }
 
   it('is default-off and SHADOW evidence cannot authorize execution', async () => {
@@ -407,6 +408,123 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     } catch (error) { await db.query('ROLLBACK'); throw error; }
   });
 
+  it('accepts only a fresh post-dispatch worker claim and rejects hostile current state', async () => {
+    const svc = await import('../../services/external-signal-execution-authority.service.js');
+    const activation = await svc.changeExternalSignalBrokerDispatchState(executeGenerationId, 'ACTIVATE', 'Activate corrected C1 worker-claim epoch', ownerId);
+    await db.query(`UPDATE "TradingAccount" SET status='ACTIVE',"tradingEnabled"=true,"killSwitchEnabled"=false,"tradingBlocked"=false WHERE id=$1`, [paperId]);
+    const workerSecurityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ('EX2','Exec 2',true,'STOCK',now(),now()) RETURNING id`)).rows[0].id as number;
+    const workerSubscriptionId = (await db.query(`INSERT INTO "Subscription" (key,name,symbol,enabled,"strategyId","exitProfileId","securityId","createdAt","updatedAt") SELECT 'exec-2','Exec 2','EX2',true,$1,"exitProfileId",$2,now(),now() FROM "Subscription" WHERE id=$3 RETURNING id`, [strategyId, workerSecurityId, subscriptionId])).rows[0].id as number;
+    const workerAssignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [paperId, workerSubscriptionId])).rows[0].id as number;
+    const workerAuthorization = await svc.grantExternalSignalEntryExecutionAuthorization(paperId, workerAssignmentId, { rolloutGenerationId: executeGenerationId, strategySignalBindingId: bindingId, expectedStrategySignalRevisionId: revisionId, expectedSecurityId: workerSecurityId, reason: 'Authorize corrected worker-claim fixture' }, ownerId);
+    expect(workerAuthorization.status).toBe('AUTHORIZED');
+    const enrollment = await import('../../services/assignment-market-policy-enrollment.service.js');
+    const enforcement = await import('../../services/assignment-market-policy-enforcement-authorization.service.js');
+    const rollout = await import('../../services/market-policy-enforcement-rollout.service.js');
+    const prepared = await enrollment.prepareAssignmentMarketPolicyEnrollment(paperId, workerAssignmentId, ownerId);
+    const generation = await enrollment.activateAssignmentMarketPolicyEnrollment(paperId, workerAssignmentId, prepared.id, ownerId, prepared.configurationFingerprint);
+    await enforcement.grantAssignmentMarketPolicyEnforcementAuthorization(paperId, workerAssignmentId, { generationId: generation.id, expectedConfigurationFingerprint: generation.configurationFingerprint, expectedPolicyRevisionId: generation.policyRevisionId, reason: 'Authorize paired-consumption fixture' }, ownerId);
+    const rolloutVersion = (await db.query(`SELECT version FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].version as number;
+    await rollout.setMarketPolicyEnforcementRuntimeRollout(true, { expectedVersion: rolloutVersion, reason: 'Enable paired-consumption fixture' }, ownerId);
+    await db.query(`UPDATE "ExternalSignalCorrelationWork" SET status='COMPLETED',"completedAt"=now(),"leaseOwner"=NULL,"leaseExpiresAt"=NULL WHERE status<>'COMPLETED'`);
+    const incoming = await insertUncorrelatedEntry('post-dispatch-worker-claim', { securityId: workerSecurityId, symbol: 'EX2' });
+    await (await import('../../services/external-signal-correlation.service.js')).processExternalSignalCorrelationWork({ db: (await import('../prisma.js')).prisma, limit: 1 });
+    await (await import('../../services/external-signal-entry-admission.service.js')).processProspectiveTradingViewEntries({ db: (await import('../prisma.js')).prisma, limit: 1 });
+    const graph = (await db.query(`SELECT ac.id AS "accountCycleId",o.id AS "obligationId",i.id AS "intentId",i."clientOrderId" FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" i ON i.id=ac."entryOrderIntentId" JOIN "ExternalSignalEntryExecutionObligation" o ON o."orderIntentId"=i.id WHERE ac."externalSignalTradeCycleId"=$1`, [incoming.cycleId])).rows[0];
+    expect(graph).toBeDefined();
+    const fixture = { cycleId: incoming.cycleId, signalId: incoming.signalId, routeId: 0, accountCycleId: graph.accountCycleId, cycleRef: '' };
+    const obligationId = graph.obligationId as number;
+    const intent = { id: graph.intentId as number, clientOrderId: graph.clientOrderId as string };
+    const insertClaim = () => db.query(`INSERT INTO "ExternalSignalBrokerWorkerClaim" ("orderIntentId","executionObligationId","accountCycleId","rolloutGenerationId","dispatchStateVersion","clientOrderId","claimFingerprint") VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, [intent.id, obligationId, fixture.accountCycleId, executeGenerationId, activation.stateVersion, intent.clientOrderId, '0'.repeat(64)]);
+    const hostile = async (sql: string, params: unknown[], pattern = /post-activation authority/) => {
+      await db.query('BEGIN');
+      try { await db.query(sql, params); await expect(insertClaim()).rejects.toThrow(pattern); }
+      finally { await db.query('ROLLBACK'); }
+    };
+    await hostile(`UPDATE "TradingAccount" SET status='PAUSED',"tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]);
+    await hostile(`UPDATE "TradingAccount" SET "tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]);
+    await hostile(`UPDATE "TradingAccount" SET "tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]);
+    await hostile(`UPDATE "TradingAccountSubscription" SET enabled=false WHERE id=$1`, [workerAssignmentId]);
+    await hostile(`UPDATE "EntryExposureClaim" SET status='UNRESOLVED' WHERE "orderIntentId"=$1`, [intent.id]);
+    await hostile(`UPDATE "ExternalSignalTradeCycleAccount" SET status='BLOCKED' WHERE id=$1`, [fixture.accountCycleId]);
+    await db.query('BEGIN');
+    try {
+      await insertExit(db, { ...fixture, cycleRef: (await db.query(`SELECT "externalTradeCycleRef" FROM "ExternalSignalTradeCycle" WHERE id=$1`, [fixture.cycleId])).rows[0].externalTradeCycleRef });
+      await expect(insertClaim()).rejects.toThrow(/post-activation authority/);
+    } finally { await db.query('ROLLBACK'); }
+    await expect(db.query(`INSERT INTO "ExternalSignalBrokerWorkerClaim" ("orderIntentId","executionObligationId","accountCycleId","rolloutGenerationId","dispatchStateVersion","clientOrderId","claimFingerprint") VALUES ($1,$2,$3,$4,$5,$6,$7)`, [provenance.intentId, provenance.obligationId, provenance.accountCycleId, executeGenerationId, activation.stateVersion, provenance.clientOrderId, '0'.repeat(64)])).rejects.toThrow(/post-activation authority/);
+    await expect(db.query(`INSERT INTO "ExternalSignalBrokerWorkerClaim" ("orderIntentId","executionObligationId","accountCycleId","rolloutGenerationId","dispatchStateVersion","clientOrderId","claimFingerprint") VALUES ($1,$2,$3,$4,$5,'wrong-client-order-id',$6)`, [intent.id, obligationId, fixture.accountCycleId, executeGenerationId, activation.stateVersion, '0'.repeat(64)])).rejects.toThrow(/post-activation authority/);
+    await expect(db.query(`INSERT INTO "ExternalSignalBrokerWorkerClaim" ("orderIntentId","executionObligationId","accountCycleId","rolloutGenerationId","dispatchStateVersion","clientOrderId","claimFingerprint") VALUES ($1,$2,$3,$4,$5,$6,$7)`, [intent.id, obligationId, fixture.accountCycleId, executeGenerationId, activation.stateVersion + 1, intent.clientOrderId, '0'.repeat(64)])).rejects.toThrow(/post-activation authority/);
+    const claimId = (await insertClaim()).rows[0].id as number;
+    validWorkerClaim = { id: claimId, fixture, intentId: intent.id, obligationId, clientOrderId: intent.clientOrderId, dispatchVersion: activation.stateVersion };
+    expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerWorkerClaim" WHERE id=$1`, [claimId])).rows[0].n).toBe(1);
+    expect((await db.query(`SELECT status FROM "OrderIntent" WHERE id=$1`, [intent.id])).rows[0].status).toBe('pending');
+    expect((await db.query(`SELECT status FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].status).toBe('ENTRY_PENDING');
+  });
+
+  it('interprets timestamp-without-time-zone dispatch evidence as UTC and freezes marked intent creation time', async () => {
+    const observed: boolean[] = [];
+    for (const zone of ['UTC', 'America/Los_Angeles', 'Asia/Tokyo']) {
+      await db.query(`SET TIME ZONE '${zone}'`);
+      observed.push((await db.query(`SELECT (i."createdAt" AT TIME ZONE 'UTC') >= ds."activatedAt" AS fresh FROM "OrderIntent" i CROSS JOIN "ExternalSignalBrokerDispatchState" ds WHERE i.id=$1 AND ds.id=1`, [validWorkerClaim.intentId])).rows[0].fresh);
+    }
+    await db.query(`SET TIME ZONE 'UTC'`);
+    expect(observed).toEqual([true, true, true]);
+    await expect(db.query(`UPDATE "OrderIntent" SET "createdAt"="createdAt" + interval '1 second' WHERE id=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/immutable, including activation evidence/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "lastSubmittedOrderSyncAt"=now() WHERE id=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/broker progress is quarantined/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "trackedPositionId"=1 WHERE id=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/broker progress is quarantined|foreign key/);
+    for (const status of ['submitting', 'submitted', 'partially_filled', 'filled', 'canceled']) {
+      await expect(db.query(`UPDATE "OrderIntent" SET status=$2 WHERE id=$1`, [validWorkerClaim.intentId, status])).rejects.toThrow(/dispatch is quarantined/);
+    }
+  });
+
+  it('commits the legitimate paired consumptions in a controlled database-only fixture without broker evidence', async () => {
+    await db.query('BEGIN');
+    try {
+      // C2 will own the atomic pending -> submitting / ENTRY_SUBMITTING transition. This fixture
+      // changes it only inside this disposable database so C1's paired database contract can be
+      // exercised; the production trigger is re-enabled before either consumption is inserted.
+      await db.query(`ALTER TABLE "OrderIntent" DISABLE TRIGGER "OrderIntent_external_signal_dispatch_quarantine"`);
+      await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [validWorkerClaim.intentId]);
+      await db.query(`UPDATE "EntryExposureClaim" SET status='ENTRY_SUBMITTING' WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId]);
+      await db.query(`SET CONSTRAINTS ALL IMMEDIATE`);
+      await db.query(`ALTER TABLE "OrderIntent" ENABLE TRIGGER "OrderIntent_external_signal_dispatch_quarantine"`);
+      await db.query('COMMIT');
+    } catch (error) { await db.query('ROLLBACK'); throw error; }
+    const prepared = await (await import('../../services/market-policy-broker-dispatch.service.js')).prepareEntryBrokerDispatch({ orderIntentId: validWorkerClaim.intentId, tradingAccountId: paperId, symbol: 'EX2', clientOrderId: validWorkerClaim.clientOrderId });
+    expect(prepared).toMatchObject({ enforcement: 'FROZEN_OBLIGATION', applicability: 'FROZEN_OBLIGATION' });
+    await db.query('BEGIN');
+    try {
+      const miConsumptionId = (await db.query(`INSERT INTO "MarketPolicyBrokerDispatchConsumption" ("decisionId","orderIntentId","clientOrderId","evidenceJson") VALUES ($1,$2,$3,'{}') RETURNING id`, [prepared.decisionId, validWorkerClaim.intentId, validWorkerClaim.clientOrderId])).rows[0].id as number;
+      await db.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId]);
+      await db.query('COMMIT');
+    } catch (error) { await db.query('ROLLBACK'); throw error; }
+    expect((await db.query(`SELECT count(*)::int n FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].n).toBe(1);
+    expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].n).toBe(1);
+    expect((await db.query(`SELECT (SELECT count(*) FROM "BrokerOrder" WHERE "orderIntentId"=$1)::int orders,(SELECT count(*) FROM "BrokerActivity" WHERE "orderIntentId"=$1)::int activities`, [validWorkerClaim.intentId])).rows[0]).toEqual({ orders: 0, activities: 0 });
+    await expect(db.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,m.id,o."rolloutGenerationId",o."authorizationId",$4,$5,'{}' FROM "ExternalSignalEntryExecutionObligation" o CROSS JOIN "MarketPolicyBrokerDispatchConsumption" m WHERE o.id=$2 AND m."orderIntentId"=$1`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/duplicate key|immutable|inconsistent/);
+    const rollout = await import('../../services/market-policy-enforcement-rollout.service.js');
+    const version = (await db.query(`SELECT version FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].version as number;
+    await rollout.setMarketPolicyEnforcementRuntimeRollout(false, { expectedVersion: version, reason: 'Close paired-consumption fixture' }, ownerId);
+  });
+
+  it('fences stale SERIALIZABLE and READ COMMITTED consumption after authorization revocation', async () => {
+    const identity = (await db.query(`SELECT o."authorizationId",a."tradingAccountSubscriptionId",m.id AS "miConsumptionId" FROM "ExternalSignalEntryExecutionObligation" o JOIN "ExternalSignalEntryExecutionAuthorization" a ON a.id=o."authorizationId" JOIN "MarketPolicyBrokerDispatchConsumption" m ON m."orderIntentId"=o."orderIntentId" WHERE o.id=$1`, [validWorkerClaim.obligationId])).rows[0];
+    const stale = new Client({ connectionString: databaseUrl });
+    await stale.connect();
+    try {
+      await stale.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+      await stale.query(`SELECT status FROM "ExternalSignalEntryExecutionAuthorization" WHERE id=$1`, [identity.authorizationId]);
+      await (await import('../../services/external-signal-execution-authority.service.js')).revokeExternalSignalEntryExecutionAuthorization(paperId, identity.tradingAccountSubscriptionId, identity.authorizationId, 'Concurrent final-consumption revocation probe', ownerId);
+      await expect(stale.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/serializ|40001/i);
+      await stale.query('ROLLBACK');
+    } finally { await stale.end(); }
+    const readCommitted = new Client({ connectionString: databaseUrl });
+    await readCommitted.connect();
+    try {
+      await expect(readCommitted.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/final dispatch evidence graph is inconsistent/);
+    } finally { await readCommitted.end(); }
+  });
+
   it('preserves the immutable OrderIntent and claim when a real accepted EXIT moves the linked cycle to EXIT_PENDING', async () => {
     await db.query(`UPDATE "ExternalSignalCorrelationWork" SET status='COMPLETED',"completedAt"=now(),"leaseOwner"=NULL,"leaseExpiresAt"=NULL WHERE status<>'COMPLETED'`);
     const fixture = { cycleId: provenance.cycleId, cycleRef: (await db.query(`SELECT "externalTradeCycleRef" FROM "ExternalSignalTradeCycle" WHERE id=$1`, [provenance.cycleId])).rows[0].externalTradeCycleRef,
@@ -486,6 +604,15 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await db.query(`UPDATE "StrategySignalRevision" SET status='RETIRED',"retiredAt"=now() WHERE id=$1`, [revisionId]);
     expect((await db.query(`SELECT status,"invalidationReasonCode" FROM "ExternalSignalEntryExecutionAuthorization" WHERE id=$1`, [authorizationId])).rows[0]).toEqual({ status: 'INVALIDATED', invalidationReasonCode: 'REVISION_SUPERSEDED' });
     expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalEntryExecutionAuthorization"`)).rows[0].n).toBeGreaterThanOrEqual(4);
+  });
+
+  it('atomically closes dispatch on ENTRY deactivation and never reopens it on reactivation', async () => {
+    const svc = await import('../../services/external-signal-execution-authority.service.js');
+    await db.query(`INSERT INTO "ExternalSignalExecutionRolloutActivation" ("rolloutGenerationId",action,reason,"actorUserId") VALUES ($1,'DEACTIVATE','Verify dispatch coupling at acceptance close',$2)`, [executeGenerationId, ownerId]);
+    expect((await db.query(`SELECT "activeRolloutGenerationId","activatedAt" FROM "ExternalSignalBrokerDispatchState" WHERE id=1`)).rows[0]).toEqual({ activeRolloutGenerationId: null, activatedAt: null });
+    expect((await db.query(`SELECT action::text,reason FROM "ExternalSignalBrokerDispatchActivation" ORDER BY id DESC LIMIT 1`)).rows[0]).toMatchObject({ action: 'DEACTIVATE', reason: 'Automatically closed because ENTRY execution was deactivated' });
+    await svc.changeExternalSignalExecutionRollout(executeGenerationId, 'ACTIVATE', 'Verify no implicit dispatch reactivation', ownerId);
+    expect((await db.query(`SELECT "activeRolloutGenerationId" FROM "ExternalSignalBrokerDispatchState" WHERE id=1`)).rows[0].activeRolloutGenerationId).toBeNull();
   });
 
 });

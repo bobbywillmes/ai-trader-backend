@@ -118,18 +118,25 @@ ACTIVATE event only for the exact currently active, enabled ENTRY/EXECUTE genera
 owns the event timestamp and next version. DEACTIVATE clears the current generation while retaining
 the immutable event chain. Both operations take the existing
 `external-signal-execution-rollout` advisory lock and lock execution state before dispatch state.
-No event is inserted by the migration.
+No activation event is inserted by the migration. Deactivating the active ENTRY execution
+generation automatically appends the matching dispatch DEACTIVATE event in the same transaction;
+reactivating ENTRY never reactivates dispatch.
 
-The dispatch activation timestamp is a strict epoch. A worker claim requires the Signal,
-OrderIntent and execution obligation to have been created at or after that timestamp, and requires
-the frozen account-cycle generation, obligation generation, authorization generation and active
-dispatch generation to agree. Activation therefore never drains an older accepted or quarantined
-backlog. Deactivation takes the same locks that claim/consumption validation takes and fences an
-uncommitted authorization before it can commit.
+The dispatch activation timestamp is a strict, independent epoch. The obligation's frozen
+`executionEpochAt` must instead equal the current ENTRY activation timestamp. A worker claim
+requires the Signal, account cycle, execution obligation and OrderIntent to have been created at or
+after dispatch activation, and requires the frozen account-cycle generation, obligation generation,
+authorization generation and both active singletons to agree. Timestamp-without-time-zone Signal
+and OrderIntent evidence is interpreted explicitly as UTC. Activation therefore never drains an
+older accepted or quarantined backlog. Deactivation takes the same locks that claim/consumption
+validation takes and fences an uncommitted authorization before it can commit.
 
 `ExternalSignalBrokerWorkerClaim` is one-per-intent and freezes the exact obligation, account cycle,
 execution generation, dispatch-state version and client order ID. PostgreSQL supplies its timestamp
-and canonical SHA-256 fingerprint. C1 deliberately provides no application caller and does not add
+and canonical SHA-256 fingerprint. Its guard also revalidates executable PAPER account and assignment
+state, exact source/binding/revision/route/Subscription/Strategy/Security identity, direct EXIT
+absence, `ENTRY_INTENT_CREATED`, an unreleased `ENTRY_PENDING` exposure claim, and absence of any
+prior dispatch or broker evidence. C1 deliberately provides no application caller and does not add
 the `pending -> submitting` exception. The complete marked-intent status allowlist remains
 `received`, `pending`, `blocked`, and `failed`; all broker-progress statuses, broker-order evidence,
 position linkage and broker sync timestamps are rejected.
@@ -141,6 +148,9 @@ dispatch version, client order ID, broker opportunity and exact
 commit. A marked intent cannot commit a lone Market Intelligence consumption and can never use
 `MarketPolicyBrokerUnenforcedDispatch`. Both records are immutable. Legacy unmarked PAPER and LIVE
 paths retain their existing behavior.
+The TradingView consumption locks its exact execution authorization. This serializes it against
+revoke/invalidate; a SERIALIZABLE stale snapshot aborts, while READ COMMITTED re-reads and fails
+closed. The execution-rollout advisory lock remains the outer serialization protocol.
 
 ### Required 4A.2C2 transaction
 
@@ -187,3 +197,9 @@ has the client ID but local TradingView dispatch provenance is absent.
 ## Deployment and rollback floor
 
 The foundation migration is forward-only once EXECUTE generations, activation history, authorizations, or marked intents exist. Rolling application code back before Phase 4A.2A would remove recognition and quarantine of marked intents and is unsafe without a separately reviewed compatibility fix. This checkpoint does not apply or activate the migration.
+
+The corrected, pre-persistence C1 migration SHA-256 is
+`f76f0c9d0d3b2f2b6194148f803d7625ea65def92897a7892574c92b34a6ea33`. This checksum is valid only
+under the acceptance condition that every earlier C1 migration body remained unapplied to all
+persistent databases; an environment that applied an earlier checksum requires a separately
+reviewed forward correction rather than checksum replacement.
