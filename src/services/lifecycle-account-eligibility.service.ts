@@ -54,6 +54,8 @@ export type LifecycleAccountEligibility = {
     staleAdmissionClaimsDue: number;
     /** Claims of abandoned admissions, attempted or not; held exposure even without usable credentials. */
     staleAdmissionClaimsHeld: number;
+    /** Terminal pre-dispatch TradingView intents whose account cycle still needs proof reconciliation. */
+    tradingViewAdmissionReconciliations: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -99,7 +101,7 @@ export async function enumerateLifecycleAccounts(
     },
   });
 
-  const [intentCounts, unresolvedExitCounts, terminalClaimRecovery] = await Promise.all([
+  const [intentCounts, unresolvedExitCounts, terminalClaimRecovery, tradingViewAdmissionRecovery] = await Promise.all([
     prisma.orderIntent.groupBy({
       by: ['tradingAccountId', 'status'],
       where: {
@@ -133,6 +135,14 @@ export async function enumerateLifecycleAccounts(
     }),
     // The sweep's own classification, so scheduling matches the work it will actually select.
     summarizeTerminalClaimRecoveryByAccount(),
+    prisma.externalSignalTradeCycleAccount.groupBy({
+      by: ['tradingAccountId'],
+      where: {
+        status: 'ENTRY_INTENT_CREATED',
+        entryOrderIntent: { is: { status: { in: ['blocked', 'failed'] } } },
+      },
+      _count: { _all: true },
+    }),
   ]);
 
   const countsByAccount = new Map<number, Record<string, number>>();
@@ -148,6 +158,9 @@ export async function enumerateLifecycleAccounts(
         ? []
         : [[row.tradingAccountId, row._count._all] as const]
     )
+  );
+  const tradingViewAdmissionRecoveryByAccount = new Map(
+    tradingViewAdmissionRecovery.map((row) => [row.tradingAccountId, row._count._all] as const)
   );
 
   const results = accounts.map((account) => {
@@ -165,13 +178,15 @@ export async function enumerateLifecycleAccounts(
       terminalEntryClaimsHeld: terminalClaimRecovery.get(account.id)?.held ?? 0,
       staleAdmissionClaimsDue: terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0,
       staleAdmissionClaimsHeld: terminalClaimRecovery.get(account.id)?.staleAdmissionHeld ?? 0,
+      tradingViewAdmissionReconciliations: tradingViewAdmissionRecoveryByAccount.get(account.id) ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
         account._count.brokerActivities > 0 ||
         (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0 ||
         (terminalClaimRecovery.get(account.id)?.actionableDue ?? 0) > 0 ||
-        (terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0) > 0,
+        (terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0) > 0 ||
+        (tradingViewAdmissionRecoveryByAccount.get(account.id) ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -186,7 +201,8 @@ export async function enumerateLifecycleAccounts(
           exposureSummary.submittedIntents > 0 ||
           exposureSummary.nonterminalOrders > 0 ||
           exposureSummary.terminalEntryClaimsDue > 0 ||
-          exposureSummary.staleAdmissionClaimsDue > 0
+          exposureSummary.staleAdmissionClaimsDue > 0 ||
+          exposureSummary.tradingViewAdmissionReconciliations > 0
         : workflow === 'positions'
           ? exposureSummary.activePositions > 0 ||
             exposureSummary.nonterminalOrders > 0 ||

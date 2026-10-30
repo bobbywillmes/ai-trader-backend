@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   intentGroupBy: vi.fn(),
   positionGroupBy: vi.fn(),
   terminalClaimRecovery: vi.fn(),
+  tradingViewRecoveryGroupBy: vi.fn(),
 }));
 
 vi.mock('./entry-dispatch-recovery.service.js', () => ({
@@ -18,6 +19,7 @@ vi.mock('../db/prisma.js', () => ({
     tradingAccount: { findMany: mocks.accountFindMany },
     orderIntent: { groupBy: mocks.intentGroupBy },
     trackedPosition: { groupBy: mocks.positionGroupBy },
+    externalSignalTradeCycleAccount: { groupBy: mocks.tradingViewRecoveryGroupBy },
   },
 }));
 
@@ -45,6 +47,7 @@ describe('lifecycle account eligibility', () => {
     mocks.intentGroupBy.mockResolvedValue([]);
     mocks.positionGroupBy.mockResolvedValue([]);
     mocks.terminalClaimRecovery.mockResolvedValue(new Map());
+    mocks.tradingViewRecoveryGroupBy.mockResolvedValue([]);
   });
 
   it('returns accounts in stable ID order with workflow-specific reasons', async () => {
@@ -239,5 +242,24 @@ describe('lifecycle account eligibility', () => {
     expect(due).toMatchObject({ eligible: true, exposureSummary: { staleAdmissionClaimsDue: 1, staleAdmissionClaimsHeld: 1, hasLifecycleWork: true } });
     expect(waiting).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { staleAdmissionClaimsDue: 0, staleAdmissionClaimsHeld: 1 } });
     expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { staleAdmissionClaimsHeld: 1 } });
+  });
+
+  it('schedules unfinished TradingView reconciliation after its exposure claim has been released', async () => {
+    mocks.accountFindMany.mockResolvedValue([account()]);
+    mocks.tradingViewRecoveryGroupBy.mockResolvedValue([{ tradingAccountId: 1, _count: { _all: 1 } }]);
+
+    const [result] = await enumerateLifecycleAccounts('submitted_orders');
+
+    expect(mocks.tradingViewRecoveryGroupBy).toHaveBeenCalledWith(expect.objectContaining({
+      where: {
+        status: 'ENTRY_INTENT_CREATED',
+        entryOrderIntent: { is: { status: { in: ['blocked', 'failed'] } } },
+      },
+    }));
+    expect(result).toMatchObject({
+      eligible: true,
+      reason: 'usable_credentials_with_work',
+      exposureSummary: { tradingViewAdmissionReconciliations: 1, hasLifecycleWork: true },
+    });
   });
 });

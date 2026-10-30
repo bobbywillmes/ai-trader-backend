@@ -45,6 +45,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const exitId = (await db.query(`INSERT INTO "ExitProfile" (key,name,"exitMode","takeProfitBehavior",enabled,"createdAt","updatedAt") VALUES ('exec','Exec','fixed','limit',true,now(),now()) RETURNING id`)).rows[0].id;
     subscriptionId = (await db.query(`INSERT INTO "Subscription" (key,name,symbol,enabled,"strategyId","exitProfileId","securityId","createdAt","updatedAt") VALUES ('exec','Exec','EXE',true,$1,$2,$3,now(),now()) RETURNING id`, [strategyId, exitId, securityId])).rows[0].id;
     paperId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Paper','PAPER','PAUSED',false,true,now(),now()) RETURNING id`, [ownerId])).rows[0].id;
+    await db.query(`INSERT INTO "TradingAccountCredential" ("tradingAccountId",status,"apiKeyCiphertext","apiSecretCiphertext","keyFingerprint","verifiedAt","createdAt","updatedAt") VALUES ($1,'ACTIVE','test','test',$2,now(),now(),now())`, [paperId, 'f'.repeat(64)]);
     liveId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,'Live','LIVE','PAUSED',false,true,now(),now()) RETURNING id`, [ownerId])).rows[0].id;
     assignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [paperId, subscriptionId])).rows[0].id;
     liveAssignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [liveId, subscriptionId])).rows[0].id;
@@ -56,6 +57,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   }, 120_000);
 
   afterAll(async () => {
+    await (await import('../../services/trading-account-workflow-lock.service.js')).closeTradingAccountWorkflowLockPool().catch(() => undefined);
     const { prisma } = await import('../prisma.js'); await prisma.$disconnect();
     if (db) await db.end();
     if (admin) { await admin.query(`DROP DATABASE IF EXISTS "${database}"`); await admin.end(); }
@@ -254,24 +256,45 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const claimId = (await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].id;
     await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [claimId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_ACCEPTANCE_FIXTURE' })]);
     await (await import('../../services/entry-exposure-claim.service.js')).releaseUnsubmittedEntryExposureClaim({ orderIntentId: intent.id, reason: 'TRADINGVIEW_ACCEPTANCE_FIXTURE_COMPLETE' });
-    const recovery = await import('../../services/external-signal-entry-recovery.service.js');
-    expect(await recovery.reconcileReleasedTradingViewAdmissionCyclesForAccount(paperId)).toMatchObject({ terminalized: 1, retained: 0 });
-    expect(await recovery.reconcileReleasedTradingViewAdmissionCyclesForAccount(paperId)).toMatchObject({ terminalized: 0, retained: 0 });
+    // Simulated crash gap: claim release committed, but cycle reconciliation never ran. Only the
+    // normal top-level worker may discover and finish the orphaned lifecycle on restart.
+    const eligibility = await import('../../services/lifecycle-account-eligibility.service.js');
+    const [scheduled] = (await eligibility.enumerateLifecycleAccounts('submitted_orders', { persistWorkerHealth: false }))
+      .filter(account => account.tradingAccountId === paperId);
+    expect(scheduled).toMatchObject({ eligible: true, exposureSummary: { tradingViewAdmissionReconciliations: 1 } });
+    const worker = await import('../../workers/order.worker.js');
+    expect(await worker.recoverStaleSubmittingIntents()).toEqual(expect.objectContaining({ results: expect.arrayContaining([
+      expect.objectContaining({ account: expect.objectContaining({ tradingAccountId: paperId }), outcome: 'PROCESSED', result: expect.objectContaining({ admissionRecovery: expect.objectContaining({ reconciliationBefore: expect.objectContaining({ terminalized: 1 }) }) }) }),
+    ]) }));
+    expect(await worker.recoverStaleSubmittingIntents()).toEqual(expect.objectContaining({ results: expect.arrayContaining([
+      expect.objectContaining({ account: expect.objectContaining({ tradingAccountId: paperId }), outcome: 'SKIPPED' }),
+    ]) }));
     expect((await db.query(`SELECT status::text,"noExposureProof"::text FROM "ExternalSignalTradeCycleAccount" WHERE id=$1`, [admitted.id])).rows[0])
       .toEqual({ status: 'TERMINAL_NO_EXPOSURE', noExposureProof: 'INTENT_DEFINITELY_NOT_SENT_AND_CLAIM_RELEASED' });
 
-    const expiringEntry = await insertUncorrelatedEntry('execute-expires-under-lock');
-    expect(await (await import('../../services/external-signal-correlation.service.js')).processExternalSignalCorrelationWork({ db: (await import('../prisma.js')).prisma, limit: 1 }))
-      .toMatchObject({ completed: 1, failed: 0 });
-    const lock = new Client({ connectionString: databaseUrl }); await lock.connect();
-    await lock.query('BEGIN');
-    await lock.query(`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`);
-    const expiresWhileWaiting = processProspectiveTradingViewEntries({ db: (await import('../prisma.js')).prisma, limit: 10, now: new Date(), maxAgeMs: 150 });
-    await new Promise(resolve => setTimeout(resolve, 250));
-    await lock.query('COMMIT'); await lock.end();
-    expect(await expiresWhileWaiting).toMatchObject({ admitted: 0, refused: 1 });
-    expect((await db.query(`SELECT ac.status::text,ac."entryOrderIntentId" FROM "ExternalSignalTradeCycleAccount" ac WHERE ac."externalSignalTradeCycleId"=$1`, [expiringEntry.cycleId])).rows[0])
-      .toEqual({ status: 'BLOCKED', entryOrderIntentId: null });
+    const lockBarriers = [
+      { label: 'execution-rollout', sql: `SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)` },
+      { label: 'market-intelligence-rollout', sql: `SELECT id FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1 FOR UPDATE` },
+      { label: 'market-intelligence-identity', sql: `SELECT id FROM "TradingAccountSubscription" WHERE id=${assignmentId} FOR UPDATE` },
+      { label: 'entry-exposure', sql: `SELECT pg_advisory_xact_lock(hashtextextended('entry-exposure:${paperId}:${securityId}',0))` },
+    ];
+    for (const barrier of lockBarriers) {
+      const expiringEntry = await insertUncorrelatedEntry(`execute-expires-under-${barrier.label}`);
+      expect(await (await import('../../services/external-signal-correlation.service.js')).processExternalSignalCorrelationWork({ db: (await import('../prisma.js')).prisma, limit: 1 }))
+        .toMatchObject({ completed: 1, failed: 0 });
+      const lock = new Client({ connectionString: databaseUrl }); await lock.connect();
+      await lock.query('BEGIN');
+      await lock.query(barrier.sql);
+      const expiresWhileWaiting = processProspectiveTradingViewEntries({ db: (await import('../prisma.js')).prisma, limit: 10, now: new Date(), maxAgeMs: 150 });
+      await new Promise(resolve => setTimeout(resolve, 250));
+      await lock.query('COMMIT'); await lock.end();
+      expect(await expiresWhileWaiting, barrier.label).toMatchObject({ admitted: 0, refused: 1 });
+      expect((await db.query(`SELECT ac.status::text,ac."entryOrderIntentId",
+        (SELECT count(*)::int FROM "OrderIntent" oi WHERE oi."externalSignalAccountCycleId"=ac.id) intents,
+        (SELECT count(*)::int FROM "EntryExposureClaim" ec WHERE ec."tradingAccountId"=ac."tradingAccountId" AND ec."securityId"=ac."securityId" AND ec."releasedAt" IS NULL) claims
+        FROM "ExternalSignalTradeCycleAccount" ac WHERE ac."externalSignalTradeCycleId"=$1`, [expiringEntry.cycleId])).rows[0], barrier.label)
+        .toEqual({ status: 'BLOCKED', entryOrderIntentId: null, intents: 0, claims: 0 });
+    }
 
     const rejectedEntry = await insertUncorrelatedEntry('execute-risk-refusal');
     expect(await (await import('../../services/external-signal-correlation.service.js')).processExternalSignalCorrelationWork({ db: (await import('../prisma.js')).prisma, limit: 1 }))

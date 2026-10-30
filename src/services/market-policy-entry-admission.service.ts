@@ -70,9 +70,8 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
   // Prisma's PostgreSQL adapter cannot deserialize PostgreSQL's void pseudo-type. Cast the
   // lock result to text, matching the convention used by the other advisory-lock boundaries.
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)::text`;
-  const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null; signalCreatedAt: Date; databaseNow: Date }>>`
-    SELECT ac.id AS "accountCycleId", oi."clientOrderId", sig."createdAt" AS "signalCreatedAt",
-      clock_timestamp() AS "databaseNow"
+  const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null }>>`
+    SELECT ac.id AS "accountCycleId", oi."clientOrderId"
     FROM "ExternalSignalTradeCycleAccount" ac
     JOIN "ExternalSignalTradeCycle" c ON c.id=ac."externalSignalTradeCycleId"
     JOIN "SignalRoute" sr ON sr.id=ac."entrySignalRouteId"
@@ -108,13 +107,24 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
       AND ac."tradingAccountSubscriptionId"=${request.tradingAccountSubscriptionId}
     FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec`;
   if (rows.length !== 1) throw new HttpError(409, 'TradingView execution candidate is no longer admissible.', { code: 'TRADINGVIEW_EXECUTION_AUTHORITY_REFUSED' });
-  if (rows[0]!.databaseNow.getTime() - rows[0]!.signalCreatedAt.getTime() > context.maxSignalAgeMs) {
-    throw new HttpError(409, 'The TradingView ENTRY signal expired before locked admission completed.', { code: 'ENTRY_SIGNAL_EXPIRED' });
-  }
   const [exit] = await tx.$queryRaw<Array<{ accepted: boolean }>>`SELECT EXISTS (SELECT 1 FROM "Signal" WHERE "externalSignalTradeCycleId"=${context.sourceCycleId} AND event='EXIT_LONG') AS accepted`;
   if (exit?.accepted) throw new HttpError(409, 'An accepted TradingView EXIT preempted ENTRY admission.', { code: 'TRADINGVIEW_EXIT_PREEMPTED' });
   if (rows[0]!.clientOrderId && rows[0]!.clientOrderId !== request.clientOrderId) throw new HttpError(409, 'TradingView client-order-ID provenance conflict.', { code: 'TRADINGVIEW_CLIENT_ORDER_ID_CONFLICT' });
   return context;
+}
+
+async function validateTradingViewSignalFreshness(tx: Prisma.TransactionClient, request: EntryAdmissionRequest) {
+  const context = request.tradingViewExecution;
+  if (!context) return;
+  // This must remain a separate statement: clock_timestamp() is sampled after all admission locks
+  // acquired before the call, against the immutable original Signal timestamp.
+  const [freshness] = await tx.$queryRaw<Array<{ signalCreatedAt: Date; databaseNow: Date }>>`
+    SELECT sig."createdAt" AS "signalCreatedAt", clock_timestamp() AS "databaseNow"
+    FROM "Signal" sig
+    WHERE sig.id=${context.entrySignalId}`;
+  if (!freshness || freshness.databaseNow.getTime() - freshness.signalCreatedAt.getTime() > context.maxSignalAgeMs) {
+    throw new HttpError(409, 'The TradingView ENTRY signal expired before locked admission completed.', { code: 'ENTRY_SIGNAL_EXPIRED' });
+  }
 }
 
 async function freezeTradingViewExecution(tx: Prisma.TransactionClient, request: EntryAdmissionRequest, intent: OrderIntent) {
@@ -345,6 +355,9 @@ async function admitInTransaction(tx: Prisma.TransactionClient, request: EntryAd
   const prior = await tx.entryExposureClaim.findUnique({ where: { ownerKey: request.ownerKey }, include: { orderIntent: true } });
   if (prior?.orderIntent) return { kind: 'duplicate', intent: prior.orderIntent, marketPolicy };
 
+  // Authoritative freshness fence after the final potentially blocking admission lock.
+  await validateTradingViewSignalFreshness(tx, request);
+
   const [clock] = await tx.$queryRaw<Array<{ at: Date }>>`SELECT date_trunc('milliseconds', clock_timestamp()) AS at`;
   const evaluatedAt = clock!.at;
   const identity = attemptIdentity(request, resolution);
@@ -426,8 +439,12 @@ async function admitInTransaction(tx: Prisma.TransactionClient, request: EntryAd
       },
     });
     await freezeTradingViewExecution(tx, request, acquired.intent);
+    // Inserts, triggers and deferred checks after the lock fence may themselves wait. Re-sample the
+    // database clock at the transaction end so such waits cannot commit an expired TradingView entry.
+    await validateTradingViewSignalFreshness(tx, request);
     return { kind: 'admitted', intent: acquired.intent, marketPolicy: { ...marketPolicy, attemptId: attempt.id, obligationId: obligation.id } };
   } catch (error) {
+    if (error instanceof HttpError) throw error;
     throw new MarketPolicyEnforcementTechnicalError('OBLIGATION_FREEZE', error);
   }
 }
