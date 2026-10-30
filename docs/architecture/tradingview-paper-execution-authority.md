@@ -194,6 +194,43 @@ definite-non-send claim release; proven-no-exposure `EXIT_PENDING` reconciliatio
 accurate Market Intelligence request-source/result labels; and existing-order recovery when Alpaca
 has the client ID but local TradingView dispatch provenance is absent.
 
+## Phase 4A.2C2 controlled worker ownership
+
+C2 adds a typed, single-intent worker entrypoint but deliberately does not schedule it from the
+account worker. The ordinary `processPendingOrdersForAccount` query continues to exclude every
+intent with an external-signal account-cycle marker. This is the runtime C2 non-execution barrier;
+activating the dispatch-state singleton alone cannot select a marked intent.
+
+The controlled claim transaction takes the external-signal execution advisory lock first. The C2
+claim guard then locks execution and dispatch singleton state followed by the mutable OrderIntent,
+source cycle, account cycle, authorization, generation, account, assignment, Subscription,
+Security, source, binding, revision and exposure claim rows. Immutable obligation, Signal, route
+and routing-run evidence is snapshot-validated without unnecessarily locking those rows. This
+preserves source-cycle serialization with accepted EXIT, authorization fencing with revoke or
+invalidate, and catalog fencing against concurrent disablement or identity changes. The
+account/security exposure advisory lock is acquired before the claim insert and is reacquired by
+the shared release path. Existing Market
+Intelligence admission uses the same account/assignment identity ordering and legacy execution does
+not take the external-signal execution lock, so no reverse acquisition edge is introduced. In the
+same SERIALIZABLE transaction the
+application changes `pending` to `submitting`, changes the existing claim from `ENTRY_PENDING` to
+`ENTRY_SUBMITTING`, and appends `WORKER_CLAIMED_FOR_SUBMISSION`. Database triggers require the
+immutable worker claim for both state changes. A rollback at any point removes all four writes.
+
+C2 reuses assignment resolution and centralized `evaluateOrderRisk` with the current intent
+excluded from exposure accounting. It never re-sizes the admitted order. A denial records the
+ordinary risk evidence and durable pre-dispatch not-sent evidence before the shared claim-release
+path runs. An allowed result is handled identically with the explicit
+`TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE` refusal. Thus C2 ownership never reaches
+`submitOrderToBroker`, Market Intelligence dispatch consumption, an adapter marker, a broker POST,
+or SELL generation, and does not leave a permanently submitting intent.
+
+Once paired final-dispatch consumption exists, database guards prohibit returning the intent to
+`pending`, creating a pre-dispatch `blocked`/`failed` conclusion, or moving the exposure claim into
+a pre-dispatch/released state. This remains true when no adapter marker exists: consumption itself
+means delivery may have started. Both consumption rows and the worker claim remain immutable and
+unique. Only the established broker-evidence recovery lifecycle may eventually close exposure.
+
 ## Deployment and rollback floor
 
 The foundation migration is forward-only once EXECUTE generations, activation history, authorizations, or marked intents exist. Rolling application code back before Phase 4A.2A would remove recognition and quarantine of marked intents and is unsafe without a separately reviewed compatibility fix. This checkpoint does not apply or activate the migration.
