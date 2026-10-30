@@ -59,6 +59,27 @@ Every accepted v2 `EXIT_LONG`, including a direct SQL insert, updates the owning
 
 The legacy order worker selects only intents with a null origin marker. Independently, PostgreSQL rejects every marked transition into `submitting` and direct marked inserts outside `received`. Marked intents may still move to `blocked` or `failed`. No marked TradingView intent can reach today's broker path.
 
+The existing stale-admission sweep also reconciles a marked account cycle after it has failed the
+intent and the shared claim-release path has committed definite non-send evidence. It requires the
+exact immutable execution obligation and account-cycle origin, a released matching claim, both
+not-sent and release evidence, and no adapter, dispatch, broker-order, broker-activity, or position
+evidence. It then records `TERMINAL_NO_EXPOSURE` without changing the immutable links, and closes the
+source cycle only when every account cycle independently has no-exposure proof. Missing or
+conflicting evidence remains nonterminal and opens Operational Attention. This reconciliation is
+idempotent so a crash after claim release is repaired by the next normal recovery tick.
+
+The 120-second signal-age limit is rechecked with PostgreSQL's current clock after admission locks
+have been acquired. The coordinator's selection-time check is only an optimization; a signal that
+expires while waiting for serialization is permanently refused before intent creation.
+
+### Carry-forward acceptance register
+
+The following Hermes LOW findings remain open and must be explicitly revisited before broker
+activation: signal timestamp immutability; frozen execution-generation consistency; the deadlock
+involving assignment-less entries; complete broker-progress state validation; accurate Market
+Intelligence admission source/result evidence; and `EXIT_PENDING` cycles with proven no exposure.
+They are not resolved by Phase 4A.2B final acceptance corrections.
+
 ## SHADOW and EXECUTE independence
 
 SHADOW generations and decisions retain their evidence meaning permanently. An enabled SHADOW generation is not an execution prerequisite, and a SHADOW BLOCKED decision neither grants nor denies execution authority. Phase 4A.2B must derive execution eligibility independently from frozen route/correlation identity, the execution epoch, and exact PAPER authorization. Historical `BLOCKED`, terminal, `EXIT_PENDING`, SHADOW-reserved, and pre-epoch account cycles are never promotion candidates.

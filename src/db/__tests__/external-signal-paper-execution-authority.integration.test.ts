@@ -254,6 +254,24 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const claimId = (await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].id;
     await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [claimId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_ACCEPTANCE_FIXTURE' })]);
     await (await import('../../services/entry-exposure-claim.service.js')).releaseUnsubmittedEntryExposureClaim({ orderIntentId: intent.id, reason: 'TRADINGVIEW_ACCEPTANCE_FIXTURE_COMPLETE' });
+    const recovery = await import('../../services/external-signal-entry-recovery.service.js');
+    expect(await recovery.reconcileReleasedTradingViewAdmissionCyclesForAccount(paperId)).toMatchObject({ terminalized: 1, retained: 0 });
+    expect(await recovery.reconcileReleasedTradingViewAdmissionCyclesForAccount(paperId)).toMatchObject({ terminalized: 0, retained: 0 });
+    expect((await db.query(`SELECT status::text,"noExposureProof"::text FROM "ExternalSignalTradeCycleAccount" WHERE id=$1`, [admitted.id])).rows[0])
+      .toEqual({ status: 'TERMINAL_NO_EXPOSURE', noExposureProof: 'INTENT_DEFINITELY_NOT_SENT_AND_CLAIM_RELEASED' });
+
+    const expiringEntry = await insertUncorrelatedEntry('execute-expires-under-lock');
+    expect(await (await import('../../services/external-signal-correlation.service.js')).processExternalSignalCorrelationWork({ db: (await import('../prisma.js')).prisma, limit: 1 }))
+      .toMatchObject({ completed: 1, failed: 0 });
+    const lock = new Client({ connectionString: databaseUrl }); await lock.connect();
+    await lock.query('BEGIN');
+    await lock.query(`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`);
+    const expiresWhileWaiting = processProspectiveTradingViewEntries({ db: (await import('../prisma.js')).prisma, limit: 10, now: new Date(), maxAgeMs: 150 });
+    await new Promise(resolve => setTimeout(resolve, 250));
+    await lock.query('COMMIT'); await lock.end();
+    expect(await expiresWhileWaiting).toMatchObject({ admitted: 0, refused: 1 });
+    expect((await db.query(`SELECT ac.status::text,ac."entryOrderIntentId" FROM "ExternalSignalTradeCycleAccount" ac WHERE ac."externalSignalTradeCycleId"=$1`, [expiringEntry.cycleId])).rows[0])
+      .toEqual({ status: 'BLOCKED', entryOrderIntentId: null });
 
     const rejectedEntry = await insertUncorrelatedEntry('execute-risk-refusal');
     expect(await (await import('../../services/external-signal-correlation.service.js')).processExternalSignalCorrelationWork({ db: (await import('../prisma.js')).prisma, limit: 1 }))

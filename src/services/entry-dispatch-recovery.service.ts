@@ -32,6 +32,7 @@ import {
   transitionEntryExposureClaim,
 } from './entry-exposure-claim.service.js';
 import { createSystemEvent } from './system-event.service.js';
+import { reconcileReleasedTradingViewAdmissionCyclesForAccount } from './external-signal-entry-recovery.service.js';
 
 // Hermes HIGH-1 / Phase 3C.3 closure: evidence-based recovery of EntryExposureClaim ownership.
 //
@@ -974,6 +975,8 @@ function staleAdmissionClaimWhere(now: Date, tradingAccountIds?: number[] | unde
  * requeued, resubmitted or placed; a pending intent is never touched.
  */
 export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: number, now = new Date()) {
+  // Also repairs a prior crash after claim release but before TradingView lifecycle terminalization.
+  const reconciliationBefore = await reconcileReleasedTradingViewAdmissionCyclesForAccount(tradingAccountId);
   const cutoff = new Date(now.getTime() - STALE_ADMISSION_THRESHOLD_MS);
   const candidates = await prisma.entryExposureClaim.findMany({
     where: { ...staleAdmissionClaimWhere(now, [tradingAccountId]), tradingAccountId,
@@ -1068,7 +1071,8 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
       await recordRecoveryError(orderIntentId, 'STALE_ADMISSION_RECOVERY', error);
     }
   }
-  return { examined: candidates.length, attempted, released, retained, failures };
+  const reconciliationAfter = await reconcileReleasedTradingViewAdmissionCyclesForAccount(tradingAccountId);
+  return { examined: candidates.length, attempted, released, retained, failures, reconciliationBefore, reconciliationAfter };
 }
 
 /**

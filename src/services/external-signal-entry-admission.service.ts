@@ -3,6 +3,7 @@ import { Prisma, type PrismaClient } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { submitOrder } from './place-order.service.js';
+import { reconcileReleasedTradingViewAdmissionCyclesForAccount } from './external-signal-entry-recovery.service.js';
 
 type Db = PrismaClient;
 
@@ -38,29 +39,6 @@ async function refuseCandidate(db: Db, account: { id: number; tradingAccountId: 
       payloadJson: { accountCycleId: account.id, reasonCode, orderIntentCreated: false, automaticallyRetryable: false },
     } });
     return changed.count === 1;
-  });
-}
-
-async function terminalizeDefinitelyUnsentIntent(db: Db, accountCycleId: number) {
-  return db.$transaction(async tx => {
-    await tx.$queryRaw`SELECT id FROM "ExternalSignalTradeCycleAccount" WHERE id=${accountCycleId} FOR UPDATE`;
-    const current = await tx.externalSignalTradeCycleAccount.findUnique({
-      where: { id: accountCycleId }, include: { entryOrderIntent: { include: { entryExposureClaim: true } } },
-    });
-    const intent = current?.entryOrderIntent;
-    const claim = intent?.entryExposureClaim;
-    if (!current || current.status !== 'ENTRY_INTENT_CREATED' || !intent ||
-        !['blocked', 'failed'].includes(intent.status) || !claim?.releasedAt || claim.status !== 'RELEASED') return false;
-    const notSent = await tx.entryExposureClaimEvent.findFirst({
-      where: { claimId: claim.id, eventType: { in: ['NOT_SENT_EVIDENCE_RECORDED', 'RELEASED_NO_BROKER_EXPOSURE'] } }, select: { id: true },
-    });
-    if (!notSent) return false;
-    await tx.externalSignalTradeCycleAccount.update({ where: { id: current.id }, data: {
-      status: 'TERMINAL_NO_EXPOSURE', terminalAt: new Date(),
-      terminalReasonCode: 'INTENT_DEFINITELY_NOT_SENT_AND_CLAIM_RELEASED',
-      noExposureProof: 'INTENT_DEFINITELY_NOT_SENT_AND_CLAIM_RELEASED',
-    } });
-    return true;
   });
 }
 
@@ -103,13 +81,15 @@ export async function processProspectiveTradingViewEntries(options: { limit?: nu
           accountCycleId: account.id, sourceCycleId: account.externalSignalTradeCycleId, entrySignalId: signal.id,
           entrySignalRouteId: account.entrySignalRouteId, authorizationId: authorization.id,
           rolloutGenerationId: authorization.rolloutGenerationId,
+          maxSignalAgeMs: maxAgeMs,
         },
       });
       admitted += 1;
     } catch (error) {
       const current = await db.externalSignalTradeCycleAccount.findUnique({ where: { id: account.id }, include: { entryOrderIntent: true } });
       if (current?.status === 'ENTRY_INTENT_CREATED' && current.entryOrderIntent && ['blocked', 'failed'].includes(current.entryOrderIntent.status)) {
-        if (await terminalizeDefinitelyUnsentIntent(db, account.id)) { refused += 1; continue; }
+        const reconciled = await reconcileReleasedTradingViewAdmissionCyclesForAccount(account.tradingAccountId, { db });
+        if (reconciled.terminalized > 0) { refused += 1; continue; }
         await db.systemEvent.create({ data: { type: 'TRADINGVIEW_ENTRY_ADMISSION_RECOVERY_NEEDED', entityType: 'ExternalSignalTradeCycleAccount', entityId: String(account.id), tradingAccountId: account.tradingAccountId, severity: 'WARNING', message: 'TradingView admission created an intent but post-intent processing did not complete successfully.', payloadJson: { accountCycleId: account.id, orderIntentId: current.entryOrderIntent.id, status: current.entryOrderIntent.status, quarantinedFromBrokerDispatch: true } } });
         await db.operationalAttention.upsert({
           where: { activeKey: `TRADINGVIEW_ENTRY_ADMISSION_RECOVERY:${account.id}` },

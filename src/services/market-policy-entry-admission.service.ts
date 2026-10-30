@@ -47,6 +47,7 @@ export type TradingViewEntryExecutionContext = {
   entrySignalRouteId: number;
   authorizationId: number;
   rolloutGenerationId: number;
+  maxSignalAgeMs: number;
 };
 
 export type EntryAdmissionRequest = {
@@ -69,8 +70,9 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
   // Prisma's PostgreSQL adapter cannot deserialize PostgreSQL's void pseudo-type. Cast the
   // lock result to text, matching the convention used by the other advisory-lock boundaries.
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)::text`;
-  const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null }>>`
-    SELECT ac.id AS "accountCycleId", oi."clientOrderId"
+  const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null; signalCreatedAt: Date; databaseNow: Date }>>`
+    SELECT ac.id AS "accountCycleId", oi."clientOrderId", sig."createdAt" AS "signalCreatedAt",
+      clock_timestamp() AS "databaseNow"
     FROM "ExternalSignalTradeCycleAccount" ac
     JOIN "ExternalSignalTradeCycle" c ON c.id=ac."externalSignalTradeCycleId"
     JOIN "SignalRoute" sr ON sr.id=ac."entrySignalRouteId"
@@ -106,6 +108,9 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
       AND ac."tradingAccountSubscriptionId"=${request.tradingAccountSubscriptionId}
     FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec`;
   if (rows.length !== 1) throw new HttpError(409, 'TradingView execution candidate is no longer admissible.', { code: 'TRADINGVIEW_EXECUTION_AUTHORITY_REFUSED' });
+  if (rows[0]!.databaseNow.getTime() - rows[0]!.signalCreatedAt.getTime() > context.maxSignalAgeMs) {
+    throw new HttpError(409, 'The TradingView ENTRY signal expired before locked admission completed.', { code: 'ENTRY_SIGNAL_EXPIRED' });
+  }
   const [exit] = await tx.$queryRaw<Array<{ accepted: boolean }>>`SELECT EXISTS (SELECT 1 FROM "Signal" WHERE "externalSignalTradeCycleId"=${context.sourceCycleId} AND event='EXIT_LONG') AS accepted`;
   if (exit?.accepted) throw new HttpError(409, 'An accepted TradingView EXIT preempted ENTRY admission.', { code: 'TRADINGVIEW_EXIT_PREEMPTED' });
   if (rows[0]!.clientOrderId && rows[0]!.clientOrderId !== request.clientOrderId) throw new HttpError(409, 'TradingView client-order-ID provenance conflict.', { code: 'TRADINGVIEW_CLIENT_ORDER_ID_CONFLICT' });
