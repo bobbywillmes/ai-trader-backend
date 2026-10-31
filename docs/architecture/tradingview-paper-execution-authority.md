@@ -188,11 +188,10 @@ drain before deploying older code. Never remove the C1 pairing or quarantine tri
 rollback. This ordering means an old worker cannot claim marked intents and old dispatch code cannot
 commit a lone Market Intelligence consumption.
 
-Before activation, later checkpoints must implement: terminalization of pre-epoch pending intents;
-definite-non-send claim release; proven-no-exposure `EXIT_PENDING` reconciliation; broker-time
-120-second freshness; Operational Attention resolution; unattributed broker-exposure handling;
-accurate Market Intelligence request-source/result labels; and existing-order recovery when Alpaca
-has the client ID but local TradingView dispatch provenance is absent.
+Before C3 activation, later checkpoints must implement broker-time 120-second freshness, validated
+adapter markers and broker-progress transitions, unattributed broker-exposure handling, and
+existing-order recovery when Alpaca has the client ID but local TradingView dispatch provenance is
+absent. C2's claim-time freshness and pre-dispatch recovery do not grant any of those capabilities.
 
 ## Phase 4A.2C2 controlled worker ownership
 
@@ -208,8 +207,9 @@ Security, source, binding, revision and exposure claim rows. Immutable obligatio
 and routing-run evidence is snapshot-validated without unnecessarily locking those rows. This
 preserves source-cycle serialization with accepted EXIT, authorization fencing with revoke or
 invalidate, and catalog fencing against concurrent disablement or identity changes. The
-account/security exposure advisory lock is acquired before the claim insert and is reacquired by
-the shared release path. Existing Market
+immutable worker-claim insert runs the guard and establishes those identity locks before the
+account/security exposure advisory lock is acquired. The exposure lock is then reacquired by the
+shared release path. Existing Market
 Intelligence admission uses the same account/assignment identity ordering and legacy execution does
 not take the external-signal execution lock, so no reverse acquisition edge is introduced. In the
 same SERIALIZABLE transaction the
@@ -225,11 +225,21 @@ path runs. An allowed result is handled identically with the explicit
 `submitOrderToBroker`, Market Intelligence dispatch consumption, an adapter marker, a broker POST,
 or SELL generation, and does not leave a permanently submitting intent.
 
+The normal stale-submitting scheduler recognizes the immutable C2 claim. A claim with the C2 marker
+protocol and no consumption, adapter invocation, broker evidence or contradictory outcome is proven
+not sent, terminalized and released through the shared recovery path. Possible-delivery or
+contradictory evidence retains ownership and creates one active Operational Attention episode;
+repeated ticks update that episode rather than emitting repetitive SystemEvents. Allocation,
+credential and catalog readiness are checked before ownership where possible, while the claim guard
+rechecks mutable authority under the transaction locks. PostgreSQL applies the 120-second maximum
+age to the immutable entry Signal with `clock_timestamp()` after lock waits.
+
 Once paired final-dispatch consumption exists, database guards prohibit returning the intent to
-`pending`, creating a pre-dispatch `blocked`/`failed` conclusion, or moving the exposure claim into
-a pre-dispatch/released state. This remains true when no adapter marker exists: consumption itself
-means delivery may have started. Both consumption rows and the worker claim remain immutable and
-unique. Only the established broker-evidence recovery lifecycle may eventually close exposure.
+any other status or moving the exposure claim into any other lifecycle state. This remains true when
+no adapter marker exists: consumption itself means delivery may have started, but it does not prove
+any broker status. C3 may replace this complete quarantine only with narrowly validated,
+broker-evidence-backed transitions and adapter-marker capability; C2 must not manufacture either.
+Both consumption rows and the worker claim remain immutable and unique.
 
 ## Deployment and rollback floor
 

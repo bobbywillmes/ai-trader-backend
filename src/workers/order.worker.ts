@@ -67,6 +67,7 @@ import {
 } from '../services/entry-exposure-claim.service.js';
 import { isSellIntent } from '../services/entry-lifecycle-status.service.js';
 import { submittedOrderSyncIntentWhere } from '../services/submitted-order-sync-selection.service.js';
+import { recoverTradingViewC2Claim } from '../services/external-signal-broker-worker.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -203,6 +204,12 @@ export async function recoverStaleSubmittingIntentsForAccount(
     try {
     if (!intent.clientOrderId) {
       retained += 1;
+      continue;
+    }
+    if (intent.externalSignalAccountCycleId != null) {
+      const c2Recovery = await recoverTradingViewC2Claim(intent.id);
+      if (c2Recovery.outcome === 'DEFINITE_NOT_SENT') retryable += 1;
+      else retained += 1;
       continue;
     }
     if (!isExitIntent(intent)) {
