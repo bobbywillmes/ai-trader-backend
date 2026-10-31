@@ -24,7 +24,8 @@ const sqlStateFromPrismaError = (error: unknown) => {
   // Prisma adapters expose the server SQLSTATE through driverAdapterError.cause.originalCode.
   // P2010 from raw queries may instead expose meta.code. Only exact PostgreSQL codes count;
   // free-form messages are deliberately excluded from authority over retries.
-  for (const value of [cause?.originalCode, cause?.code, metaCause?.originalCode, metaCause?.code, meta?.code]) {
+  const rootCause = record(root?.cause);
+  for (const value of [cause?.originalCode, cause?.code, metaCause?.originalCode, metaCause?.code, meta?.code, rootCause?.originalCode, rootCause?.code, root?.sqlState, root?.code]) {
     if (typeof value === 'string' && /^[0-9A-Z]{5}$/.test(value)) return value;
   }
   return null;
@@ -32,6 +33,7 @@ const sqlStateFromPrismaError = (error: unknown) => {
 export const retryableConcurrencyFailure = (error: unknown) => {
   const code = errorCode(error);
   if (code === 'P2034') return true;
+  if (['40001', '40P01'].includes(code ?? '')) return true;
   return code === 'P2010' && ['40001', '40P01'].includes(sqlStateFromPrismaError(error) ?? '');
 };
 

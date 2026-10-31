@@ -37,8 +37,8 @@ BEGIN
     broker_evidence := EXISTS (SELECT 1 FROM "BrokerOrder" bo WHERE bo."orderIntentId"=OLD.id)
       OR EXISTS (SELECT 1 FROM "BrokerActivity" ba WHERE ba."orderIntentId"=OLD.id)
       OR EXISTS (SELECT 1 FROM "OrderIntentBrokerOpportunityEvent" oe WHERE oe."orderIntentId"=OLD.id AND oe."eventType" NOT IN ('OPPORTUNITY_CAPTURED','DEFERRED','MISSING_OBSERVATION'));
-    IF OLD.status IN ('blocked','failed') AND (NEW."blockReason" IS DISTINCT FROM OLD."blockReason" OR NEW."rawRequestJson" IS DISTINCT FROM OLD."rawRequestJson") THEN
-      RAISE EXCEPTION 'terminal TradingView refusal and its evidence are immutable';
+    IF OLD.status IN ('blocked','failed') AND (NEW.status IN ('received','pending') OR NEW."blockReason" IS DISTINCT FROM OLD."blockReason" OR NEW."rawRequestJson" IS DISTINCT FROM OLD."rawRequestJson") THEN
+      RAISE EXCEPTION 'terminal TradingView intent and its evidence are immutable';
     END IF;
     IF paired_consumption THEN
       IF NEW.status IS DISTINCT FROM OLD.status OR NEW."blockReason" IS DISTINCT FROM OLD."blockReason" THEN RAISE EXCEPTION 'consumed TradingView dispatch lifecycle is quarantined pending C3 validated broker evidence'; END IF;
@@ -64,16 +64,34 @@ BEGIN
   RETURN NEW;
 END $$;
 
+-- Every C2 delivery classification and its release decision serialize on the exact ownership row.
+-- A possible-delivery event cannot be appended after release. Conversely, inserting an event holds
+-- the claim row until commit, so a concurrent release must re-run its BEFORE UPDATE guard after the
+-- event transaction completes (or fail serialization under a stale SERIALIZABLE snapshot).
+CREATE FUNCTION external_signal_c2_delivery_event_fence() RETURNS trigger LANGUAGE plpgsql AS $$
+DECLARE claim_row "EntryExposureClaim"%ROWTYPE; marked boolean;
+BEGIN
+  IF NEW."eventType" NOT IN ('WORKER_CLAIMED_FOR_SUBMISSION','NOT_SENT_EVIDENCE_RECORDED','ADAPTER_INVOCATION_STARTED','DISPATCH_OUTCOME_RECORDED','BROKER_DELIVERY_UNCERTAIN') THEN RETURN NEW; END IF;
+  SELECT * INTO claim_row FROM "EntryExposureClaim" WHERE id=NEW."claimId" FOR UPDATE;
+  IF claim_row.id IS NULL OR claim_row."orderIntentId" IS NULL THEN RETURN NEW; END IF;
+  SELECT i."externalSignalAccountCycleId" IS NOT NULL INTO marked FROM "OrderIntent" i WHERE i.id=claim_row."orderIntentId";
+  IF coalesce(marked,false) AND claim_row."releasedAt" IS NOT NULL THEN
+    RAISE EXCEPTION 'TradingView delivery evidence cannot be appended after exposure release';
+  END IF;
+  RETURN NEW;
+END $$;
+CREATE TRIGGER "EntryExposureClaimEvent_external_signal_c2_delivery_fence" BEFORE INSERT ON "EntryExposureClaimEvent" FOR EACH ROW EXECUTE FUNCTION external_signal_c2_delivery_event_fence();
+
 -- A JSON label is not ownership. For a claimed lifecycle the immutable worker-claim row and its
 -- database-owned claim event must precede the not-sent event, and the producer must be one of the
 -- C2 code paths that owns that exact claim. Unclaimed refusal evidence is accepted only after the
 -- pending intent has been atomically closed and while no worker claim exists.
 CREATE FUNCTION external_signal_c2_not_sent_evidence_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE intent_id integer; intent_status text; marked boolean; worker_id integer; claim_event_id integer; producer text; evidence_worker_id integer; contradictory boolean;
+DECLARE intent_id integer; intent_status text; marked boolean; worker_id integer; claim_event_id integer; producer text; evidence_worker_id integer; contradictory boolean; claim_status text; claim_acquired_at timestamp;
 BEGIN
   IF NEW."eventType"<>'NOT_SENT_EVIDENCE_RECORDED' THEN RETURN NEW; END IF;
-  SELECT ec."orderIntentId",i.status,(i."externalSignalAccountCycleId" IS NOT NULL)
-    INTO intent_id,intent_status,marked FROM "EntryExposureClaim" ec JOIN "OrderIntent" i ON i.id=ec."orderIntentId" WHERE ec.id=NEW."claimId";
+  SELECT ec."orderIntentId",i.status,(i."externalSignalAccountCycleId" IS NOT NULL),ec.status,ec."acquiredAt"
+    INTO intent_id,intent_status,marked,claim_status,claim_acquired_at FROM "EntryExposureClaim" ec JOIN "OrderIntent" i ON i.id=ec."orderIntentId" WHERE ec.id=NEW."claimId";
   IF NOT coalesce(marked,false) THEN RETURN NEW; END IF;
   SELECT id INTO worker_id FROM "ExternalSignalBrokerWorkerClaim" WHERE "orderIntentId"=intent_id;
   producer := NEW."evidenceJson"->>'producer';
@@ -86,7 +104,12 @@ BEGIN
     OR EXISTS (SELECT 1 FROM "OrderIntentBrokerOpportunityEvent" oe WHERE oe."orderIntentId"=intent_id AND oe."eventType" NOT IN ('OPPORTUNITY_CAPTURED','DEFERRED','MISSING_OBSERVATION'));
   IF contradictory THEN RAISE EXCEPTION 'TradingView not-sent evidence contradicts persisted dispatch or broker evidence'; END IF;
   IF worker_id IS NULL THEN
-    IF intent_status NOT IN ('blocked','failed') OR producer<>'TRADINGVIEW_C2_PRECLAIM_REFUSAL' THEN
+    IF intent_status NOT IN ('blocked','failed') OR claim_status<>'ENTRY_PENDING' OR NOT (
+      producer='TRADINGVIEW_C2_PRECLAIM_REFUSAL'
+      OR (producer='STALE_ADMISSION_NEVER_EXECUTABLE' AND NEW."evidenceJson"->>'source'='STALE_ADMISSION_RECOVERY'
+        AND NEW."evidenceJson"#>>'{proof,basis}'='CLAIM_NEVER_LEFT_ENTRY_PENDING'
+        AND claim_acquired_at <= clock_timestamp() - interval '15 minutes')
+    ) THEN
       RAISE EXCEPTION 'unclaimed TradingView not-sent evidence requires its closed pre-claim refusal';
     END IF;
   ELSE
@@ -119,7 +142,7 @@ BEGIN
     AND (e."evidenceJson"->>'workerClaimId')::integer=worker_id ORDER BY e.id DESC LIMIT 1;
   owned_not_sent := EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=NEW.id AND e."eventType"='NOT_SENT_EVIDENCE_RECORDED'
     AND (NOT worker_claimed OR ((e."evidenceJson"->>'workerClaimId')::integer=worker_id AND e.id>claim_event_id)));
-  dispatch_outcome := EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=NEW.id AND e."eventType"='DISPATCH_OUTCOME_RECORDED');
+  dispatch_outcome := EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=NEW.id AND e."eventType" IN ('DISPATCH_OUTCOME_RECORDED','BROKER_DELIVERY_UNCERTAIN'));
   contradictory := dispatch_outcome OR NEW."trackedPositionId" IS NOT NULL
     OR EXISTS (SELECT 1 FROM "ExternalSignalBrokerDispatchConsumption" c WHERE c."orderIntentId"=NEW."orderIntentId")
     OR EXISTS (SELECT 1 FROM "MarketPolicyBrokerDispatchConsumption" c WHERE c."orderIntentId"=NEW."orderIntentId")

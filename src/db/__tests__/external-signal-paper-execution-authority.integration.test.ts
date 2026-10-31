@@ -508,12 +508,12 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT i.status,c."claimFingerprint",c."claimFingerprint"<>$2 AS canonical,ec.status AS exposure_status,ec."releasedAt" IS NOT NULL AS released FROM "OrderIntent" i JOIN "ExternalSignalBrokerWorkerClaim" c ON c."orderIntentId"=i.id JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id WHERE i.id=$1`, [serviceIntentId, '0'.repeat(64)])).rows[0])
       .toMatchObject({ status: 'blocked', canonical: true, exposure_status: 'RELEASED', released: true });
     const serviceOwnership = (await db.query(`SELECT ec.id AS claim_id,wc.id AS worker_id FROM "EntryExposureClaim" ec JOIN "ExternalSignalBrokerWorkerClaim" wc ON wc."orderIntentId"=ec."orderIntentId" WHERE ec."orderIntentId"=$1`, [serviceIntentId])).rows[0];
-    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [serviceOwnership.claim_id, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: serviceOwnership.worker_id + 1 })])).rejects.toThrow(/worker-claim provenance/);
-    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [serviceOwnership.claim_id, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRECLAIM_REFUSAL' })])).rejects.toThrow(/worker-claim provenance/);
-    await expect(db.query(`UPDATE "OrderIntent" SET "blockReason"='hostile rewrite' WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView refusal/);
-    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"=jsonb_set("rawRequestJson",'{riskEvaluation,reason}','"hostile"') WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView refusal/);
-    await expect(db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/cannot become reclaimable|completed TradingView worker claim/);
-    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"='{"qty":999}'::jsonb WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/insert-only and immutable|terminal TradingView refusal/);
+    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [serviceOwnership.claim_id, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: serviceOwnership.worker_id + 1 })])).rejects.toThrow(/worker-claim provenance|after exposure release/);
+    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [serviceOwnership.claim_id, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRECLAIM_REFUSAL' })])).rejects.toThrow(/worker-claim provenance|after exposure release/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "blockReason"='hostile rewrite' WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView intent/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"=jsonb_set("rawRequestJson",'{riskEvaluation,reason}','"hostile"') WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView intent/);
+    await expect(db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView intent|cannot become reclaimable|completed TradingView worker claim/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"='{"qty":999}'::jsonb WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/insert-only and immutable|terminal TradingView intent/);
 
     // R1: A observes invalid readiness, pauses, B claims after readiness is restored, and A's stale
     // refusal must lose without appending evidence or releasing B's ownership.
@@ -538,6 +538,21 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(loser.outcome).toBe('LOST_REFUSAL_RACE');
     const r1State = (await db.query(`SELECT i.status,ec.status exposure_status,ec."releasedAt" IS NOT NULL released,(SELECT count(*)::int FROM "ExternalSignalBrokerWorkerClaim" wc WHERE wc."orderIntentId"=i.id) worker_claims,(SELECT count(*)::int FROM "EntryExposureClaimEvent" e WHERE e."claimId"=ec.id AND e."eventType"='NOT_SENT_EVIDENCE_RECORDED') not_sent FROM "OrderIntent" i JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id WHERE i.id=$1`, [r1IntentId])).rows[0];
     expect(r1State).toMatchObject({ status: 'blocked', exposure_status: 'RELEASED', released: true, worker_claims: 1, not_sent: 1 });
+
+    const staleFixture = await createAdmissionFixture('c2-stale-admission', { securityId: serviceSecurityId, assignmentId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3' });
+    await db.query('BEGIN');
+    await insertIntentAndObligation(db, staleFixture, 'c2-stale-admission', { securityId: serviceSecurityId, assignmentId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3', authorizationId: serviceAuthorization.id, rawRequestJson: { ...serviceRaw, tradingAccountSubscriptionId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3' } });
+    await db.query('COMMIT');
+    const staleIntentId = (await db.query(`SELECT "entryOrderIntentId" id FROM "ExternalSignalTradeCycleAccount" WHERE id=$1`, [staleFixture.accountCycleId])).rows[0].id as number;
+    await db.query(`UPDATE "OrderIntent" SET "updatedAt"=now()-interval '20 minutes' WHERE id=$1`, [staleIntentId]);
+    await db.query(`UPDATE "EntryExposureClaim" SET "acquiredAt"=now()-interval '20 minutes' WHERE "orderIntentId"=$1`, [staleIntentId]);
+    const staleRecovery = await (await import('../../workers/order.worker.js')).recoverStaleSubmittingIntents();
+    expect(staleRecovery.results).toEqual(expect.arrayContaining([expect.objectContaining({ account: expect.objectContaining({ tradingAccountId: paperId }), outcome: 'PROCESSED' })]));
+    expect((await db.query(`SELECT i.status,ec.status exposure_status,ec."releasedAt" IS NOT NULL released,(SELECT count(*)::int FROM "EntryExposureClaimEvent" e WHERE e."claimId"=ec.id AND e."eventType"='NOT_SENT_EVIDENCE_RECORDED' AND e."evidenceJson"->>'producer'='STALE_ADMISSION_NEVER_EXECUTABLE') stale_events FROM "OrderIntent" i JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id WHERE i.id=$1`, [staleIntentId])).rows[0])
+      .toMatchObject({ status: 'failed', exposure_status: 'RELEASED', released: true, stale_events: 1 });
+    expect((await db.query(`SELECT status::text FROM "ExternalSignalTradeCycleAccount" WHERE id=$1`, [staleFixture.accountCycleId])).rows[0].status).toBe('TERMINAL_NO_EXPOSURE');
+    await (await import('../../workers/order.worker.js')).recoverStaleSubmittingIntents();
+    expect((await db.query(`SELECT count(*)::int n FROM "EntryExposureClaimEvent" e JOIN "EntryExposureClaim" ec ON ec.id=e."claimId" WHERE ec."orderIntentId"=$1 AND e."eventType"='NOT_SENT_EVIDENCE_RECORDED'`, [staleIntentId])).rows[0].n).toBe(1);
 
     const crashFixture = await createAdmissionFixture('c2-post-claim-crash', { securityId: serviceSecurityId, assignmentId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3' });
     await db.query('BEGIN');
@@ -583,7 +598,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(db.query(`UPDATE "EntryExposureClaim" SET status='RELEASED',"releasedAt"=now(),"releaseReason"='hostile pending release' WHERE "orderIntentId"=$1`, [intent.id])).rejects.toThrow(/cannot be released while its intent remains executable/);
   });
 
-  it.each(['ADAPTER_INVOCATION_STARTED', 'DISPATCH_OUTCOME_RECORDED'] as const)('rejects claimed not-sent evidence after contradictory %s evidence', async eventType => {
+  it.each(['ADAPTER_INVOCATION_STARTED', 'DISPATCH_OUTCOME_RECORDED', 'BROKER_DELIVERY_UNCERTAIN'] as const)('rejects claimed not-sent evidence after contradictory %s evidence', async eventType => {
     await db.query('BEGIN');
     try {
       await db.query(`UPDATE "EntryExposureClaim" SET status='ENTRY_SUBMITTING' WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId]);
@@ -592,6 +607,20 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [validWorkerClaim.intentId]);
       await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,$2,'{}')`, [exposureId, eventType]);
       await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [exposureId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: validWorkerClaim.id })])).rejects.toThrow(/contradicts persisted dispatch or broker evidence/);
+    } finally { await db.query('ROLLBACK'); }
+  });
+
+  it.each(['ADAPTER_INVOCATION_STARTED', 'DISPATCH_OUTCOME_RECORDED', 'BROKER_DELIVERY_UNCERTAIN'] as const)('rejects exposure release after possible-delivery event %s', async eventType => {
+    await db.query('BEGIN');
+    try {
+      await db.query(`UPDATE "EntryExposureClaim" SET status='ENTRY_SUBMITTING' WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId]);
+      const exposureId = (await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].id;
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'WORKER_CLAIMED_FOR_SUBMISSION',$2)`, [exposureId, JSON.stringify({ markerProtocol: 'ADAPTER_MARKER_V1', workerClaimId: validWorkerClaim.id })]);
+      await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [validWorkerClaim.intentId]);
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [exposureId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: validWorkerClaim.id })]);
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,$2,'{}')`, [exposureId, eventType]);
+      await db.query(`UPDATE "OrderIntent" SET status='blocked',"blockReason"='test possible delivery' WHERE id=$1`, [validWorkerClaim.intentId]);
+      await expect(db.query(`UPDATE "EntryExposureClaim" SET status='RELEASED',"releasedAt"=now(),"releaseReason"='hostile' WHERE id=$1`, [exposureId])).rejects.toThrow(/current uncontradicted worker-owned not-sent evidence/);
     } finally { await db.query('ROLLBACK'); }
   });
 
@@ -736,19 +765,20 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   });
 
   it('rejects accepted EXIT preemption and terminal or blocked lifecycle reuse', async () => {
-    await db.query(`UPDATE "OrderIntent" SET status='received' WHERE id=$1`, [provenance.intentId]);
+    await expect(db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [provenance.intentId])).rejects.toThrow(/terminal TradingView intent/);
+    await expect(db.query(`UPDATE "OrderIntent" SET status='received' WHERE id=$1`, [provenance.intentId])).rejects.toThrow(/terminal TradingView intent/);
     await db.query('BEGIN');
     try {
       const exitId = (await db.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","createdAt") SELECT $1,$2,$3,$4,2,$5,c."externalTradeCycleRef",$6,1,$7,c.id,'EXIT_LONG','EXE','15m',now(),$8,now() FROM "ExternalSignalTradeCycle" c WHERE c.id=$9 RETURNING id`, [sourceId, bindingId, strategyId, securityId, `exit:${randomUUID()}`, randomUUID(), revisionId, 'd'.repeat(64), provenance.cycleId])).rows[0].id;
       await db.query(`INSERT INTO "ExternalSignalCorrelationWork" ("signalId",status,"attemptCount","nextAttemptAt","createdAt","updatedAt") VALUES ($1,'PENDING',0,now(),now(),now())`, [exitId]);
       await db.query('COMMIT');
     } catch (error) { await db.query('ROLLBACK'); throw error; }
-    await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [provenance.intentId, provenance.accountCycleId, provenance.cycleId, provenance.signalId, provenance.routeId, authorizationId, executeGenerationId, '0'.repeat(64), provenance.clientOrderId])).rejects.toThrow(/accepted EXIT preempts|lifecycle is not admissible/);
+    await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [provenance.intentId, provenance.accountCycleId, provenance.cycleId, provenance.signalId, provenance.routeId, authorizationId, executeGenerationId, '0'.repeat(64), provenance.clientOrderId])).rejects.toThrow(/accepted EXIT preempts|lifecycle is not admissible|initial execution identity is invalid/);
     await db.query(`UPDATE "ExternalSignalTradeCycleAccount" SET status='BLOCKED' WHERE id=$1`, [provenance.accountCycleId]);
-    await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [provenance.intentId, provenance.accountCycleId, provenance.cycleId, provenance.signalId, provenance.routeId, authorizationId, executeGenerationId, '0'.repeat(64), provenance.clientOrderId])).rejects.toThrow(/lifecycle is not admissible/);
+    await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [provenance.intentId, provenance.accountCycleId, provenance.cycleId, provenance.signalId, provenance.routeId, authorizationId, executeGenerationId, '0'.repeat(64), provenance.clientOrderId])).rejects.toThrow(/lifecycle is not admissible|initial execution identity is invalid/);
     await db.query(`UPDATE "ExternalSignalTradeCycleAccount" SET status='TERMINAL_NO_EXPOSURE',"terminalAt"=now(),"terminalReasonCode"='HOSTILE_TEST',"noExposureProof"='ENTRY_REJECTED_WITHOUT_INTENT' WHERE id=$1`, [provenance.accountCycleId]);
     await db.query(`UPDATE "ExternalSignalTradeCycle" SET status='TERMINAL_NO_EXPOSURE',"terminalAt"=now(),"terminalReasonCode"='HOSTILE_TEST' WHERE id=$1`, [provenance.cycleId]);
-    await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [provenance.intentId, provenance.accountCycleId, provenance.cycleId, provenance.signalId, provenance.routeId, authorizationId, executeGenerationId, '0'.repeat(64), provenance.clientOrderId])).rejects.toThrow(/lifecycle is not admissible/);
+    await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9)`, [provenance.intentId, provenance.accountCycleId, provenance.cycleId, provenance.signalId, provenance.routeId, authorizationId, executeGenerationId, '0'.repeat(64), provenance.clientOrderId])).rejects.toThrow(/lifecycle is not admissible|initial execution identity is invalid/);
   });
 
   it('invalidates on exact identity supersession and preserves history', async () => {

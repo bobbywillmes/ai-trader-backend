@@ -264,6 +264,10 @@ The following work remains explicitly carried forward and is not completed by C2
 - Revalidate the current `submitting` intent and active exposure claim immediately before dispatch.
 - Harden the production application database role to least privilege; superuser-style privileges are
   not an acceptable broker-system defense boundary. This checkpoint adds no role migration.
+- Reconcile broker evidence discovered after an earlier verified release through an authoritative
+  Operational Attention workflow; ordinary C2 processing must neither discard it nor reopen ownership.
+- Audit every C3 dispatch and broker-evidence writer for the same claim-row serialization protocol
+  before any adapter capability is enabled.
 
 C2 remains inert: its typed entrypoint is unscheduled, the ordinary worker excludes marked intents,
 and it creates neither final-dispatch consumption, adapter invocation, broker mutation, SELL, nor
