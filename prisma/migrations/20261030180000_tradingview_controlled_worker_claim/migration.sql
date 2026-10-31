@@ -69,7 +69,7 @@ END $$;
 -- C2 code paths that owns that exact claim. Unclaimed refusal evidence is accepted only after the
 -- pending intent has been atomically closed and while no worker claim exists.
 CREATE FUNCTION external_signal_c2_not_sent_evidence_guard() RETURNS trigger LANGUAGE plpgsql AS $$
-DECLARE intent_id integer; intent_status text; marked boolean; worker_id integer; claim_event_id integer; producer text; evidence_worker_id integer;
+DECLARE intent_id integer; intent_status text; marked boolean; worker_id integer; claim_event_id integer; producer text; evidence_worker_id integer; contradictory boolean;
 BEGIN
   IF NEW."eventType"<>'NOT_SENT_EVIDENCE_RECORDED' THEN RETURN NEW; END IF;
   SELECT ec."orderIntentId",i.status,(i."externalSignalAccountCycleId" IS NOT NULL)
@@ -77,6 +77,14 @@ BEGIN
   IF NOT coalesce(marked,false) THEN RETURN NEW; END IF;
   SELECT id INTO worker_id FROM "ExternalSignalBrokerWorkerClaim" WHERE "orderIntentId"=intent_id;
   producer := NEW."evidenceJson"->>'producer';
+  contradictory := EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=NEW."claimId" AND e."eventType" IN ('ADAPTER_INVOCATION_STARTED','DISPATCH_OUTCOME_RECORDED','BROKER_DELIVERY_UNCERTAIN'))
+    OR EXISTS (SELECT 1 FROM "ExternalSignalBrokerDispatchConsumption" c WHERE c."orderIntentId"=intent_id)
+    OR EXISTS (SELECT 1 FROM "MarketPolicyBrokerDispatchConsumption" c WHERE c."orderIntentId"=intent_id)
+    OR EXISTS (SELECT 1 FROM "MarketPolicyBrokerUnenforcedDispatch" c WHERE c."orderIntentId"=intent_id)
+    OR EXISTS (SELECT 1 FROM "BrokerOrder" bo WHERE bo."orderIntentId"=intent_id)
+    OR EXISTS (SELECT 1 FROM "BrokerActivity" ba WHERE ba."orderIntentId"=intent_id)
+    OR EXISTS (SELECT 1 FROM "OrderIntentBrokerOpportunityEvent" oe WHERE oe."orderIntentId"=intent_id AND oe."eventType" NOT IN ('OPPORTUNITY_CAPTURED','DEFERRED','MISSING_OBSERVATION'));
+  IF contradictory THEN RAISE EXCEPTION 'TradingView not-sent evidence contradicts persisted dispatch or broker evidence'; END IF;
   IF worker_id IS NULL THEN
     IF intent_status NOT IN ('blocked','failed') OR producer<>'TRADINGVIEW_C2_PRECLAIM_REFUSAL' THEN
       RAISE EXCEPTION 'unclaimed TradingView not-sent evidence requires its closed pre-claim refusal';
@@ -121,6 +129,7 @@ BEGIN
     OR EXISTS (SELECT 1 FROM "OrderIntentBrokerOpportunityEvent" oe WHERE oe."orderIntentId"=NEW."orderIntentId" AND oe."eventType" NOT IN ('OPPORTUNITY_CAPTURED','DEFERRED','MISSING_OBSERVATION'))
     OR EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=NEW.id AND e."eventType"='ADAPTER_INVOCATION_STARTED');
   IF consumed AND (NEW.status IS DISTINCT FROM OLD.status OR NEW."releasedAt" IS DISTINCT FROM OLD."releasedAt" OR NEW."trackedPositionId" IS DISTINCT FROM OLD."trackedPositionId") THEN RAISE EXCEPTION 'consumed TradingView exposure cannot use pre-dispatch recovery; lifecycle is quarantined pending C3 validated broker evidence'; END IF;
+  IF NEW.status='RELEASED' AND OLD.status IS DISTINCT FROM 'RELEASED' AND intent_status IN ('received','pending') THEN RAISE EXCEPTION 'TradingView exposure cannot be released while its intent remains executable'; END IF;
   IF OLD.status='ENTRY_PENDING' AND NEW.status='ENTRY_SUBMITTING' AND NOT worker_claimed THEN RAISE EXCEPTION 'TradingView ENTRY_SUBMITTING transition requires its immutable worker claim'; END IF;
   IF worker_claimed AND OLD.status='ENTRY_PENDING' AND NEW.status IS DISTINCT FROM OLD.status AND NEW.status<>'ENTRY_SUBMITTING' THEN RAISE EXCEPTION 'claimed TradingView exposure must enter ENTRY_SUBMITTING atomically'; END IF;
   IF worker_claimed AND OLD.status='ENTRY_SUBMITTING' AND NEW.status IN ('ENTRY_PENDING','ADMISSION_BLOCKED') THEN RAISE EXCEPTION 'claimed TradingView exposure cannot return to a pre-claim state'; END IF;

@@ -116,13 +116,62 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await expect(db.query(`INSERT INTO "ExternalSignalEntryExecutionAuthorization" ("rolloutGenerationId","authorizationSequence",status,"tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId","signalSourceId","strategySignalBindingId","strategySignalRevisionId","strategyRevision","accountHolderUserId","assignmentFingerprint","sourceFingerprint","authorizationFingerprint","authorizedByUserId","grantReason") SELECT id,1,'AUTHORIZED',$1,$2,$3,$4,$5,$6,$7,1,$8,$9,$9,$9,$8,'forged shadow' FROM "ExternalSignalExecutionRolloutGeneration" WHERE "authorityMode"='SHADOW'`, [paperId, assignmentId, subscriptionId, securityId, sourceId, bindingId, revisionId, ownerId, '0'.repeat(64)])).rejects.toThrow(/rollout is not active/);
   });
 
-  it('replays the accepted schema through 4A.2C1 without Prisma drift', () => {
+  it('replays the accepted schema through 4A.2C2 without Prisma drift', () => {
     const result = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code'], {
       env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8', timeout: 60_000,
     });
     expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
     expect(result.stdout).toContain('No difference detected');
   }, 70_000);
+
+  it('classifies both real PostgreSQL 40001 commit orderings from Prisma structured metadata', async () => {
+    await db.query(`CREATE TABLE IF NOT EXISTS c2_serialization_probe (id integer PRIMARY KEY, value integer NOT NULL)`);
+    await db.query(`INSERT INTO c2_serialization_probe (id,value) VALUES (1,0) ON CONFLICT (id) DO UPDATE SET value=0`);
+    const classify = (await import('../../services/external-signal-broker-worker.service.js')).retryableConcurrencyFailure;
+    for (const winnerFirst of [true, false]) {
+      const first = new Client({ connectionString: databaseUrl });
+      const second = new Client({ connectionString: databaseUrl });
+      await first.connect(); await second.connect();
+      try {
+        await first.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+        await second.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
+        await first.query(`SELECT value FROM c2_serialization_probe WHERE id=1`);
+        await second.query(`SELECT value FROM c2_serialization_probe WHERE id=1`);
+        const winner = winnerFirst ? first : second;
+        const loser = winnerFirst ? second : first;
+        await winner.query(`UPDATE c2_serialization_probe SET value=value+1 WHERE id=1`);
+        await winner.query('COMMIT');
+        let sqlState: string | null = null;
+        try { await loser.query(`UPDATE c2_serialization_probe SET value=value+1 WHERE id=1`); }
+        catch (error) { sqlState = (error as { code?: string }).code ?? null; }
+        expect(sqlState).toBe('40001');
+        expect(classify({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: sqlState } } } })).toBe(true);
+        await loser.query('ROLLBACK');
+      } finally { await first.end(); await second.end(); }
+    }
+  });
+
+  it('classifies a genuine PostgreSQL 40P01 but not an application P0001', async () => {
+    await db.query(`CREATE TABLE IF NOT EXISTS c2_deadlock_probe (id integer PRIMARY KEY, value integer NOT NULL)`);
+    await db.query(`INSERT INTO c2_deadlock_probe (id,value) VALUES (1,0),(2,0) ON CONFLICT (id) DO UPDATE SET value=0`);
+    const first = new Client({ connectionString: databaseUrl });
+    const second = new Client({ connectionString: databaseUrl });
+    await first.connect(); await second.connect();
+    try {
+      await first.query('BEGIN'); await second.query('BEGIN');
+      await first.query(`UPDATE c2_deadlock_probe SET value=value+1 WHERE id=1`);
+      await second.query(`UPDATE c2_deadlock_probe SET value=value+1 WHERE id=2`);
+      const firstWait = first.query(`UPDATE c2_deadlock_probe SET value=value+1 WHERE id=2`);
+      await new Promise(resolve => setTimeout(resolve, 25));
+      const outcomes = await Promise.allSettled([firstWait, second.query(`UPDATE c2_deadlock_probe SET value=value+1 WHERE id=1`)]);
+      const deadlock = outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult | undefined;
+      expect((deadlock?.reason as { code?: string })?.code).toBe('40P01');
+      const classify = (await import('../../services/external-signal-broker-worker.service.js')).retryableConcurrencyFailure;
+      expect(classify({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40P01' } } } })).toBe(true);
+      expect(classify({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: 'P0001', originalMessage: 'deadlock detected' } } } })).toBe(false);
+      await first.query('ROLLBACK').catch(() => undefined); await second.query('ROLLBACK').catch(() => undefined);
+    } finally { await first.end(); await second.end(); }
+  });
 
   it('requires explicit activation and serializes rollout transitions', async () => {
     const svc = await import('../../services/external-signal-execution-authority.service.js');
@@ -531,6 +580,19 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerWorkerClaim" WHERE id=$1`, [claimId])).rows[0].n).toBe(1);
     expect((await db.query(`SELECT status FROM "OrderIntent" WHERE id=$1`, [intent.id])).rows[0].status).toBe('pending');
     expect((await db.query(`SELECT status FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].status).toBe('ENTRY_PENDING');
+    await expect(db.query(`UPDATE "EntryExposureClaim" SET status='RELEASED',"releasedAt"=now(),"releaseReason"='hostile pending release' WHERE "orderIntentId"=$1`, [intent.id])).rejects.toThrow(/cannot be released while its intent remains executable/);
+  });
+
+  it.each(['ADAPTER_INVOCATION_STARTED', 'DISPATCH_OUTCOME_RECORDED'] as const)('rejects claimed not-sent evidence after contradictory %s evidence', async eventType => {
+    await db.query('BEGIN');
+    try {
+      await db.query(`UPDATE "EntryExposureClaim" SET status='ENTRY_SUBMITTING' WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId]);
+      const exposureId = (await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].id;
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'WORKER_CLAIMED_FOR_SUBMISSION',$2)`, [exposureId, JSON.stringify({ markerProtocol: 'ADAPTER_MARKER_V1', workerClaimId: validWorkerClaim.id })]);
+      await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [validWorkerClaim.intentId]);
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,$2,'{}')`, [exposureId, eventType]);
+      await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [exposureId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: validWorkerClaim.id })])).rejects.toThrow(/contradicts persisted dispatch or broker evidence/);
+    } finally { await db.query('ROLLBACK'); }
   });
 
   it('interprets timestamp-without-time-zone dispatch evidence as UTC and freezes marked intent creation time', async () => {
@@ -576,6 +638,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].n).toBe(1);
     expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].n).toBe(1);
     expect((await db.query(`SELECT (SELECT count(*) FROM "BrokerOrder" WHERE "orderIntentId"=$1)::int orders,(SELECT count(*) FROM "BrokerActivity" WHERE "orderIntentId"=$1)::int activities`, [validWorkerClaim.intentId])).rows[0]).toEqual({ orders: 0, activities: 0 });
+    const consumedExposureId = (await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].id;
+    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [consumedExposureId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: validWorkerClaim.id })])).rejects.toThrow(/contradicts persisted dispatch or broker evidence/);
     await expect(db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/consumed TradingView dispatch/);
     await expect(db.query(`UPDATE "OrderIntent" SET status='blocked',"blockReason"='definitely-not-sent' WHERE id=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/consumed TradingView dispatch/);
     await expect(db.query(`UPDATE "OrderIntent" SET status='failed',"blockReason"='definitely-not-sent' WHERE id=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/consumed TradingView dispatch/);

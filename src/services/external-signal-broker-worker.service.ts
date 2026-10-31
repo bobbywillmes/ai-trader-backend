@@ -14,10 +14,25 @@ const SERIALIZATION_RETRIES = 2;
 export type TradingViewC2WorkerResult = { outcome: 'NOT_CLAIMED' | 'LOST_REFUSAL_RACE' } | { outcome: 'RISK_DENIED'; reason: string } | { outcome: 'C2_DISPATCH_REFUSED' };
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
-const retryableConcurrencyFailure = (error: unknown) => {
+const record = (value: unknown): Record<string, unknown> | null => value != null && typeof value === 'object' ? value as Record<string, unknown> : null;
+const sqlStateFromPrismaError = (error: unknown) => {
+  const root = record(error);
+  const meta = record(root?.meta);
+  const driver = record(meta?.driverAdapterError);
+  const cause = record(driver?.cause);
+  const metaCause = record(meta?.cause);
+  // Prisma adapters expose the server SQLSTATE through driverAdapterError.cause.originalCode.
+  // P2010 from raw queries may instead expose meta.code. Only exact PostgreSQL codes count;
+  // free-form messages are deliberately excluded from authority over retries.
+  for (const value of [cause?.originalCode, cause?.code, metaCause?.originalCode, metaCause?.code, meta?.code]) {
+    if (typeof value === 'string' && /^[0-9A-Z]{5}$/.test(value)) return value;
+  }
+  return null;
+};
+export const retryableConcurrencyFailure = (error: unknown) => {
   const code = errorCode(error);
-  const text = errorMessage(error);
-  return code === 'P2034' || (code === 'P2010' && /(?:SQLSTATE\s*)?40P01|deadlock detected/i.test(text));
+  if (code === 'P2034') return true;
+  return code === 'P2010' && ['40001', '40P01'].includes(sqlStateFromPrismaError(error) ?? '');
 };
 
 /** Explicit C2-only path. No scheduler calls it and every allowed candidate is refused before dispatch. */

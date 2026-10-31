@@ -261,6 +261,9 @@ The following work remains explicitly carried forward and is not completed by C2
 - Reconcile an exact existing broker order and unattributed broker exposure without guessing.
 - Commit the Market Intelligence and TradingView consumptions together in C3.
 - Add the broker adapter boundary and only validated broker/position lifecycle transitions.
+- Revalidate the current `submitting` intent and active exposure claim immediately before dispatch.
+- Harden the production application database role to least privilege; superuser-style privileges are
+  not an acceptable broker-system defense boundary. This checkpoint adds no role migration.
 
 C2 remains inert: its typed entrypoint is unscheduled, the ordinary worker excludes marked intents,
 and it creates neither final-dispatch consumption, adapter invocation, broker mutation, SELL, nor
