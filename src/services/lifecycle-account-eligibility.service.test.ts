@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { enumerateLifecycleAccounts } from './lifecycle-account-eligibility.service.js';
 
 const mocks = vi.hoisted(() => ({
+  tradingViewDeliveryAttention: vi.fn(async () => new Map<number, number>()),
   accountFindMany: vi.fn(),
   intentGroupBy: vi.fn(),
   positionGroupBy: vi.fn(),
@@ -12,6 +13,10 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('./entry-dispatch-recovery.service.js', () => ({
   summarizeTerminalClaimRecoveryByAccount: mocks.terminalClaimRecovery,
+}));
+
+vi.mock('./external-signal-delivery-attention.service.js', () => ({
+  summarizeTradingViewDeliveryAttentionDueByAccount: mocks.tradingViewDeliveryAttention,
 }));
 
 vi.mock('../db/prisma.js', () => ({
@@ -242,6 +247,17 @@ describe('lifecycle account eligibility', () => {
     expect(due).toMatchObject({ eligible: true, exposureSummary: { staleAdmissionClaimsDue: 1, staleAdmissionClaimsHeld: 1, hasLifecycleWork: true } });
     expect(waiting).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { staleAdmissionClaimsDue: 0, staleAdmissionClaimsHeld: 1 } });
     expect(credentialless).toMatchObject({ eligible: false, reason: 'credentials_unavailable_with_exposure', exposureSummary: { staleAdmissionClaimsHeld: 1 } });
+  });
+
+  it('schedules submitted-order recovery only while a TradingView delivery episode is due', async () => {
+    mocks.accountFindMany.mockResolvedValue([account()]);
+    mocks.tradingViewDeliveryAttention.mockResolvedValueOnce(new Map([[1, 1]]));
+    const [due] = await enumerateLifecycleAccounts('submitted_orders');
+    expect(due).toMatchObject({ eligible: true, exposureSummary: { tradingViewDeliveryAttentionDue: 1, hasLifecycleWork: true } });
+
+    mocks.tradingViewDeliveryAttention.mockResolvedValueOnce(new Map());
+    const [settled] = await enumerateLifecycleAccounts('submitted_orders');
+    expect(settled).toMatchObject({ eligible: false, reason: 'no_work_for_workflow', exposureSummary: { tradingViewDeliveryAttentionDue: 0 } });
   });
 
   it('schedules unfinished TradingView reconciliation after its exposure claim has been released', async () => {

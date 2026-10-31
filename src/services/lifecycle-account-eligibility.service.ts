@@ -12,6 +12,7 @@ import { accountWorkflowProcessInstanceId } from './trading-account-workflow-run
 import { recordTradingAccountWorkerAttempt } from './trading-account-worker-health.service.js';
 import type { WorkerKey } from '../workers/worker-health.definitions.js';
 import { summarizeTerminalClaimRecoveryByAccount } from './entry-dispatch-recovery.service.js';
+import { summarizeTradingViewDeliveryAttentionDueByAccount } from './external-signal-delivery-attention.service.js';
 
 export type LifecycleWorkflow =
   | 'pending_submissions'
@@ -56,6 +57,8 @@ export type LifecycleAccountEligibility = {
     staleAdmissionClaimsHeld: number;
     /** Terminal pre-dispatch TradingView intents whose account cycle still needs proof reconciliation. */
     tradingViewAdmissionReconciliations: number;
+    /** TradingView delivery-uncertainty episodes that need a first report, a change or a refresh. */
+    tradingViewDeliveryAttentionDue: number;
     hasLifecycleWork: boolean;
   };
 };
@@ -101,7 +104,7 @@ export async function enumerateLifecycleAccounts(
     },
   });
 
-  const [intentCounts, unresolvedExitCounts, terminalClaimRecovery, tradingViewAdmissionRecovery] = await Promise.all([
+  const [intentCounts, unresolvedExitCounts, terminalClaimRecovery, tradingViewAdmissionRecovery, tradingViewDeliveryAttention] = await Promise.all([
     prisma.orderIntent.groupBy({
       by: ['tradingAccountId', 'status'],
       where: {
@@ -143,6 +146,7 @@ export async function enumerateLifecycleAccounts(
       },
       _count: { _all: true },
     }),
+    summarizeTradingViewDeliveryAttentionDueByAccount(),
   ]);
 
   const countsByAccount = new Map<number, Record<string, number>>();
@@ -179,6 +183,7 @@ export async function enumerateLifecycleAccounts(
       staleAdmissionClaimsDue: terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0,
       staleAdmissionClaimsHeld: terminalClaimRecovery.get(account.id)?.staleAdmissionHeld ?? 0,
       tradingViewAdmissionReconciliations: tradingViewAdmissionRecoveryByAccount.get(account.id) ?? 0,
+      tradingViewDeliveryAttentionDue: tradingViewDeliveryAttention.get(account.id) ?? 0,
       hasLifecycleWork: account._count.orderIntents > 0 ||
         account._count.brokerOrders > 0 ||
         account._count.trackedPositions > 0 ||
@@ -186,7 +191,8 @@ export async function enumerateLifecycleAccounts(
         (unresolvedExitCountByAccount.get(account.id) ?? 0) > 0 ||
         (terminalClaimRecovery.get(account.id)?.actionableDue ?? 0) > 0 ||
         (terminalClaimRecovery.get(account.id)?.staleAdmissionDue ?? 0) > 0 ||
-        (tradingViewAdmissionRecoveryByAccount.get(account.id) ?? 0) > 0,
+        (tradingViewAdmissionRecoveryByAccount.get(account.id) ?? 0) > 0 ||
+        (tradingViewDeliveryAttention.get(account.id) ?? 0) > 0,
     };
     const usableCredentials =
       account.credential?.status === BrokerCredentialStatus.ACTIVE;
@@ -202,7 +208,8 @@ export async function enumerateLifecycleAccounts(
           exposureSummary.nonterminalOrders > 0 ||
           exposureSummary.terminalEntryClaimsDue > 0 ||
           exposureSummary.staleAdmissionClaimsDue > 0 ||
-          exposureSummary.tradingViewAdmissionReconciliations > 0
+          exposureSummary.tradingViewAdmissionReconciliations > 0 ||
+          exposureSummary.tradingViewDeliveryAttentionDue > 0
         : workflow === 'positions'
           ? exposureSummary.activePositions > 0 ||
             exposureSummary.nonterminalOrders > 0 ||

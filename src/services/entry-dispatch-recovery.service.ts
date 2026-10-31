@@ -766,6 +766,7 @@ export type TerminalClaimCandidate = {
   trackedPositionId: number | null;
   orderIntent: {
     id: number; status: string; clientOrderId: string | null; blockReason: string | null; rawRequestJson: Prisma.JsonValue;
+    tradingViewMarked?: boolean;
     consumptionId: number | null; dispatchDecisionId: number | null; dispatchDecisionOutcome: string | null;
     unenforcedDispatchId: number | null; unenforcedDispatchBasis: string | null; dispatchOpportunityEvents: number; brokerOrders: number;
   };
@@ -800,6 +801,9 @@ export function classifyTerminalEntryClaim(candidate: TerminalClaimCandidate, no
     state, automatic: AUTOMATIC_STATES.has(state), blocker, summary, basis, recordsPresent, ...extra,
   });
   if (intent.brokerOrders > 0 || candidate.trackedPositionId !== null) return result('PROTECTED_EXPOSURE', 'BROKER_ORDER_OR_POSITION_EVIDENCE');
+  // Possible delivery on a TradingView intent is never automatic in C3A: no outcome is inferred, no
+  // broker read runs and nothing is released. Its Operational Attention episode carries it to C3C.
+  if (intent.tradingViewMarked && (recordsPresent || summary.adapterMarkers > 0 || summary.dispatchOutcomes.length > 0)) return result('OPERATOR_INVESTIGATION', 'TRADINGVIEW_DELIVERY_UNCERTAIN');
   if (PRE_DISPATCH_CLAIM_STATUSES.includes(candidate.status)) {
     if (recordsPresent || summary.dispatchOutcomes.length) return result('AUTOMATIC_OUTCOME_RECORDING', 'DISPATCH_OUTCOME_NOT_RECORDED');
     if (evaluateNeverSubmittedRelease({ claimStatus: candidate.status, summary, blockReason: intent.blockReason }).proven) {
@@ -843,7 +847,7 @@ export async function loadTerminalClaimCandidates(args: { db?: PrismaClient; tra
       id: true, status: true, tradingAccountId: true, securityId: true, lastDiagnosedAt: true, trackedPositionId: true,
       security: { select: { symbol: true } },
       orderIntent: { select: {
-        id: true, status: true, clientOrderId: true, blockReason: true, rawRequestJson: true,
+        id: true, status: true, clientOrderId: true, blockReason: true, rawRequestJson: true, externalSignalAccountCycleId: true,
         marketPolicyBrokerDispatchConsumption: { select: { id: true, decision: { select: { id: true, outcome: true } } } },
         marketPolicyBrokerUnenforcedDispatch: { select: { id: true, basis: true } },
         _count: { select: { brokerOrders: true, brokerOpportunityEvents: { where: { eventType: { in: [...DISPATCH_OPPORTUNITY_EVENT_TYPES] } } } } },
@@ -866,6 +870,7 @@ export async function loadTerminalClaimCandidates(args: { db?: PrismaClient; tra
       symbol: claim.security.symbol, lastDiagnosedAt: claim.lastDiagnosedAt, trackedPositionId: claim.trackedPositionId,
       orderIntent: {
         id: intent.id, status: intent.status, clientOrderId: intent.clientOrderId, blockReason: intent.blockReason, rawRequestJson: intent.rawRequestJson,
+        tradingViewMarked: intent.externalSignalAccountCycleId !== null,
         consumptionId: intent.marketPolicyBrokerDispatchConsumption?.id ?? null,
         dispatchDecisionId: intent.marketPolicyBrokerDispatchConsumption?.decision.id ?? null,
         dispatchDecisionOutcome: intent.marketPolicyBrokerDispatchConsumption?.decision.outcome ?? null,
@@ -952,10 +957,14 @@ export const STALE_ADMISSION_THRESHOLD_MS = 15 * 60_000;
 export const STALE_ADMISSION_BATCH_LIMIT = 3;
 
 function staleAdmissionClaimWhere(now: Date, tradingAccountIds?: number[] | undefined): Prisma.EntryExposureClaimWhereInput {
+  const cutoff = new Date(now.getTime() - STALE_ADMISSION_THRESHOLD_MS);
   return {
     releasedAt: null, status: 'ENTRY_PENDING', trackedPositionId: null,
     ...(tradingAccountIds?.length ? { tradingAccountId: { in: tradingAccountIds } } : {}),
-    orderIntent: { is: { status: 'received', updatedAt: { lte: new Date(now.getTime() - STALE_ADMISSION_THRESHOLD_MS) } } },
+    orderIntent: { is: { status: 'received', updatedAt: { lte: cutoff } } },
+    // A TradingView claim must also satisfy the database's age rule, so it is not attempted while the
+    // not-sent guard would refuse it. Selection is advisory; the recovery transaction decides.
+    AND: [{ OR: [{ orderIntent: { is: { externalSignalAccountCycleId: null } } }, { acquiredAt: { lte: cutoff } }] }],
   };
 }
 
@@ -973,6 +982,11 @@ function staleAdmissionClaimWhere(now: Date, tradingAccountIds?: number[] | unde
  * after that commits does the shared never-submitted release run. Incomplete evidence retains the
  * claim with a deduplicated diagnostic and readiness keeps it visible as a stranded claim. Nothing is
  * requeued, resubmitted or placed; a pending intent is never touched.
+ *
+ * TradingView-marked admissions are eligible only when the PostgreSQL clock, read after the intent's
+ * row lock, shows both the claim's acquisition and the intent's last activity past the threshold.
+ * Terminalizing rewrites the intent's updatedAt, so only this transaction can judge its activity; the
+ * not-sent trigger can re-prove only the claim's age. A younger fact defers quietly to a later tick.
  */
 export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: number, now = new Date()) {
   // Also repairs a prior crash after claim release but before TradingView lifecycle terminalization.
@@ -986,6 +1000,7 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
   });
   let released = 0;
   let retained = 0;
+  let deferred = 0;
   const attempted: number[] = [];
   const failures: Array<{ claimId: number; error: string }> = [];
   for (const candidate of candidates) {
@@ -1003,10 +1018,16 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
         const claim = await tx.entryExposureClaim.findUnique({
           where: { id: candidate.id },
           select: { id: true, status: true, releasedAt: true, tradingAccountId: true, trackedPositionId: true, orderIntentId: true,
-            orderIntent: { select: { id: true, status: true, side: true, updatedAt: true, tradingAccountId: true, liveEntryAcceptanceRunId: true } } },
+            orderIntent: { select: { id: true, status: true, side: true, updatedAt: true, tradingAccountId: true, liveEntryAcceptanceRunId: true, externalSignalAccountCycleId: true } } },
         });
         if (!claim || claim.releasedAt) return { kind: 'GONE' as const };
         const intent = claim.orderIntent;
+        const marked = intent?.externalSignalAccountCycleId != null;
+        const databaseAge = marked ? (await tx.$queryRaw<Array<{ updated_at: Date; claim_elapsed: boolean; intent_elapsed: boolean }>>`
+          SELECT i."updatedAt" AS updated_at,
+            external_signal_stale_admission_elapsed(ec."acquiredAt", clock_timestamp()) AS claim_elapsed,
+            external_signal_stale_admission_elapsed(i."updatedAt", clock_timestamp()) AS intent_elapsed
+          FROM "EntryExposureClaim" ec JOIN "OrderIntent" i ON i.id=ec."orderIntentId" WHERE ec.id=${claim.id} FOR UPDATE OF i`)[0] : null;
         const [events, records, brokerOrders, brokerActivities] = await Promise.all([
           tx.entryExposureClaimEvent.findMany({
             where: { claimId: claim.id, eventType: { in: [...DELIVERY_EVIDENCE_EVENT_TYPES] } },
@@ -1022,7 +1043,7 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
           ...(claim.trackedPositionId !== null ? ['POSITION_ATTACHED'] : []),
           ...(!intent || claim.orderIntentId !== intent.id ? ['INTENT_MISSING'] : []),
           ...(intent && intent.status !== 'received' ? ['INTENT_NOT_RECEIVED'] : []),
-          ...(intent && intent.updatedAt > cutoff ? ['ADMISSION_RECENTLY_ACTIVE'] : []),
+          ...(intent && !marked && intent.updatedAt > cutoff ? ['ADMISSION_RECENTLY_ACTIVE'] : []),
           ...(intent && intent.side.trim().toLowerCase() !== 'buy' ? ['INTENT_NOT_BUY'] : []),
           ...(intent && (intent.tradingAccountId !== tradingAccountId || claim.tradingAccountId !== tradingAccountId) ? ['ACCOUNT_MISMATCH'] : []),
           // A LIVE acceptance execution is claimed on its run; only an operator may close it.
@@ -1038,8 +1059,9 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
           await appendEntryExposureClaimDiagnostic(claim.id, 'STALE_ADMISSION_RECOVERY_BLOCKED', json({ orderIntentId, blockers, executionAuthority: 'NONE' }), tx);
           return { kind: 'BLOCKED' as const, blockers };
         }
+        if (marked && !(databaseAge?.claim_elapsed && databaseAge.intent_elapsed)) return { kind: 'DEFERRED' as const };
         const failed = await tx.orderIntent.updateMany({
-          where: { id: orderIntentId, status: 'received', updatedAt: { lte: cutoff } },
+          where: { id: orderIntentId, status: 'received', updatedAt: marked ? databaseAge!.updated_at : { lte: cutoff } },
           data: { status: 'failed', blockReason: 'STALE_ADMISSION_NEVER_DISPATCHED: the admission did not complete and its intent never became executable; it was not requeued and a new entry requires a new admission decision.' },
         });
         if (failed.count !== 1) return { kind: 'BLOCKED' as const, blockers: ['INTENT_CHANGED'] };
@@ -1064,6 +1086,8 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
         }).catch(() => undefined);
       } else if (verdict.kind === 'BLOCKED') {
         retained += 1;
+      } else if (verdict.kind === 'DEFERRED') {
+        deferred += 1;
       }
     } catch (error) {
       retained += 1;
@@ -1072,7 +1096,7 @@ export async function recoverStaleAdmissionClaimsForAccount(tradingAccountId: nu
     }
   }
   const reconciliationAfter = await reconcileReleasedTradingViewAdmissionCyclesForAccount(tradingAccountId);
-  return { examined: candidates.length, attempted, released, retained, failures, reconciliationBefore, reconciliationAfter };
+  return { examined: candidates.length, attempted, released, retained, deferred, failures, reconciliationBefore, reconciliationAfter };
 }
 
 /**

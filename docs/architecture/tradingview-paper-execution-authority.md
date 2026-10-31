@@ -273,6 +273,146 @@ C2 remains inert: its typed entrypoint is unscheduled, the ordinary worker exclu
 and it creates neither final-dispatch consumption, adapter invocation, broker mutation, SELL, nor
 LIVE TradingView execution.
 
+## Phase 4A.2C3A dispatch safety hardening
+
+C3A closes the five safety findings carried from C2 acceptance. It is inert. It adds no broker
+capability, final-dispatch consumption, adapter invocation, scheduled TradingView execution, SELL or
+LIVE path. `processPendingOrdersForAccount` still excludes every marked intent, the typed entrypoint
+has no caller, and the `TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE` refusal remains the only allowed
+outcome. Migration `20261031120000_tradingview_dispatch_safety_hardening` is forward-only and replaces
+trigger functions. It adds no table or column, so the Prisma schema and DBML are unchanged.
+
+### Cross-isolation linearization
+
+Evidence and release linearize on the `EntryExposureClaim` row version. C2's `SELECT ... FOR UPDATE`
+serialized the writers but left the tuple unchanged, so a REPEATABLE READ or SERIALIZABLE release with
+an older snapshot committed without seeing the evidence. Writing any of the five delivery event types
+for a marked claim now also runs a value-preserving `UPDATE` of that claim, which creates a new tuple
+version without changing status, timestamps or diagnostics and without appending an event.
+
+| First to commit | Second transaction at READ COMMITTED | Second transaction at REPEATABLE READ or SERIALIZABLE |
+| --- | --- | --- |
+| Evidence | Release re-reads, and its guard refuses (`P0001`) | Release fails (`40001`) |
+| Release | Evidence re-reads `releasedAt` and refuses (`P0001`) | Evidence fails (`40001`) |
+
+A dedicated version column was not needed. No existing `EntryExposureClaim` trigger suppresses
+redundant updates or reacts to a no-op. The only other fact a stale reader could rely on, ownership
+uniqueness, is untouched. The guard also now refuses any release of a marked claim with possible-delivery
+evidence, with or without a worker claim. C2 enforced that only for `ENTRY_SUBMITTING` claims with a
+worker claim, so an unclaimed marked claim could commit both records even in one transaction.
+
+The acceptance matrix runs 3 event types, 4 interleavings and 5 isolation pairs (event/release: RC/RC,
+RC/RR, RC/SER, SER/RC, SER/SER), for 60 cases. It also runs the other 4 pairs (48 cases). The same harness
+against a database stopped at C2 finds exactly the 12 contradictions in the required 60.
+
+### Legacy lock-order compatibility
+
+The fence reads the origin before locking and returns immediately for an unmarked claim, which restores
+the foreign-key `FOR KEY SHARE` that ordinary PAPER/LIVE event writers had before C2. This removes the
+deadlock between an event-then-intent writer and an intent-then-event writer. Reading the origin without a
+lock leaves no time-of-check gap: the OrderIntent marker is insert-only, and the claim guard now forbids
+moving a claim onto or off a marked intent and freezes a marked claim's account, Security, owner key and
+timestamps.
+
+Lock order remains execution, then identity, then exposure. The fence takes a claim row only in
+transactions that already follow that order or take no earlier lock. `refuseAndRelease` now locks the
+intent before writing its evidence, matching the worker-claim guard's intent-before-claim order.
+
+### Stale-admission clock and age authority
+
+A marked admission is eligible only when, under its row lock in the serialized recovery transaction,
+both facts have passed `STALE_ADMISSION_THRESHOLD_MS` (15 minutes) by the PostgreSQL clock:
+
+- `EntryExposureClaim.acquiredAt`: how long the claim has been held.
+- `OrderIntent.updatedAt`: when the admission last showed activity.
+
+`external_signal_stale_admission_elapsed` is the one age rule. It interprets the Prisma-managed
+timestamp-without-time-zone value as UTC, so the result does not depend on the session zone or its DST
+rules. Application selection is advisory and also filters on both facts. If the recovery transaction
+finds either fact younger, including because an application clock runs ahead, it defers to a later tick
+with no diagnostic or error. Unmarked claims keep their existing intent-age behavior.
+
+The not-sent trigger gives a narrower guarantee. Terminalizing has already rewritten `updatedAt` in the
+same transaction, so the trigger can prove only the claim's age; intent inactivity is decided by the
+recovery transaction. Non-send itself rests on structure, not on the age or on JSON: the claim never
+left `ENTRY_PENDING`, the state the broker boundary refuses, and no contradictory evidence exists.
+JSON `source`, `producer` and `proof` select a rule but authorize nothing. Backdating is closed at
+both ends: PostgreSQL stamps a marked claim's `acquiredAt` at insert, and the guard makes it immutable.
+
+### Delivery uncertainty and terminal integrity
+
+A marked claim with `ADAPTER_INVOCATION_STARTED`, `DISPATCH_OUTCOME_RECORDED`,
+`BROKER_DELIVERY_UNCERTAIN`, a paired consumption, a broker order or activity, or an attached position
+keeps its exposure, is never classified definitely not sent, and has exactly one active
+`TRADINGVIEW_C2_WORKER_RECOVERY_REQUIRED` attention with `AUTHORITATIVE_ONLY` resolution. This applies to
+any intent status. The scheduler picks an account up only for a first report, changed evidence or the
+60-second refresh. A repeat refreshes the episode without a new SystemEvent, and new evidence adds one
+`material_changed` event. The terminal sweep classifies these claims as `OPERATOR_INVESTIGATION`, so it
+infers no outcome, performs no broker read and attempts no release. Nothing resolves the episode because
+a local BrokerOrder or marker is absent. An account without usable credentials is not processed, so its
+episode is not opened until credentials return; the claim stays held and the account reports
+`credentials_unavailable_with_exposure`.
+
+`blocked` and `failed` are both final for a marked intent. Neither can become the other or become
+executable, and the status, `blockReason` and risk evidence that made it terminal are immutable,
+whether or not a worker claim or not-sent event exists. The first terminal transition is authoritative.
+
+### Database least-privilege design
+
+Observed runtime: the development role `trader` is `SUPERUSER`, `CREATEROLE`, `CREATEDB` and
+`BYPASSRLS`, and it owns every application object. `docker-compose.prod.yml` configures the same bootstrap
+user as the production `DATABASE_URL`; the live production role was not inspected in this checkpoint.
+
+**Pre-canary blocker:** a superuser or table owner can run `ALTER TABLE ... DISABLE TRIGGER` or set
+`session_replication_role`, so no trigger in this document is a defense boundary against that identity
+until cutover is complete. This must be closed before any broker-enabled canary.
+
+| Identity | Used by | Authority |
+| --- | --- | --- |
+| Bootstrap superuser | Break-glass administration only | Everything; no application or deployment credential |
+| `ai_trader_migrator` | `prisma migrate deploy` only | Owns the schema, may create trusted extensions; no superuser attribute |
+| `ai_trader_app` | Backend and workers | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, sequence use, PUBLIC function execution; owns nothing and cannot read `_prisma_migrations` |
+
+`docs/database/least-privilege-grants.sql` and `docs/database/least-privilege-cutover.sql` hold the
+grants and the ownership transfer. Trigger functions run as the invoker, so the application needs read
+access to every table they consult. `DELETE` stays because services use it today; narrowing it per table
+is possible later but is not needed for trigger integrity, because the evidence tables refuse it in
+triggers. Runtime source issues no DDL. `src/dev` and `scripts` tools and `src/db/seed.ts` are not runtime
+and should use the migrator or a dedicated role.
+
+Cutover, for a future maintenance window, not performed in C3A:
+
+1. Back up the database and confirm no broker-enabled execution is active.
+2. As superuser, create both roles with separately generated secrets.
+3. Stop the backend, then run the cutover script followed by the grants script as the migrator.
+4. Point `prisma migrate deploy` at the migrator URL and confirm that no migration is pending.
+5. Set the backend's `DATABASE_URL` to the application role, start it, and confirm that workers run, a
+   hostile `DISABLE TRIGGER` is denied, and no permission errors appear.
+
+Rollback: stop the backend, restore the previous `DATABASE_URL`, and start it. Superuser access still
+works against migrator-owned objects, and the roles and ownership can stay in place, so rollback needs no
+schema change. Retire the broad credential only after a soak period.
+
+### Checkpoint boundary
+
+- **C3A (this checkpoint):** database linearization, legacy lock compatibility, error classification,
+  stale-admission authority, terminal integrity, uncertainty attention, and the role design. Inert.
+- **C3B:** the final-dispatch transaction committing paired consumptions, broker-time 120-second
+  freshness, revalidating the current `submitting` intent and active claim, and a default-off adapter
+  boundary with validated markers. Every new evidence writer must use the claim-row protocol above.
+- **C3C:** authoritative broker-evidence reconciliation, exact existing-order and unattributed-exposure
+  handling, post-release discovery, the only release path for possible-delivery claims, and resolving
+  Operational Attention from that authoritative outcome.
+
+### Remaining pre-canary conditions
+
+The carry-forward register above stays open apart from the C3A items described in this section, and the
+least-privilege entry remains open until the production cutover is done. In addition:
+
+- Complete the least-privilege cutover and confirm the live production role.
+- Confirm a single writer for each PAPER broker account before any broker-enabled canary.
+- Apply this migration to persistent databases only after independent acceptance.
+
 ## Deployment and rollback floor
 
 The foundation migration is forward-only once EXECUTE generations, activation history, authorizations, or marked intents exist. Rolling application code back before Phase 4A.2A would remove recognition and quarantine of marked intents and is unsafe without a separately reviewed compatibility fix. This checkpoint does not apply or activate the migration.

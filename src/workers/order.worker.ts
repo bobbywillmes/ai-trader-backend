@@ -68,6 +68,7 @@ import {
 import { isSellIntent } from '../services/entry-lifecycle-status.service.js';
 import { submittedOrderSyncIntentWhere } from '../services/submitted-order-sync-selection.service.js';
 import { recoverTradingViewC2Claim } from '../services/external-signal-broker-worker.service.js';
+import { observeTradingViewDeliveryUncertaintyForAccount } from '../services/external-signal-delivery-attention.service.js';
 
 export type SubmittedOrderSyncResult = {
   found: number;
@@ -516,8 +517,16 @@ export async function recoverStaleSubmittingIntentsForAccount(
     admissionRecovery = { error: sanitizeError(error) };
     logger.warn({ tradingAccountId, error }, 'Stale entry admission recovery failed; it is retried on the next tick.');
   }
+  // TradingView delivery uncertainty on any intent status stays visible; nothing here releases it.
+  let deliveryAttention: Awaited<ReturnType<typeof observeTradingViewDeliveryUncertaintyForAccount>> | { error: string } | null = null;
+  try {
+    deliveryAttention = await observeTradingViewDeliveryUncertaintyForAccount(tradingAccountId, now);
+  } catch (error) {
+    deliveryAttention = { error: sanitizeError(error) };
+    logger.warn({ tradingAccountId, error }, 'TradingView delivery attention refresh failed; it is retried on the next tick.');
+  }
 
-  return { found: intents.length, linked, retryable, retained, failures, dispatchRecovery, admissionRecovery };
+  return { found: intents.length, linked, retryable, retained, failures, dispatchRecovery, admissionRecovery, deliveryAttention };
 }
 
 export async function recoverStaleSubmittingIntents() {

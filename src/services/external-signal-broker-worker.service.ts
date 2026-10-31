@@ -6,6 +6,7 @@ import { getSizingEstimatedNotional } from './trading-account-entry-risk-usage.s
 import { recordOrderIntentRiskEvaluation } from './order-audit.service.js';
 import { appendNotSentEvidence, ADAPTER_MARKER_PROTOCOL, type NotSentProducer } from './entry-delivery-evidence.service.js';
 import { releaseUnsubmittedOrRouteToRecovery } from './entry-dispatch-recovery.service.js';
+import { observeTradingViewDeliveryUncertaintyForIntent } from './external-signal-delivery-attention.service.js';
 
 type Db = PrismaClient;
 const C2_REFUSAL = 'TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE';
@@ -15,17 +16,16 @@ export type TradingViewC2WorkerResult = { outcome: 'NOT_CLAIMED' | 'LOST_REFUSAL
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 const record = (value: unknown): Record<string, unknown> | null => value != null && typeof value === 'object' ? value as Record<string, unknown> : null;
+const RETRYABLE_SQLSTATES = ['40001', '40P01'];
 const sqlStateFromPrismaError = (error: unknown) => {
-  const root = record(error);
-  const meta = record(root?.meta);
+  const meta = record(record(error)?.meta);
   const driver = record(meta?.driverAdapterError);
   const cause = record(driver?.cause);
   const metaCause = record(meta?.cause);
   // Prisma adapters expose the server SQLSTATE through driverAdapterError.cause.originalCode.
   // P2010 from raw queries may instead expose meta.code. Only exact PostgreSQL codes count;
   // free-form messages are deliberately excluded from authority over retries.
-  const rootCause = record(root?.cause);
-  for (const value of [cause?.originalCode, cause?.code, metaCause?.originalCode, metaCause?.code, meta?.code, rootCause?.originalCode, rootCause?.code, root?.sqlState, root?.code]) {
+  for (const value of [cause?.originalCode, cause?.code, metaCause?.originalCode, metaCause?.code, meta?.code]) {
     if (typeof value === 'string' && /^[0-9A-Z]{5}$/.test(value)) return value;
   }
   return null;
@@ -33,8 +33,14 @@ const sqlStateFromPrismaError = (error: unknown) => {
 export const retryableConcurrencyFailure = (error: unknown) => {
   const code = errorCode(error);
   if (code === 'P2034') return true;
-  if (['40001', '40P01'].includes(code ?? '')) return true;
-  return code === 'P2010' && ['40001', '40P01'].includes(sqlStateFromPrismaError(error) ?? '');
+  if (RETRYABLE_SQLSTATES.includes(code ?? '')) return true;
+  if (code === 'P2010') return RETRYABLE_SQLSTATES.includes(sqlStateFromPrismaError(error) ?? '');
+  // A commit or ORM failure can reach the caller as the adapter's own unwrapped error. Only that exact
+  // error type qualifies, so an arbitrary error with a similar `cause` is never retried.
+  const root = record(error);
+  if (root?.name !== 'DriverAdapterError') return false;
+  const originalCode = record(root.cause)?.originalCode;
+  return typeof originalCode === 'string' && RETRYABLE_SQLSTATES.includes(originalCode);
 };
 
 /** Explicit C2-only path. No scheduler calls it and every allowed candidate is refused before dispatch. */
@@ -163,40 +169,41 @@ async function terminalizeUnclaimedRefusal(db: Db, orderIntentId: number, reason
 }
 
 async function refuseAndRelease(db: Db, orderIntentId: number, claimId: number, workerClaimId: number, reason: string, producer: NotSentProducer, message = reason) {
-  await db.$transaction(async tx => {
-    const existing = await tx.entryExposureClaimEvent.findFirst({ where: { claimId, eventType: 'NOT_SENT_EVIDENCE_RECORDED', evidenceJson: { path: ['workerClaimId'], equals: workerClaimId } }, select: { id: true } });
-    if (!existing) await appendNotSentEvidence(tx, { claimId, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer, source: 'WORKER', reason, message, workerClaimId });
-    const changed = await tx.orderIntent.updateMany({ where: { id: orderIntentId, status: 'submitting' }, data: { status: 'blocked', blockReason: reason } });
-    if (changed.count !== 1) {
-      const current = await tx.orderIntent.findUnique({ where: { id: orderIntentId }, select: { status: true } });
-      if (!current || !['blocked', 'failed'].includes(current.status)) throw new Error('TRADINGVIEW_C2_REFUSAL_LOST');
+  for (let attempt = 0; attempt <= SERIALIZATION_RETRIES; attempt += 1) {
+    try {
+      await db.$transaction(async tx => {
+        // Intent before claim: the worker-claim guard's order, which the evidence fence would otherwise invert.
+        await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id=${orderIntentId} FOR UPDATE`;
+        const existing = await tx.entryExposureClaimEvent.findFirst({ where: { claimId, eventType: 'NOT_SENT_EVIDENCE_RECORDED', evidenceJson: { path: ['workerClaimId'], equals: workerClaimId } }, select: { id: true } });
+        if (!existing) await appendNotSentEvidence(tx, { claimId, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer, source: 'WORKER', reason, message, workerClaimId });
+        const changed = await tx.orderIntent.updateMany({ where: { id: orderIntentId, status: 'submitting' }, data: { status: 'blocked', blockReason: reason } });
+        if (changed.count !== 1) {
+          const current = await tx.orderIntent.findUnique({ where: { id: orderIntentId }, select: { status: true } });
+          if (!current || !['blocked', 'failed'].includes(current.status)) throw new Error('TRADINGVIEW_C2_REFUSAL_LOST');
+        }
+      });
+      break;
+    } catch (error) {
+      if (retryableConcurrencyFailure(error) && attempt < SERIALIZATION_RETRIES) continue;
+      throw error;
     }
-  });
+  }
   await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason, source: 'WORKER', dispatchAttempted: false });
 }
 
 /** Scheduler-facing recovery for a C2 claim that crashed after ownership and before refusal. */
 export async function recoverTradingViewC2Claim(orderIntentId: number, options: { db?: Db } = {}) {
   const db = options.db ?? prisma;
-  const row = await db.orderIntent.findUnique({ where: { id: orderIntentId }, include: {
-    externalSignalBrokerWorkerClaim: true, externalSignalBrokerDispatchConsumption: true,
-    entryExposureClaim: { include: { events: true } }, brokerOrders: true, brokerActivities: true,
-  } });
+  const row = await db.orderIntent.findUnique({ where: { id: orderIntentId }, include: { externalSignalBrokerWorkerClaim: true, entryExposureClaim: { select: { id: true } } } });
   if (!row?.externalSignalBrokerWorkerClaim || row.status !== 'submitting' || !row.entryExposureClaim || row.tradingAccountId == null) return { outcome: 'NOT_APPLICABLE' as const };
-  const events = row.entryExposureClaim.events;
-  const adapter = events.some(event => event.eventType === 'ADAPTER_INVOCATION_STARTED');
-  const dispatchOutcome = events.some(event => event.eventType === 'DISPATCH_OUTCOME_RECORDED');
-  const contradictory = Boolean(row.externalSignalBrokerDispatchConsumption || adapter || dispatchOutcome || row.brokerOrders.length || row.brokerActivities.length || row.trackedPositionId);
-  if (contradictory) {
-    const activeKey = `TRADINGVIEW_C2_WORKER_RECOVERY:${orderIntentId}`;
-    await db.operationalAttention.upsert({ where: { activeKey }, create: {
-      tradingAccountId: row.tradingAccountId, orderIntentId, code: 'TRADINGVIEW_C2_WORKER_RECOVERY_REQUIRED', source: 'WORKER', status: 'OPEN', severity: 'ERROR',
-      title: 'TradingView C2 worker claim needs recovery', message: 'Worker ownership has dispatch or broker evidence that C2 cannot safely classify.',
-      detailsJson: { orderIntentId, pairedConsumption: Boolean(row.externalSignalBrokerDispatchConsumption), adapter, dispatchOutcome, brokerOrders: row.brokerOrders.length, brokerActivities: row.brokerActivities.length },
-      fingerprint: activeKey, activeKey, materialFingerprint: [adapter, dispatchOutcome, row.brokerOrders.length, row.brokerActivities.length].join('|'), resolutionPolicy: 'AUTHORITATIVE_ONLY',
-    }, update: { lastObservedAt: new Date() } });
-    return { outcome: 'OPERATIONAL_ATTENTION' as const };
+  if (await observeTradingViewDeliveryUncertaintyForIntent(orderIntentId, { db })) return { outcome: 'OPERATIONAL_ATTENTION' as const };
+  try {
+    await refuseAndRelease(db, orderIntentId, row.entryExposureClaim.id, row.externalSignalBrokerWorkerClaim.id, 'TRADINGVIEW_C2_STALE_PRE_DISPATCH_CLAIM', 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY');
+  } catch (error) {
+    // Evidence that committed after the read above makes the database refuse. That is the same
+    // episode, reported once, rather than a failure repeated on every scheduler tick.
+    if (await observeTradingViewDeliveryUncertaintyForIntent(orderIntentId, { db })) return { outcome: 'OPERATIONAL_ATTENTION' as const };
+    throw error;
   }
-  await refuseAndRelease(db, orderIntentId, row.entryExposureClaim.id, row.externalSignalBrokerWorkerClaim.id, 'TRADINGVIEW_C2_STALE_PRE_DISPATCH_CLAIM', 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY');
   return { outcome: 'DEFINITE_NOT_SENT' as const };
 }
