@@ -205,11 +205,13 @@ export async function appendNotSentEvidence(db: Db, args: {
   message?: string | null;
   /** The durable facts the producer relied on, recorded with the classification. */
   proof?: Record<string, unknown>;
+  /** Immutable C2 worker ownership. Required by PostgreSQL for claimed TradingView lifecycles. */
+  workerClaimId?: number;
 }) {
   return db.entryExposureClaimEvent.create({ data: { claimId: args.claimId, eventType: NOT_SENT_EVIDENCE_EVENT, evidenceJson: json({
     classification: args.classification, producer: args.producer, source: args.source, orderIntentId: args.orderIntentId,
     adapterInvocation: args.classification === 'NOT_SENT_PRE_DISPATCH' ? 'NOT_INVOKED' : 'LOCAL_GUARD_BEFORE_REQUEST',
     networkRequestIssued: false, reason: args.reason, message: args.message ? args.message.slice(0, 300) : null,
-    executionAuthority: 'NONE', ...(args.proof ? { proof: args.proof } : {}),
+    executionAuthority: 'NONE', ...(args.workerClaimId != null ? { workerClaimId: args.workerClaimId } : {}), ...(args.proof ? { proof: args.proof } : {}),
   }) } });
 }

@@ -11,12 +11,17 @@ type Db = PrismaClient;
 const C2_REFUSAL = 'TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE';
 const C2_MAX_SIGNAL_AGE_MS = 120_000;
 const SERIALIZATION_RETRIES = 2;
-export type TradingViewC2WorkerResult = { outcome: 'NOT_CLAIMED' } | { outcome: 'RISK_DENIED'; reason: string } | { outcome: 'C2_DISPATCH_REFUSED' };
+export type TradingViewC2WorkerResult = { outcome: 'NOT_CLAIMED' | 'LOST_REFUSAL_RACE' } | { outcome: 'RISK_DENIED'; reason: string } | { outcome: 'C2_DISPATCH_REFUSED' };
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
+const retryableConcurrencyFailure = (error: unknown) => {
+  const code = errorCode(error);
+  const text = errorMessage(error);
+  return code === 'P2034' || (code === 'P2010' && /(?:SQLSTATE\s*)?40P01|deadlock detected/i.test(text));
+};
 
 /** Explicit C2-only path. No scheduler calls it and every allowed candidate is refused before dispatch. */
-export async function processTradingViewOrderIntentForC2(orderIntentId: number, options: { db?: Db } = {}): Promise<TradingViewC2WorkerResult> {
+export async function processTradingViewOrderIntentForC2(orderIntentId: number, options: { db?: Db; beforeUnclaimedRefusal?: (reason: string) => Promise<void> } = {}): Promise<TradingViewC2WorkerResult> {
   const db = options.db ?? prisma;
   const candidate = await db.orderIntent.findUnique({ where: { id: orderIntentId }, include: {
     externalSignalOriginAccountCycle: { include: {
@@ -38,15 +43,17 @@ export async function processTradingViewOrderIntentForC2(orderIntentId: number, 
     assignment.tradingAccount.credential?.status !== 'ACTIVE' || !assignment.subscription.enabled || !assignment.subscription.security.enabled ||
     !assignment.subscription.strategy.enabled || !assignment.subscription.exitProfile.enabled || candidate.side.toLowerCase() !== 'buy' || rawInput.signalType === 'exit';
   if (prevalidationFailure) {
-    await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_C2_PRECLAIM_READINESS_REFUSED');
-    return { outcome: 'C2_DISPATCH_REFUSED' };
+    await options.beforeUnclaimedRefusal?.('TRADINGVIEW_C2_PRECLAIM_READINESS_REFUSED');
+    const refused = await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_C2_PRECLAIM_READINESS_REFUSED');
+    return { outcome: refused ? 'C2_DISPATCH_REFUSED' : 'LOST_REFUSAL_RACE' };
   }
   if (Date.now() - obligation.entrySignal.createdAt.getTime() > C2_MAX_SIGNAL_AGE_MS) {
-    await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_ENTRY_SIGNAL_EXPIRED');
-    return { outcome: 'C2_DISPATCH_REFUSED' };
+    await options.beforeUnclaimedRefusal?.('TRADINGVIEW_ENTRY_SIGNAL_EXPIRED');
+    const refused = await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_ENTRY_SIGNAL_EXPIRED');
+    return { outcome: refused ? 'C2_DISPATCH_REFUSED' : 'LOST_REFUSAL_RACE' };
   }
 
-  let claimed: { claim: { id: number } } | null = null;
+  let claimed: { claim: { id: number }; workerClaimId: number } | null = null;
   for (let attempt = 0; attempt <= SERIALIZATION_RETRIES; attempt += 1) {
     try {
       claimed = await db.$transaction(async tx => {
@@ -67,20 +74,21 @@ export async function processTradingViewOrderIntentForC2(orderIntentId: number, 
         await tx.entryExposureClaimEvent.create({ data: { claimId: claim.id, eventType: 'WORKER_CLAIMED_FOR_SUBMISSION', evidenceJson: { markerProtocol: ADAPTER_MARKER_PROTOCOL, workerClaimId: workerClaim.id, executionMode: 'TRADINGVIEW_C2_NON_EXECUTABLE' } } });
         const intent = await tx.orderIntent.updateMany({ where: { id: candidate.id, status: 'pending' }, data: { status: 'submitting' } });
         if (intent.count !== 1) throw new Error('TRADINGVIEW_WORKER_CLAIM_LOST');
-        return { claim: { id: claim.id } };
+        return { claim: { id: claim.id }, workerClaimId: workerClaim.id };
       }, { isolationLevel: 'Serializable' });
       break;
     } catch (error) {
       if (errorCode(error) === 'P2002') return { outcome: 'NOT_CLAIMED' };
-      if (errorCode(error) === 'P2034' && attempt < SERIALIZATION_RETRIES) continue;
-      if (errorCode(error) === 'P2034') {
+      if (retryableConcurrencyFailure(error) && attempt < SERIALIZATION_RETRIES) continue;
+      if (retryableConcurrencyFailure(error)) {
         const winner = await db.externalSignalBrokerWorkerClaim.findUnique({ where: { orderIntentId } });
         if (winner) return { outcome: 'NOT_CLAIMED' };
       }
       if (await db.externalSignalBrokerWorkerClaim.findUnique({ where: { orderIntentId } }).catch(() => null)) return { outcome: 'NOT_CLAIMED' };
       if (/TradingView worker claim lacks current post-activation authority/.test(errorMessage(error))) {
-        await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_C2_CLAIM_AUTHORITY_REFUSED');
-        return { outcome: 'C2_DISPATCH_REFUSED' };
+        await options.beforeUnclaimedRefusal?.('TRADINGVIEW_C2_CLAIM_AUTHORITY_REFUSED');
+        const refused = await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_C2_CLAIM_AUTHORITY_REFUSED');
+        return { outcome: refused ? 'C2_DISPATCH_REFUSED' : 'LOST_REFUSAL_RACE' };
       }
       throw error;
     }
@@ -94,31 +102,53 @@ export async function processTradingViewOrderIntentForC2(orderIntentId: number, 
     await recordOrderIntentRiskEvaluation({ orderIntentId: candidate.id, allowed: risk.allowed, reason: risk.allowed ? null : risk.reason, details: risk.details });
     if (!risk.allowed) {
       await logRiskGateBlockedOrder({ orderIntentId: candidate.id, tradingAccountId: candidate.tradingAccountId, input: resolved, result: risk });
-      await refuseAndRelease(db, candidate.id, claimed.claim.id, risk.reason, 'TRADINGVIEW_C2_RISK_REFUSAL');
+      await refuseAndRelease(db, candidate.id, claimed.claim.id, claimed.workerClaimId, risk.reason, 'TRADINGVIEW_C2_RISK_REFUSAL');
       return { outcome: 'RISK_DENIED', reason: risk.reason };
     }
-    await refuseAndRelease(db, candidate.id, claimed.claim.id, C2_REFUSAL, 'TRADINGVIEW_C2_DISPATCH_UNAVAILABLE');
+    await refuseAndRelease(db, candidate.id, claimed.claim.id, claimed.workerClaimId, C2_REFUSAL, 'TRADINGVIEW_C2_DISPATCH_UNAVAILABLE');
     return { outcome: 'C2_DISPATCH_REFUSED' };
   } catch (error) {
-    await refuseAndRelease(db, candidate.id, claimed.claim.id, 'TRADINGVIEW_C2_POST_CLAIM_FAILURE', 'WORKER_PRE_BOUNDARY_FAILURE', errorMessage(error));
+    await refuseAndRelease(db, candidate.id, claimed.claim.id, claimed.workerClaimId, 'TRADINGVIEW_C2_POST_CLAIM_FAILURE', 'WORKER_PRE_BOUNDARY_FAILURE', errorMessage(error));
     return { outcome: 'C2_DISPATCH_REFUSED' };
   }
 }
 
 async function terminalizeUnclaimedRefusal(db: Db, orderIntentId: number, reason: string) {
-  const claim = await db.entryExposureClaim.findUnique({ where: { orderIntentId }, select: { id: true } });
-  if (!claim) return;
-  await db.$transaction(async tx => {
-    await appendNotSentEvidence(tx, { claimId: claim.id, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRECLAIM_REFUSAL', source: 'WORKER', reason, message: reason });
-    await tx.orderIntent.updateMany({ where: { id: orderIntentId, status: 'pending', externalSignalBrokerWorkerClaim: null }, data: { status: 'blocked', blockReason: reason } });
-  });
-  await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason, source: 'WORKER', dispatchAttempted: false });
+  for (let attempt = 0; attempt <= SERIALIZATION_RETRIES; attempt += 1) {
+    try {
+      const terminalized = await db.$transaction(async tx => {
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
+        const rows = await tx.$queryRaw<Array<{ claim_id: number }>>`
+          SELECT ec.id AS claim_id FROM "OrderIntent" i
+          JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id
+          WHERE i.id=${orderIntentId} AND i.status='pending'
+            AND NOT EXISTS (SELECT 1 FROM "ExternalSignalBrokerWorkerClaim" wc WHERE wc."orderIntentId"=i.id)
+            AND ec.status='ENTRY_PENDING' AND ec."releasedAt" IS NULL
+          FOR UPDATE OF i,ec`;
+        if (rows.length !== 1) return false;
+        const changed = await tx.orderIntent.updateMany({
+          where: { id: orderIntentId, status: 'pending', externalSignalBrokerWorkerClaim: null },
+          data: { status: 'blocked', blockReason: reason },
+        });
+        if (changed.count !== 1) throw new Error('TRADINGVIEW_C2_REFUSAL_FENCE_LOST');
+        await appendNotSentEvidence(tx, { claimId: rows[0]!.claim_id, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRECLAIM_REFUSAL', source: 'WORKER', reason, message: reason });
+        return true;
+      }, { isolationLevel: 'Serializable' });
+      if (!terminalized) return false;
+      await releaseUnsubmittedOrRouteToRecovery({ orderIntentId, reason, source: 'WORKER', dispatchAttempted: false });
+      return true;
+    } catch (error) {
+      if (retryableConcurrencyFailure(error) && attempt < SERIALIZATION_RETRIES) continue;
+      throw error;
+    }
+  }
+  return false;
 }
 
-async function refuseAndRelease(db: Db, orderIntentId: number, claimId: number, reason: string, producer: NotSentProducer, message = reason) {
+async function refuseAndRelease(db: Db, orderIntentId: number, claimId: number, workerClaimId: number, reason: string, producer: NotSentProducer, message = reason) {
   await db.$transaction(async tx => {
-    const existing = await tx.entryExposureClaimEvent.findFirst({ where: { claimId, eventType: 'NOT_SENT_EVIDENCE_RECORDED' }, select: { id: true } });
-    if (!existing) await appendNotSentEvidence(tx, { claimId, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer, source: 'WORKER', reason, message });
+    const existing = await tx.entryExposureClaimEvent.findFirst({ where: { claimId, eventType: 'NOT_SENT_EVIDENCE_RECORDED', evidenceJson: { path: ['workerClaimId'], equals: workerClaimId } }, select: { id: true } });
+    if (!existing) await appendNotSentEvidence(tx, { claimId, orderIntentId, classification: 'NOT_SENT_PRE_DISPATCH', producer, source: 'WORKER', reason, message, workerClaimId });
     const changed = await tx.orderIntent.updateMany({ where: { id: orderIntentId, status: 'submitting' }, data: { status: 'blocked', blockReason: reason } });
     if (changed.count !== 1) {
       const current = await tx.orderIntent.findUnique({ where: { id: orderIntentId }, select: { status: true } });
@@ -150,6 +180,6 @@ export async function recoverTradingViewC2Claim(orderIntentId: number, options: 
     }, update: { lastObservedAt: new Date() } });
     return { outcome: 'OPERATIONAL_ATTENTION' as const };
   }
-  await refuseAndRelease(db, orderIntentId, row.entryExposureClaim.id, 'TRADINGVIEW_C2_STALE_PRE_DISPATCH_CLAIM', 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY');
+  await refuseAndRelease(db, orderIntentId, row.entryExposureClaim.id, row.externalSignalBrokerWorkerClaim.id, 'TRADINGVIEW_C2_STALE_PRE_DISPATCH_CLAIM', 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY');
   return { outcome: 'DEFINITE_NOT_SENT' as const };
 }

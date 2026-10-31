@@ -217,7 +217,7 @@ application changes `pending` to `submitting`, changes the existing claim from `
 `ENTRY_SUBMITTING`, and appends `WORKER_CLAIMED_FOR_SUBMISSION`. Database triggers require the
 immutable worker claim for both state changes. A rollback at any point removes all four writes.
 
-C2 reuses assignment resolution and centralized `evaluateOrderRisk` with the current intent
+C2 uses the frozen account-cycle assignment identity and centralized `evaluateOrderRisk` with the current intent
 excluded from exposure accounting. It never re-sizes the admitted order. A denial records the
 ordinary risk evidence and durable pre-dispatch not-sent evidence before the shared claim-release
 path runs. An allowed result is handled identically with the explicit
@@ -240,6 +240,31 @@ no adapter marker exists: consumption itself means delivery may have started, bu
 any broker status. C3 may replace this complete quarantine only with narrowly validated,
 broker-evidence-backed transitions and adapter-marker capability; C2 must not manufacture either.
 Both consumption rows and the worker claim remain immutable and unique.
+
+### C2 correction and C3 carry-forward boundary
+
+Pre-claim refusal is an ownership-fenced transaction, not a conclusion drawn from the candidate
+read. Under the execution advisory lock it locks the still-pending intent and its unreleased
+`ENTRY_PENDING` claim, verifies that no worker claim exists, commits the terminal status and only
+then appends the unclaimed refusal evidence. A lost conditional transition rolls the evidence back
+and is classified as a lost race; it never calls release. Claimed not-sent evidence must follow the
+database-owned `WORKER_CLAIMED_FOR_SUBMISSION` event, name the exact immutable worker claim, and come
+from an authorized C2 producer. Release additionally requires a terminal non-dispatch intent and
+the absence of consumption, adapter, broker-opportunity, broker, unresolved-delivery or position
+evidence. Historical pre-claim evidence cannot release a later claimed lifecycle.
+
+The following work remains explicitly carried forward and is not completed by C2:
+
+- Cancel and terminalize pre-dispatch-epoch backlog without making it claimable.
+- Resolve Operational Attention only after authoritative recovery establishes the outcome.
+- Recheck the broker-time 120-second freshness boundary.
+- Reconcile an exact existing broker order and unattributed broker exposure without guessing.
+- Commit the Market Intelligence and TradingView consumptions together in C3.
+- Add the broker adapter boundary and only validated broker/position lifecycle transitions.
+
+C2 remains inert: its typed entrypoint is unscheduled, the ordinary worker excludes marked intents,
+and it creates neither final-dispatch consumption, adapter invocation, broker mutation, SELL, nor
+LIVE TradingView execution.
 
 ## Deployment and rollback floor
 

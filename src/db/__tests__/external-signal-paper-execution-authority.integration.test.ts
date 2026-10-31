@@ -268,8 +268,6 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "BrokerOrder" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].n).toBe(0);
     await expect(db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [intent.id])).rejects.toThrow(/dispatch is quarantined/);
     await db.query(`UPDATE "OrderIntent" SET status='blocked',"blockReason"='ACCEPTANCE_FIXTURE_COMPLETE' WHERE id=$1`, [intent.id]);
-    const claimId = (await db.query(`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`, [intent.id])).rows[0].id;
-    await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [claimId, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_ACCEPTANCE_FIXTURE' })]);
     await (await import('../../services/entry-exposure-claim.service.js')).releaseUnsubmittedEntryExposureClaim({ orderIntentId: intent.id, reason: 'TRADINGVIEW_ACCEPTANCE_FIXTURE_COMPLETE' });
     // Simulated crash gap: claim release committed, but cycle reconciliation never ran. Only the
     // normal top-level worker may discover and finish the orphaned lifecycle on restart.
@@ -460,7 +458,37 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect(race.map(result => result.outcome).sort()).toEqual(['C2_DISPATCH_REFUSED', 'NOT_CLAIMED']);
     expect((await db.query(`SELECT i.status,c."claimFingerprint",c."claimFingerprint"<>$2 AS canonical,ec.status AS exposure_status,ec."releasedAt" IS NOT NULL AS released FROM "OrderIntent" i JOIN "ExternalSignalBrokerWorkerClaim" c ON c."orderIntentId"=i.id JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id WHERE i.id=$1`, [serviceIntentId, '0'.repeat(64)])).rows[0])
       .toMatchObject({ status: 'blocked', canonical: true, exposure_status: 'RELEASED', released: true });
-    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"='{"qty":999}'::jsonb WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/insert-only and immutable/);
+    const serviceOwnership = (await db.query(`SELECT ec.id AS claim_id,wc.id AS worker_id FROM "EntryExposureClaim" ec JOIN "ExternalSignalBrokerWorkerClaim" wc ON wc."orderIntentId"=ec."orderIntentId" WHERE ec."orderIntentId"=$1`, [serviceIntentId])).rows[0];
+    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [serviceOwnership.claim_id, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRE_DISPATCH_RECOVERY', workerClaimId: serviceOwnership.worker_id + 1 })])).rejects.toThrow(/worker-claim provenance/);
+    await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'NOT_SENT_EVIDENCE_RECORDED',$2)`, [serviceOwnership.claim_id, JSON.stringify({ classification: 'NOT_SENT_PRE_DISPATCH', producer: 'TRADINGVIEW_C2_PRECLAIM_REFUSAL' })])).rejects.toThrow(/worker-claim provenance/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "blockReason"='hostile rewrite' WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView refusal/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"=jsonb_set("rawRequestJson",'{riskEvaluation,reason}','"hostile"') WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/terminal TradingView refusal/);
+    await expect(db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/cannot become reclaimable|completed TradingView worker claim/);
+    await expect(db.query(`UPDATE "OrderIntent" SET "rawRequestJson"='{"qty":999}'::jsonb WHERE id=$1`, [serviceIntentId])).rejects.toThrow(/insert-only and immutable|terminal TradingView refusal/);
+
+    // R1: A observes invalid readiness, pauses, B claims after readiness is restored, and A's stale
+    // refusal must lose without appending evidence or releasing B's ownership.
+    const r1Fixture = await createAdmissionFixture('c2-r1-late-refusal', { securityId: serviceSecurityId, assignmentId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3' });
+    await db.query('BEGIN');
+    await insertIntentAndObligation(db, r1Fixture, 'c2-r1-late-refusal', { securityId: serviceSecurityId, assignmentId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3', authorizationId: serviceAuthorization.id, rawRequestJson: { ...serviceRaw, tradingAccountSubscriptionId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3' } });
+    await db.query('COMMIT');
+    const r1IntentId = (await db.query(`SELECT "entryOrderIntentId" id FROM "ExternalSignalTradeCycleAccount" WHERE id=$1`, [r1Fixture.accountCycleId])).rows[0].id as number;
+    await db.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [r1IntentId]);
+    await db.query(`UPDATE "TradingAccountCredential" SET status='REVOKED' WHERE "tradingAccountId"=$1`, [paperId]);
+    let releaseBarrier!: () => void;
+    const paused = new Promise<void>(resolve => { releaseBarrier = resolve; });
+    let reachedBarrier!: () => void;
+    const reached = new Promise<void>(resolve => { reachedBarrier = resolve; });
+    const staleRefusal = c2Worker.processTradingViewOrderIntentForC2(r1IntentId, { beforeUnclaimedRefusal: async () => { reachedBarrier(); await paused; } });
+    await reached;
+    await db.query(`UPDATE "TradingAccountCredential" SET status='ACTIVE' WHERE "tradingAccountId"=$1`, [paperId]);
+    const winner = await c2Worker.processTradingViewOrderIntentForC2(r1IntentId);
+    releaseBarrier();
+    const loser = await staleRefusal;
+    expect(winner.outcome).toBe('C2_DISPATCH_REFUSED');
+    expect(loser.outcome).toBe('LOST_REFUSAL_RACE');
+    const r1State = (await db.query(`SELECT i.status,ec.status exposure_status,ec."releasedAt" IS NOT NULL released,(SELECT count(*)::int FROM "ExternalSignalBrokerWorkerClaim" wc WHERE wc."orderIntentId"=i.id) worker_claims,(SELECT count(*)::int FROM "EntryExposureClaimEvent" e WHERE e."claimId"=ec.id AND e."eventType"='NOT_SENT_EVIDENCE_RECORDED') not_sent FROM "OrderIntent" i JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id WHERE i.id=$1`, [r1IntentId])).rows[0];
+    expect(r1State).toMatchObject({ status: 'blocked', exposure_status: 'RELEASED', released: true, worker_claims: 1, not_sent: 1 });
 
     const crashFixture = await createAdmissionFixture('c2-post-claim-crash', { securityId: serviceSecurityId, assignmentId: serviceAssignmentId, subscriptionId: serviceSubscriptionId, symbol: 'EX3' });
     await db.query('BEGIN');
