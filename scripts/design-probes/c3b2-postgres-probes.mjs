@@ -1,4 +1,5 @@
-// Design probes for docs/architecture/tradingview-c3b2-final-dispatch-transaction.md (section 10).
+// Primitive design probes for docs/architecture/tradingview-c3b2-final-dispatch-transaction.md (section 10.1).
+// Revision 4 adds real-schema probes: c3b2-r4-real-schema-probes.ts (section 10.2).
 // DISPOSABLE SERVERS ONLY. It creates and drops a scratch database, needs a superuser-capable URL to a throwaway
 // PostgreSQL server, touches no application schema and makes no broker call.
 //   PROBE_BASE_URL=postgresql://postgres:pw@localhost:55416 node scripts/design-probes/c3b2-postgres-probes.mjs

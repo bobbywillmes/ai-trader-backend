@@ -1,24 +1,37 @@
 # TradingView Phase 4A.2C3B.2: final-dispatch transaction contract
 
-Status: **design, revision 3, for review. Nothing in this document is implemented.** C3B.1 is broker-inert and
-adds no consumption writer, scheduler entry, broker adapter call or POST. Implementation of C3B.2 waits for review
-of this contract. No broker call is authorized in any checkpoint covered by this document.
+Status: **design, revision 4, for review. Nothing in this document is implemented.** C3B.1 (`733a426`) is accepted and
+broker-inert; it adds no consumption writer, scheduler entry, broker adapter call or POST. Implementation of C3B.2 waits
+for review of this contract. No broker call is authorized in any checkpoint covered by this document.
 
-Revision 2 corrected the first draft after an independent PostgreSQL 16/17 audit. Revision 3 corrects revision 2
-after a second audit (16.15 and 17.5) that proved two of its statements false:
+Revision 2 corrected the first draft after an independent PostgreSQL 16/17 audit. Revision 3 removed the false claim that a
+deferred constraint trigger is a commit-time guarantee and introduced the dispatch fence. Revision 4 corrects revision 3
+after a third audit (16.15 and 17.5) that reproduced three design contradictions, and resolves five precision findings.
+Every claim below that says "probe" was executed against a **real migrated schema** (all 107 repository migrations plus the
+proposed overlay) on **PostgreSQL 16.13 and 17.11** with identical results (61 checks each, section 10).
 
-* **[R3-A]** A `DEFERRABLE INITIALLY DEFERRED` constraint trigger is **not** a commit-time guarantee, so the claim
-  that PostgreSQL trigger timing keeps final consumption inside the signal's 120-second life is removed. Freshness
-  is redesigned as two boundaries, **F** (durable final authorization, §3.2) and **C3C** (the actual broker-send
-  boundary, §3.6).
-* **[R3-B]** The canonical lock order contained a reproducible `40P01` between the execution authorization and the
-  account/assignment/Subscription/Security identity rows. It is corrected (§6).
-* **[R3-C]** The "row-version fence" had no enforceable definition. It now has one, chosen after disposable probes
-  (§3.4); `xmin` is rejected on evidence.
-* **[R3-D]** Several transaction descriptions were inaccurate (§3.1).
+* **[R4-A]** The revision-3 fence bumped the version on the Market Intelligence (MI) consumption insert, so the TradingView
+  guard's equality check against the version F had validated always failed (probe A1: F read `8`, the MI insert moved the
+  fence to `9`, the TV insert was rejected `supplied 8, current 9`). The protocol is redesigned around a **stable
+  pre-consumption version** and a **single post-pair bump** (section 3.4).
+* **[R4-B]** `Signal.createdAt` is `timestamp(3)` without time zone, written by the application clock, and a comparison with
+  `clock_timestamp()` depends on the session `TimeZone` (probe: a 200-second-old signal is "fresh" in five of nine zones).
+  A database-owned, immutable `Signal.receivedAt timestamptz` replaces it as the 120-second authority (section 3.5).
+* **[R4-C]** The proposed TradingView lock order deadlocked (`40P01`) with the real Market Intelligence grant. The audit
+  found one inversion; the catalog extraction found **two more in already-accepted C1/C2 code** (the TradingView
+  authorization grant and its guard's `User FOR UPDATE`) and an implicit trigger lock that inverts the account-cycle/cycle
+  order. Section 6 is a complete per-operation matrix including every trigger lock, the chosen correction (identity rows
+  `FOR SHARE`, `User` first, no upgrades) and probes of both commit orders on the real services and guards.
+* **[R4-D]** Precision corrections: the existing evidence fence does write the claim row (D1); bump counts are
+  "strictly increasing", not "one per event" (D2); the C3C send-decision lock order is fixed (D3); one identity key serves
+  the fence and the absence check, and it finds evidence the `orderIntentId`-only check misses (D4); every new trigger is
+  inert for unmarked records (D5, probe).
+* **[R4-E]** Sequencing: **C3B.3 must not schedule finalization until the C3C expired-never-sent terminalizer exists**
+  (sections 3.6.8 and 8).
 
-Corrections are marked **[R2]** (revision 2, retained) or **[R3]** (this revision). File references are to the
-current repository. Baseline: `1adddc9` (C3A) plus C3B.1.
+Correction notes in this document are marked **[R2]**, **[R3]** or **[R4]**. File references are to the current repository.
+Baseline: `733a426` (C3A + C3B.1). The proposed objects exist only in the disposable overlay
+[`scripts/design-probes/c3b2-r4-overlay.sql`](../../scripts/design-probes/c3b2-r4-overlay.sql); they are not migrations.
 
 ## 1. What exists, and what is missing
 
@@ -36,7 +49,7 @@ current repository. Baseline: `1adddc9` (C3A) plus C3B.1.
 `mi.brokerPostOpportunityId IS NOT DISTINCT FROM tv.brokerPostOpportunityId`. That is sufficient to prove "the
 same exact opportunity, or none" (§4). No schema change is needed for it.
 
-### 1.1 Market Intelligence obligation: confirmed chain and what the database does not guarantee **[R2]**
+### 1.1 Market Intelligence obligation: confirmed chain and what the database guarantees **[R2, R4]**
 
 ```
 processProspectiveTradingViewEntries   external-signal-entry-admission.service.ts:45  (calls submitOrder at :78 with tradingViewExecution)
@@ -54,26 +67,34 @@ processProspectiveTradingViewEntries   external-signal-entry-admission.service.t
   `marketPolicy.obligationId = null`. The return value therefore proves nothing about the obligation; C3B.2 must
   read it from the database.
 
-**The database does not independently guarantee the obligation on every marked intent.**
-`MarketPolicyBrokerDispatchDecision.obligationId` is nullable, no trigger requires an
-`OrderIntentMarketPolicyEnforcementObligation` for a marked `OrderIntent`, and
-`external_signal_order_intent_obligation_required` concerns the *TradingView* execution obligation, not the MI
-one. An intent created by a defect, a manual SQL repair or a future second writer can be marked and have no MI
-obligation. The only enforcement today is the service chain above.
+**[R4] Correction to revisions 2 and 3: the database does guarantee an obligation on every consumable decision.**
+Revisions 2 and 3 said `MarketPolicyBrokerDispatchDecision.obligationId` is nullable and that nothing in the database requires
+an MI obligation. That was incomplete. Read from the migrated catalog:
 
-C3B.2 must therefore:
+* `BrokerDispatchDecision_obligation_check` (a `CHECK`, which no trigger bypass or `session_replication_role` can skip) requires
+  `obligationId IS NOT NULL` for every outcome except `LEGACY_UNOBLIGATED_QUARANTINED` and `TECHNICAL_FAILURE`, which also
+  fixes `authorityVersion = 'PAPER_MARKET_POLICY_ENFORCEMENT_V2'`.
+* `validate_market_policy_broker_dispatch_decision` loads the cited obligation and rejects the decision unless the obligation's
+  intent, account, assignment, Subscription, Security and symbol (and further identity columns) equal the decision's.
+* `validate_market_policy_broker_dispatch_consumption` consumes only an `ALLOWED` / `DISPATCH_AUTHORIZED` decision.
 
-1. **Refuse before decision preparation** (definite not-sent refusal through the existing C2 refusal path, code
-   `TRADINGVIEW_MI_OBLIGATION_REQUIRED`) when no frozen `OrderIntentMarketPolicyEnforcementObligation` exists for
-   the intent. Never run `prepareObligatedDecision` for it, and never fall back to an unenforced MI dispatch.
-2. **Validate the obligation's exact identity** in the final database consumption guard (§5.3 item 10): the
-   obligation belongs to this `orderIntentId`; `environment='PAPER'`; its `tradingAccountId`,
-   `accountSubscriptionId`, `subscriptionId`, `securityId`, `strategyId` equal the worker claim's account cycle;
-   the decision's `obligationId` equals it; `authorizationId`/`authorizationFingerprint`/`policyRevisionId`/
-   `enrollmentGenerationId` equal the decision's; it was admitted for the same `clientOrderId`.
-3. **Test** the missing-obligation fixture (marked intent, no obligation: refusal before any decision row, no
-   consumption possible even by direct SQL) and duplicate admission (second admission of the same signal returns
-   `obligationId = null` yet the guard still validates the stored obligation).
+So a marked intent that has no MI obligation can never obtain a consumable decision, whatever created it. (The probe's seeded
+`ALLOWED` decision had to cite an obligation id for the `CHECK` to pass.) What the database does **not** do is refuse early with
+a legible, auditable reason, or write the refusal through the C2 path; a defective intent would instead accumulate
+`LEGACY_UNOBLIGATED_QUARANTINED` decisions. C3B.2 therefore still:
+
+1. **Refuses before decision preparation** (definite not-sent refusal through the existing C2 refusal path, code
+   `TRADINGVIEW_MI_OBLIGATION_REQUIRED`) when no frozen `OrderIntentMarketPolicyEnforcementObligation` exists for the intent,
+   never running `prepareObligatedDecision` and never falling back to an unenforced MI dispatch. This is a clarity and
+   hygiene rule, not the only barrier.
+2. **Re-validates the obligation's identity in the final guard** (section 5.3 item 10) as defense in depth: the obligation
+   belongs to this `orderIntentId`; `environment='PAPER'`; its account, assignment, Subscription, Security and Strategy equal
+   the worker claim's account cycle; the decision's `obligationId`, `authorizationId`/`authorizationFingerprint`/
+   `policyRevisionId`/`enrollmentGenerationId` equal the obligation's; it was admitted for the same `clientOrderId`.
+3. **Tests** direct SQL that tries to create an `ALLOWED` decision without an obligation (the `CHECK` rejects it), a marked
+   intent with no obligation (refusal before any decision row), and duplicate admission (the second admission returns
+   `obligationId = null` yet the guard validates the stored obligation).
+
 
 ## 2. Minimal safe reuse of Market Intelligence code
 
@@ -171,7 +192,7 @@ F:
   statement before `COMMIT` as a courtesy;
 * creates **exactly one atomic MI/TradingView consumption pair**;
 * stores an **immutable authorization deadline**, `authorizationDeadlineAt`, stamped by the database, never later
-  than the original signal's creation plus 120 seconds (§3.5);
+  than the signal's database receipt time plus 120 seconds (§3.5);
 * grants permission for a **bounded dispatch opportunity** (§3.6);
 * **does not imply that a broker call occurred**, and is not proof of delivery;
 * **does not rely on any commit-time trigger guarantee.** PostgreSQL does not provide one (§3.7, probe P3).
@@ -194,7 +215,8 @@ attempt (a retry is the only way to obtain a fresh snapshot). `lock_timeout` 5 s
    version); intent `submitting`; claim `ENTRY_SUBMITTING`, unreleased, no tracked position; its
    `WORKER_CLAIMED_FOR_SUBMISSION` event cites this worker claim; no
    `NOT_SENT/ADAPTER_INVOCATION_STARTED/DISPATCH_OUTCOME/BROKER_DELIVERY_UNCERTAIN` event; no existing MI/TV
-   consumption, unenforced dispatch, `BrokerOrder`, `BrokerActivity` or non-compare opportunity event.
+   consumption, unenforced dispatch, `BrokerOrder`, `BrokerActivity` (under the shared identity key of section 3.4.6) or
+   non-compare opportunity event.
 4. Validate current eligibility from the *locked* rows: PAPER account `ACTIVE`, `tradingEnabled`, not
    `killSwitchEnabled`, not `tradingBlocked` (**pause = status ≠ ACTIVE → refuse**), assignment
    `enabled && entriesEnabled`, Subscription/Security/Strategy/ExitProfile enabled, allocation enabled and
@@ -203,120 +225,321 @@ attempt (a retry is the only way to obtain a fresh snapshot). `lock_timeout` 5 s
    account-cycle state, and no open `TrackedPosition` for account + Security.
 5. Validate the MI decision `D` produced: `outcome='ALLOWED'`, `dispatchDisposition='DISPATCH_AUTHORIZED'`, the
    highest `dispatchSequence` for the intent, `clientOrderId` equals the claim's, `obligationId` equals the
-   locked MI obligation, `clock_timestamp() < dispatchExpiresAt` minus a small margin (§3.5).
-6. **Fence (§3.4):** `SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1 FOR UPDATE`. This
-   is the version-changing-operation proof. Remember `v`.
-7. Insert the MI consumption via `insertMarketPolicyDispatchConsumption(tx, …)`, then the TV consumption
-   (`workerClaimId`, `marketPolicyDispatchConsumptionId`, `executionObligationId`, `executionAuthorizationId`,
-   `rolloutGenerationId`, `dispatchStateVersion`, same `clientOrderId`, same nullable `brokerPostOpportunityId`,
-   and `fenceVersion = v`). The `BEFORE INSERT` guard **stamps** `authorizedAt = clock_timestamp()` and
-   `authorizationDeadlineAt` (§3.5) and rejects any caller-supplied value for them.
-8. Last statement: `SELECT external_signal_assert_authorization_open(<consumption id>)`, a non-deferred, advisory
-   check that `authorizationDeadlineAt − clock_timestamp()` is still at least the minimum send window. On failure
-   the service rolls back. **This is a courtesy to avoid creating a permission that is already nearly expired. It
-   is not a guarantee and no safety property depends on it.**
-9. `COMMIT`. **No broker request is made inside F or before the permit of §3.6.**
+   locked MI obligation, `clock_timestamp() < dispatchExpiresAt` minus a small margin (§3.5); and the entry signal's receipt is
+   still open (`external_signal_signal_receipt_open`, section 3.5.2).
+6. **Fence read (section 3.4).** `SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1 FOR UPDATE`. This is
+   the **pre-consumption version `v`**, and the lock is held to commit. From here to step 8, F issues **no other fenced
+   write** (section 3.4.6 lists the fenced tables); F's pair is the only thing that may move the fence while F holds it.
+7. Insert the MI consumption via `insertMarketPolicyDispatchConsumption(tx, …)`. The MI consumption table is **not** in the
+   fence's bump set (section 3.4.2), so `v` is unchanged afterwards (probe A2: `v` before = `v` after).
+8. Insert the TV consumption (`workerClaimId`, `marketPolicyDispatchConsumptionId`, `executionObligationId`,
+   `executionAuthorizationId`, `rolloutGenerationId`, `dispatchStateVersion`, same `clientOrderId`, same nullable
+   `brokerPostOpportunityId`, and `fenceVersion = v`). The `BEFORE INSERT` guard stamps `authorizedAt = clock_timestamp()` and
+   `authorizationDeadlineAt` (section 3.5) and rejects caller-supplied values for them, then **verifies that
+   `NEW.fenceVersion` equals the locked fence row's `version`**. After the row is inserted the **one post-pair bump**
+   (`v → v+1`) runs, and the `AFTER INSERT` self-verification asserts the fence is exactly `NEW.fenceVersion + 1` (a missing
+   bump, or a fenced write inside F that slipped in after step 6, fails the transaction: probes A4, A5, A5b).
+9. Last statement: `SELECT external_signal_assert_authorization_open(<consumption id>)`, a non-deferred, advisory check that
+   `authorizationDeadlineAt − clock_timestamp()` is still at least the minimum send window. On failure the service rolls
+   back. **This is a courtesy to avoid creating a permission that is already nearly expired. It is not a guarantee and no
+   safety property depends on it.**
+10. `COMMIT`. **No broker request is made inside F or before the permit of section 3.6.** The fence is `v+1` after a
+    successful pair and `v` after a rolled-back pair (probes A2, A3).
 
 The service-level checks in steps 2–5 give legible errors; the database guard of §5.3 is the authority.
 
 If F aborts for any reason it leaves no consumption, and the intent remains `submitting` with an unreleased
 `ENTRY_SUBMITTING` claim: the C2/C3A "stranded worker claim" state that recovery already handles (§7).
 
-### 3.4 The row-version fence: a concrete, enforceable mechanism **[R3]**
+### 3.4 The dispatch fence: a concrete, enforceable mechanism **[R4: version protocol redesigned]**
 
-**Problem.** F runs SERIALIZABLE, so its validation reads use the pre-lock snapshot (§3.1 items 1, 2, 7). The
-dangerous competitor is one that writes *evidence* (a `NOT_SENT_EVIDENCE_RECORDED` event, a `BrokerOrder`, a newer
-decision) after F's snapshot. Revision 2 proposed that F "touch" the intent and claim so a racing terminalizer
-would produce `40001`. **That does not work, and the second audit's concern is correct:** the evidence fence
-trigger locks the claim `FOR UPDATE` and inserts the event, but never writes a new version of the claim. A
-SERIALIZABLE transaction that later `UPDATE`s that claim succeeds without `40001` and still cannot see the event
-(probe P1 below: touch outcome `ok`, events seen `0`).
+**Problem (unchanged from revision 3).** F runs SERIALIZABLE, so its validation reads use a snapshot taken before its lock
+waits (section 3.1 items 1, 2, 7). The dangerous competitor writes *evidence* (a `BrokerOrder`, a newer decision, an event)
+after that snapshot, possibly while only **locking** the intent and claim, so neither a row "touch" nor an `xmin` comparison
+sees it. `xmin` is rejected on evidence (disposable probes P1/P1b, PG 16.13/17.11): it is satisfied while a lock-only
+competitor's evidence is invisible, is false after a subtransaction write, and compares a 32-bit `xid` with a 64-bit `xid8`.
 
-**Candidate rejected on evidence: `xmin`.** Checking that the intent/claim row's `xmin` equals the current
-transaction id proves only that *this transaction wrote that row*. Disposable probes on PostgreSQL 16.13 and 17.11
-show it (a) is satisfied while a lock-only competitor's evidence is invisible (P1), (b) is **false** when the write
-happens in a subtransaction (a `plpgsql` `EXCEPTION` block yields a subtransaction id, probe P1b), and (c) compares
-a 32-bit `xid` with a 64-bit `xid8` (truncation, wraparound). It cannot detect the hazard it was proposed for, so
-it is **not approved** and is not part of this design. Any future reconsideration requires the probes listed at
-the end of this section on both versions and the real Prisma isolation level.
+**Mechanism.** A database-maintained counter, `ExternalSignalDispatchFence(orderIntentId PK, version bigint)`, created at
+version `1` by the `OrderIntent` insert trigger for a marked intent and incremented only by `AFTER ROW` triggers on the fenced
+tables (section 3.4.6), only for marked intents, only by `+1`, only from trigger context (`pg_trigger_depth() > 1`); never
+deleted or truncated (probe A0 rejects direct `UPDATE`, `DELETE` and `TRUNCATE` even from a superuser session).
+`session_replication_role` remains the single bypass: a privilege that no runtime role may hold (a C3B.2 role test must assert it,
+section 11.2).
 
-**Selected mechanism: a database-maintained dispatch fence counter.**
+#### 3.4.1 The revision-3 contradiction, reproduced **[R4]**
 
-* New table `ExternalSignalDispatchFence`: `orderIntentId` primary key (FK), `version bigint NOT NULL`. Created at
-  version `1` by the `OrderIntent` insert trigger for a marked intent, so it exists before any competitor.
-* A trigger function `external_signal_dispatch_fence_bump()` runs `UPDATE "ExternalSignalDispatchFence" SET
-  version = version + 1 WHERE "orderIntentId" = <intent>` as an **AFTER ROW** trigger on every table whose change
-  could invalidate F's decision, **only for marked intents** (a `WHEN` clause or an early return): `OrderIntent`
-  (update), `EntryExposureClaim` (insert/update/delete), `EntryExposureClaimEvent` (insert),
-  `ExternalSignalBrokerWorkerClaim`, `MarketPolicyBrokerDispatchDecision`, `MarketPolicyBrokerDispatchConsumption`,
-  `ExternalSignalBrokerDispatchConsumption`, `MarketPolicyBrokerUnenforcedDispatch`, `BrokerOrder`,
-  `BrokerActivity`, and non-compare `OrderIntentBrokerOpportunityEvent`. Because the bump is *the fence row's own
-  new version*, it is a version-changing write that conflicts with any SERIALIZABLE reader that locks it, whatever
-  the writer's isolation level and even when the writer only locked the claim.
-* The fence table is guarded: it accepts only `+1` updates issued from trigger context (`pg_trigger_depth() > 1`),
-  and forbids direct update of other columns, `DELETE` and `TRUNCATE` (role privilege, C3B.1).
-* F locks the fence row `FOR UPDATE` (step 6). In a SERIALIZABLE transaction this raises `40001` if any fenced
-  write committed after F's snapshot. Otherwise the snapshot is, for every fenced table, as current as the fence,
-  so F's plain absence checks (step 3) are sound.
-* F records `fenceVersion = v` on the TV consumption. The `BEFORE INSERT` guard locks the fence `FOR UPDATE` itself
-  (re-entrant after F's own lock) and **rejects the insert unless `NEW.fenceVersion = fence.version`**. A service
-  that skipped step 6, supplied a stale value, or raced a fenced write fails closed. The consumption inserts
-  themselves bump the fence (they are in the fenced set), so the stored `fenceVersion` is the version F validated
-  against, and later paths can tell whether anything changed since authorization.
-* The guard is correct at READ COMMITTED too (the lock returns the latest version and the equality still holds),
-  so it never depends on the caller's isolation level (R-6).
+Revision 3 put both consumption tables in the bump set and had the TV guard require `NEW.fenceVersion = fence.version`.
+F reads `v`, inserts the MI consumption (the AFTER trigger bumps to `v+1`), then inserts the TV consumption with `fenceVersion
+= v`; the guard compares `v` with `v+1` and rejects its own authorization. **Probe A1** (real tables, real TV consumption
+guard plus the overlay guard): `fenceReadByF = 8`, `fenceAfterMiInsert = 9`, TV insert rejected with
+`TradingView dispatch fence version is stale or missing (supplied 8, current 9)`.
 
-**Cost and hazards.** Every fenced write for a marked intent also writes the fence row, so the fence is a
-lock-order participant. It is the **last** lock a writer naturally takes (intent, claim, then the AFTER-trigger
-bump), and the canonical position is row 24 of §6.2. Writers that touch `BrokerOrder`/`BrokerActivity` *before*
-locking the intent (order sync) would invert it; §6.5 lists this as a prerequisite audit with deadlock probes. An
-inversion is a nondeterministic `40P01` (one side aborts, fail-closed), never a safety bypass.
+#### 3.4.2 The corrected protocol **[R4]**
 
-**Proof obligations before this mechanism is approved for implementation** (none is assumed; each is a test in §9):
+```
+F (SERIALIZABLE, holds intent + claim FOR UPDATE)                          fence.version
+ step 6   SELECT version FROM fence WHERE orderIntentId=$1 FOR UPDATE  → v        v
+ step 7   INSERT MarketPolicyBrokerDispatchConsumption                  (not fenced) v
+ step 8   INSERT ExternalSignalBrokerDispatchConsumption (fenceVersion = v)
+            BEFORE INSERT guard : lock fence, require fence.version = NEW.fenceVersion    v   ✓
+            row inserted
+            AFTER INSERT bump   : fence.version := fence.version + 1                      v+1
+            AFTER INSERT verify : require fence.version = NEW.fenceVersion + 1            v+1 ✓
+ step 10  COMMIT → v+1 durable          |  ROLLBACK → v (no row anywhere)
+```
 
-| Concern | Required proof (PostgreSQL 16 **and** 17) |
+* `fenceVersion` stored on the TV consumption is the **pre-consumption version F validated**, never the post-bump value.
+* The bump is the single **post-pair bump**: it runs on the TV consumption insert, after that row's own guard, and nothing in
+  F reads the fence again. Its job is to invalidate every snapshot that predates the pair (section 3.4.4).
+* **Final values (probes A2, A3, A5):** successful pair: `fence = v+1`, `consumption.fenceVersion = v`. Rolled-back pair: fence
+  `= v`, zero consumptions, and a retry succeeds and ends at `v+1`. A fenced write by F *after* step 8 is legal and raises the
+  version further (`v+2`); a fenced write by F *between* steps 6 and 8 changes the version F validated and the guard rejects
+  the insert (probe A5), so F must keep that window empty. Wrong, stale (`v±1`) or `NULL` `fenceVersion` is rejected (A4).
+* **Self-verification (probe A5b).** With the bump trigger disabled the TV insert itself fails
+  (`did not advance exactly once … stored 8, current 8`): a pair can never exist next to an unadvanced fence.
+* **One-shot authorization is untouched.** It still rests on the existing unique constraints (`orderIntentId`,
+  `workerClaimId`, `marketPolicyDispatchConsumptionId`, the MI decision and intent uniques); probe A2b: a second MI
+  consumption for the intent is rejected.
+* **Unmarked behavior is untouched.** The MI consumption primitive is unchanged and the standalone MI path never touches the
+  fence (section 3.4.7).
+
+#### 3.4.3 Why dropping the MI consumption from the bump set does not weaken release or stale-snapshot protection **[R4]**
+
+1. **No observable "consumption without a bump".** For a marked intent the deferred `external_signal_dispatch_pair_check`
+   makes a committed MI consumption impossible without the TV consumption in the same transaction, and it fails closed even
+   under `SET CONSTRAINTS ALL IMMEDIATE` (probe P3: the check then runs at insert and fails the lone MI insert). The TV
+   consumption always bumps, and its own self-verification forbids it without one. Every committed change of "does a
+   consumption exist" therefore carries a committed `+1`, atomically with it. A competitor can never see the pair at fence `v`.
+2. **An uncommitted MI insert is invisible to others and the competitors are serialized by locks F already holds.** F holds the
+   intent, claim and fence rows until commit.
+3. **Competitor behavior with the pair in place** (all measured, section 3.4.4): a READ COMMITTED release waits for F's claim
+   lock and then reads the pair; a REPEATABLE READ or SERIALIZABLE stale writer's first fenced write updates a fence row that
+   F already advanced, which is `40001`.
+4. **What would break.** If *neither* consumption bumped, a stale snapshot would find the fence unchanged: probe A7.4 shows the
+   consequence on the real tables. A REPEATABLE READ releaser with valid not-sent evidence of its own commits `evidence`,
+   `blocked` and `RELEASED` for a claim that already has a committed pair. With the fence the same sequence is `40001` at
+   every step (A7.3).
+
+| Alternative | Verdict |
 |---|---|
-| Version conflict | SERIALIZABLE F's fence lock fails `40001` after a committed bump, including when the bumping writer only locked the claim (reproduces probe P1 with the real tables). |
-| Real Prisma isolation | The same through `prisma.$transaction(..., { isolationLevel: 'Serializable' })` and the pg driver adapter in use. |
-| Trigger and FK behavior | Bumps fire from AFTER triggers inside FK-check and `ON CONFLICT` paths; no recursion; bump count equals write count for each fenced table. |
-| Direct SQL bypass | A raw-SQL writer on every fenced table still bumps; `UPDATE`/`DELETE` of the fence row from a normal session is rejected; no role may set `session_replication_role`. |
-| Duplicate workers | Two F attempts: the second fails the fence or a unique constraint; at most one pair. |
-| Existing guards | The C2/C3A immutability guards on claim and intent are unchanged and unaffected; no new allowance is needed for a "touch" because none is performed. |
+| Both consumptions bump; guard compares with `v` (revision 3) | Rejected: self-defeating (probe A1). |
+| Both bump; guard accepts `v` or `v+1` | Rejected: it would also accept a competitor's single bump, which is exactly what the check must refuse. |
+| Neither bumps | Rejected: no post-pair invalidation (A7.4). |
+| **MI does not bump; TV consumption bumps once, after its own guard; verify trigger** | **Selected.** Two small triggers, no new state, no txid bookkeeping. |
+| Count F's own bumps in a transaction-local variable | Rejected: more state, the same guarantee, and it hides unexpected writes the selected design rejects (A5). |
 
-### 3.5 Signal freshness and the authorization deadline **[R3]**
+#### 3.4.4 Concurrent release, stale finalizer and evidence writers: measured **[R4]**
 
-`D` and `F` are separate so that market evaluation (reads, possibly slow) is not inside the serialized lock
-window. F re-checks `clock_timestamp() < dispatchExpiresAt − margin` (proposed 2 s, courtesy only); the MI
-consumption trigger already re-checks `clock_timestamp() < dispatchExpiresAt`. On failure F rolls back; the
-orchestrator may run `D` once more (a later `dispatchSequence` supersedes the older decision) and retry F **once**,
-inside the 120 s signal bound; otherwise it records a definite-not-sent refusal.
+All rows ran on PG 16.13 and 17.11 against the real worker-claim, consumption, exposure-claim and event guards.
 
-**The 120 s rule is enforced as an immutable deadline stamped by the database, not as a commit-time check.** The TV
-consumption gains, in the C3B.2 migration:
+| Probe | Interleaving | Result |
+|---|---|---|
+| A7.1 | READ COMMITTED or SERIALIZABLE release starts while F holds claim + fence with an uncommitted pair; F then commits | The release **blocks** on the claim lock, then is refused by the existing release guard. Claim stays unreleased. |
+| A7.2 | Release after the pair committed (snapshot may predate it) | Refused by the existing guard. |
+| **A7.3** | Stale **REPEATABLE READ** or **SERIALIZABLE** releaser with valid not-sent evidence of its own, F commits the pair after its snapshot | `40001` on the evidence insert (and on every later step). Pair intact, claim unreleased. |
+| **A7.4** | Same releaser, fence bump triggers **disabled** (negative control, REPEATABLE READ) | **Evidence, intent block and release all commit; the consumed claim is released.** SERIALIZABLE alone is aborted by SSI in this particular shape (A7.4b); SSI cannot be relied on in general (it ignores READ COMMITTED peers and lock-only writers). |
+| A6.O1 | Lock-only competitor (a `BrokerOrder` whose foreign key only `KEY SHARE`-locks the intent) commits after F's snapshot, W = RC and SER | F's intent and claim `FOR UPDATE` **pass** (no new row version); the fence lock raises `40001`. |
+| A6.O2 | F commits first, then a competitor whose snapshot predates F writes evidence | W = SER: `40001`. W = RC: proceeds, fence `v+2` (post-pair evidence is legitimate). |
+| A6.O3a | Competitor in flight when F starts | F waits at the **intent** lock (the competitor's foreign key), then after commit fails at the fence (`40001`); after rollback F commits the pair at `v+1`. |
+| A6.O3b | F already holds its locks; competitor's write blocks on F | Competitor proceeds only after F commits: SER `40001`, RC at fence `v+2`. |
+| A6c | Negative control: `BrokerOrder` bump trigger disabled | **F commits a pair next to committed broker evidence.** This is the hazard the fence closes. |
+| A8 | Existing evidence fence only (section 3.4.5) | A SERIALIZABLE claim lock fails `40001` after an evidence event of the five fenced types. |
+
+Two consequences. First, a foreign key's `KEY SHARE` lock on the intent conflicts with F's `FOR UPDATE`, so a competitor
+cannot even *insert* evidence while F holds the intent; the dangerous window is only the interval before F's locks. Second,
+the pair is atomic and every protected reader is either blocked, aborted (`40001`, retry sees the pair) or already sees the
+pair.
+
+#### 3.4.5 What the existing evidence fence already protects (D1) **[R4]**
+
+Revisions 2 and 3 said the current evidence fence "never changes the exposure claim row". **That was wrong.**
+`external_signal_c2_delivery_event_fence` (C3A, migration `20261031120000`) runs `UPDATE "EntryExposureClaim" SET
+"lastDiagnosedAt" = "lastDiagnosedAt"` for a marked claim on every `WORKER_CLAIMED_FOR_SUBMISSION`, `NOT_SENT_EVIDENCE_RECORDED`,
+`ADAPTER_INVOCATION_STARTED`, `DISPATCH_OUTCOME_RECORDED` and `BROKER_DELIVERY_UNCERTAIN` event. A same-value `UPDATE` writes a
+new tuple version, so:
+
+| Case | Existing fence | Still needs the dispatch fence |
+|---|---|---|
+| Release (RC) vs one of the five event types | protected: the update waits, the release guard then sees the event | |
+| Release (RR/SER) with a stale snapshot vs one of the five event types | protected: `40001` | |
+| F's SERIALIZABLE `claim FOR UPDATE` after one of the five event types committed | protected: `40001` (probe A8) | |
+| Event of another type | | yes (no claim write) |
+| `BrokerOrder`, `BrokerActivity` (insert, status update, attribution) | | **yes** (no claim write; probe A6) |
+| MI decision insert, non-compare opportunity event | | **yes** |
+| TV/MI consumption pair vs a stale RR/SER writer | | **yes** (A7.3/A7.4) |
+| Lock-only competitor that touches neither claim nor intent | | **yes** (A6.O1, primitive P1) |
+
+The dispatch fence adds new *bumps* for these cases and leaves the existing event fence in place; the event fence also bumps
+the dispatch fence through the claim `UPDATE` (probe D2: three statements produced four bumps).
+
+#### 3.4.6 Fenced writes, bump semantics and the shared evidence key (D2, D4) **[R4]**
+
+**Bump semantics (D2).** One logical event may change several fenced rows and so bump several times. The requirement is
+*strictly increasing, non-skippable* protection for every invalidating row change, not "one bump per logical event". Probe
+D2: an intent `UPDATE`, a claim `UPDATE` and a claim-event insert (three statements) advanced the version `8 → 12`, because the
+event fence's own claim `UPDATE` is a fourth fenced write. No test may assert an exact count.
+
+| Fenced table and operation | Why |
+|---|---|
+| `OrderIntent` UPDATE | status, block reason, progress |
+| `EntryExposureClaim` INSERT/UPDATE/DELETE | release, status moves, diagnostics |
+| `EntryExposureClaimEvent` INSERT (every type) | evidence of any kind |
+| `ExternalSignalBrokerWorkerClaim` INSERT | claim events |
+| `MarketPolicyBrokerDispatchDecision` INSERT | a newer decision supersedes F's |
+| `MarketPolicyBrokerUnenforcedDispatch` INSERT | trigger-forbidden for marked intents; fenced as a belt |
+| `OrderIntentBrokerOpportunityEvent` INSERT, non-compare types | `OPPORTUNITY_CAPTURED`, `DEFERRED`, `MISSING_OBSERVATION` are compare-only telemetry and are excluded |
+| `BrokerOrder` and `BrokerActivity` INSERT/UPDATE/DELETE | broker evidence, **by the shared key below** |
+| `ExternalSignalBrokerDispatchConsumption` INSERT | the single post-pair bump |
+| `MarketPolicyBrokerDispatchConsumption` INSERT | **deliberately not fenced** (section 3.4.3) |
+
+Identity and authority rows (`TradingAccount`, `TradingAccountSubscription`, `Subscription`, `Security`, allocation, source,
+binding, revision, generation, cycle, account cycle, authorization, rollout and dispatch state) are **not** fenced: their
+changes are row-version updates and F locks them, so a SERIALIZABLE F gets `40001` after any committed change (probes C6b,
+C7). An accepted EXIT signal also writes the source cycle (`Signal_external_exit_touch_source_cycle`, an `AFTER INSERT`
+`UPDATE` of the cycle row), so F's cycle lock fails `40001` after an EXIT ingest committed after its snapshot (read from the
+catalog; a probe is a remaining obligation, section 11).
+
+**One identity key (D4).** A broker row belongs to a marked intent when **any** of these hold: its `orderIntentId`; its
+`clientOrderId` equals the frozen `ExternalSignalEntryExecutionObligation.clientOrderId`; for activity, its `orderId` equals the
+`brokerOrderId` of a same-account `BrokerOrder` that belongs to the intent by `orderIntentId` or by `clientOrderId`. One SQL
+function, `external_signal_broker_evidence_marked_intents(orderIntentId, clientOrderId, brokerOrderId, accountId)`, returns the
+marked intents and is used by **all four** consumers: the fence triggers, the TV consumption guard's "no `BrokerOrder`/
+`BrokerActivity`" check (section 5.3 item 7), F's step 3 and the broker-evidence quarantine. Both old and new values of an
+`UPDATE` are resolved, so `updateMany` attribution to the intent and a move away from it both bump (probe D4: five shapes,
+one bump each).
+
+Probe D4b/D4c found that the current checks are keyed inconsistently: an absence check on `"orderIntentId" = X` finds
+**0** rows for an activity tied only through its `BrokerOrder` and for a `BrokerOrder` under another intent that carries the
+marked `clientOrderId`, and the existing quarantine (`external_signal_broker_evidence_quarantine`, `NEW."orderIntentId"` only)
+**accepted** that second row. `BrokerOrder.orderIntentId` is `NOT NULL`, so the first gap exists for `BrokerActivity` today and
+both appear once C3C relaxes the quarantine. **Requirement:** the quarantine is relaxed only in the same migration that makes
+the quarantine, the fence and the absence checks all call the shared key. Activity with no `BrokerOrder` row and no intent cannot be tied to
+an intent by any database key; only the authoritative client-order-ID lookup (section 3.6.6) covers it.
+
+#### 3.4.7 Unmarked compatibility, cost and hazards (D5) **[R4]**
+
+* **Inert for unmarked records.** Each bump trigger resolves the marked set first and returns without a write, lock or
+  error when it is empty; the `OrderIntent` insert trigger creates a fence only for a marked intent. Probe D5 drove an
+  unmarked intent through claim insert and update, claim event, intent status moves, `BrokerOrder` insert and status sync,
+  a legacy-style `BrokerActivity` insert, `updateMany` attribution, deletes and a claim delete, in one transaction: zero
+  fence-table inserts, updates or deletes (read from `pg_stat_xact_user_tables` as a delta inside the transaction) and every
+  existing fence version unchanged. SQL-level equivalents are not the services: C3B.2 acceptance must also run the existing
+  legacy fill-import, broker-activity synchronization and order-lifecycle integration suites against a database carrying the
+  new triggers (section 11).
+* **Cost.** Unmarked `BrokerOrder`/`BrokerActivity` writes pay one extra index probe on `OrderIntent` and on
+  `ExternalSignalEntryExecutionObligation`. The migration adds a partial index on `ExternalSignalEntryExecutionObligation
+  ("clientOrderId")` and a `BrokerOrder ("tradingAccountId","brokerOrderId")` lookup already exists. The function must be
+  written typed (not the probe overlay's `to_jsonb` dispatch) and its plans checked.
+* **Lock position.** The fence is the last lock a writer takes (row 24, section 6.5): the bump runs after the intent/claim
+  write. Order sync and any `updateMany` over several rows must visit intents in ascending id, or accept `40P01` as fail-closed
+  noise.
+* **No bypass for a runtime role:** no `UPDATE`/`DELETE`/`TRUNCATE` privilege on the fence, no `session_replication_role`,
+  no `ALTER TABLE … DISABLE TRIGGER` (table owner). The tests of section 9 that disable triggers (A5b, A6c, A7.4) do so only
+  in the disposable database as the owner, as controls.
+
+### 3.5 Signal freshness, the receipt clock and the authorization deadline **[R4: replaced]**
+
+`D` and `F` are separate so that market evaluation (reads, possibly slow) is not inside the serialized lock window. F
+re-checks `clock_timestamp() < dispatchExpiresAt − margin` (proposed 2 s, courtesy only); the MI consumption trigger already
+re-checks `clock_timestamp() < dispatchExpiresAt`. On failure F rolls back; the orchestrator may run `D` once more (a later
+`dispatchSequence` supersedes the older decision) and retry F **once**, inside the signal bound; otherwise it records a
+definite-not-sent refusal.
+
+#### 3.5.1 Why `Signal.createdAt` cannot be the 120-second authority
+
+Read from the migrated catalog and measured (probes B0, B1, B1b, B5):
+
+* `Signal.createdAt` is `timestamp(3) without time zone` (an older table than the `timestamptz(3)` ones) with
+  `DEFAULT CURRENT_TIMESTAMP`. The database default converts the instant to the **session's** wall time. Prisma 7 with
+  `PrismaPg` supplies its own value from the **application clock**, interpreted as UTC. The two writers therefore disagree
+  with each other by the session offset, and `createdAt + interval '120 seconds' > clock_timestamp()` implicitly casts the
+  naive timestamp using the **session `TimeZone`**.
+* Measured on the real `Signal` table with a receipt exactly 200 s old and `createdAt` written the way Prisma writes it
+  (UTC wall time):
+
+| Session time zone | Legacy `createdAt` comparison says the 200 s-old signal is fresh? | `receivedAt` rule says fresh? |
+|---|---|---|
+| UTC, Asia/Kolkata, Pacific/Kiritimati, Asia/Tokyo | no | no |
+| America/New_York, America/Los_Angeles, America/Phoenix, Etc/GMT+12, PST8PDT | **yes (accepted)** | no |
+
+  The same table was obtained with `SET TIME ZONE`, `set_config('TimeZone', …)` and `SET LOCAL` in a transaction; the
+  `receivedAt` rule gave the identical answer in all 27 combinations. Startup parameters (`options=-c TimeZone=…`) and
+  `ALTER DATABASE … SET TimeZone` gave the same (probe B1c).
+* The three current age checks use three clocks: the admission service compares `clock_timestamp()` (database) with a Prisma
+  `Date` read from `createdAt` (`validateTradingViewSignalFreshness`), the worker claim compares `Date.now()` (application)
+  with the same `Date` (`external-signal-broker-worker.service.ts:83`, `C2_MAX_SIGNAL_AGE_MS`), and the F guard would use
+  `clock_timestamp()` against the `timestamp` column. None is wrong in isolation under a UTC application host with a
+  synchronized clock; none is correct by construction.
+* `interval '1 day'` arithmetic is calendar/session dependent (probe B5: one New York calendar day across the spring-forward
+  date differs from 86 400 seconds), so the window is always `make_interval(secs => 120)`.
+
+#### 3.5.2 Design: a database-owned, immutable `Signal.receivedAt timestamptz`
+
+| Property | Mechanism (all probed on the real `Signal` table, B2 to B5) |
+|---|---|
+| The database, not Prisma or the webhook caller, decides the instant | `BEFORE INSERT` trigger `external_signal_signal_received_at_guard` sets `NEW."receivedAt" := transaction_timestamp()`. The column has **no default** and Prisma's `create` omits it. |
+| Callers cannot supply, backdate or advance it | A non-`NULL` value at insert is **rejected** (`Signal.receivedAt is database-owned and cannot be supplied`), for both a past and a future value, under any session zone (B2, B2b). |
+| Immutable after insert | `BEFORE UPDATE` rejects any change, including `NULL → value` (a historical row can never be given a receipt) and `value → NULL` (B3). `DELETE` is already forbidden by `external_signal_signal_v2_immutability_guard`. |
+| `timestamptz`, direct comparison, no session conversion | The freshness functions compare `receivedAt + make_interval(secs => 120)` with `clock_timestamp()`, both `timestamptz` (B1: 27/27 identical answers). |
+| One definition used by every gate | `external_signal_signal_receipt_remaining(signalId) → interval` and `external_signal_signal_receipt_open(signalId, minimumRemaining) → boolean`, both `VOLATILE` (they read `clock_timestamp()`), with the pinned `search_path`. |
+| Historical signals fail closed | `receivedAt IS NULL` ⇒ `remaining` is `NULL` ⇒ `open` is `false`. Every future broker authorization (admission, worker claim, F, C3C permit) calls `open`, so a pre-migration signal can never authorize broker work. |
+| No accidental freshness by backfill | `ALTER TABLE … ADD COLUMN "receivedAt" timestamptz` **without** a default and without a backfill. Probe B4's negative control: `ADD COLUMN … DEFAULT now()` stamps a 30-day-old row with the migration time and makes it look fresh. |
+| `createdAt` is preserved | It stays as the application-written audit value and keeps its other uses (activation-epoch comparisons, history); it is no longer an age authority. Existing comparisons of `createdAt` with activation timestamps are unchanged by this revision and listed as an audit item in section 11. |
+
+**Why `transaction_timestamp()` and not `clock_timestamp()`.** The ingestion service writes the signal inside an interactive
+Prisma transaction. `transaction_timestamp()` (`now()`) is the start of that transaction, so a lock wait or stall before the
+insert makes the receipt **earlier**, never later: it can only shorten the allowed window. `clock_timestamp()` at the insert
+would make a signal look younger by the length of any such stall (probe B2: a 2-second sleep before the insert produced a
+receipt about 2 s old at read time). `statement_timestamp()` has the same weakness. Neither is influenced by `TimeZone`.
+
+**Migration (future, forward-only, not applied here).**
+
+1. `ALTER TABLE "Signal" ADD COLUMN "receivedAt" timestamptz;` (nullable, no default, no backfill, no rewrite).
+2. The guard function and trigger, then `external_signal_signal_receipt_remaining` and `…_open`, each with
+   `SET search_path = pg_catalog, public, pg_temp`, added to the regenerated security manifest.
+3. Prisma schema: `receivedAt DateTime? @db.Timestamptz(6)` with **no** `@default`, documented as database-owned; the generated
+   client's `SignalCreateInput` then lets a caller pass it, which the trigger rejects. A unit test asserts the ingestion
+   `tx.signal.create` call never includes the field.
+4. Ingestion (`external-signal-ingestion.service.ts`, `tx.signal.create`): unchanged except that downstream code must
+   **read** `receivedAt` (it is `NULL` in the object Prisma returns unless selected after insert).
+5. Gates switched to the database functions: admission `validateTradingViewSignalFreshness`, the worker claim's JavaScript
+   check (`external-signal-broker-worker.service.ts:83`), the replaced TV consumption guard, and C3C's permit guard.
+6. No `CHECK ("receivedAt" IS NOT NULL)` is added: historical rows are `NULL` by design, and the insert trigger already
+   guarantees a value on every new row.
+
+#### 3.5.3 What the 120-second rule measures, and what it does not
+
+The rule measures **the age of the server's receipt of the webhook delivery**, by the database clock. It does **not** measure
+how old the TradingView event is. `signalTime` and `barTime` come from the alert payload and are authenticated only as far
+as the webhook credential is (a holder of the URL token can send any value), and delivery may be delayed or retried by
+TradingView or the network before the server receives it. A signal generated minutes ago and delivered now has a fresh
+`receivedAt`. **No document, log line or UI string may claim external-event freshness.** If an independent bound on event age
+is wanted, it must be an additional, only-ever-more-conservative condition: authorize only when the server receipt is within
+120 s **and**, where `signalTime` is present, `receivedAt − signalTime` is within a stated skew bound. That condition is
+sender-asserted and can only shorten the window; it is a proposal for the owner to decide, not part of this design.
+
+#### 3.5.4 The authorization deadline **[R4: receipt-based]**
+
+The TV consumption gains, in the C3B.2 migration:
 
 | Column | Value |
 |---|---|
 | `authorizedAt timestamptz NOT NULL` | `clock_timestamp()` in the `BEFORE INSERT` guard. Caller values rejected. |
-| `authorizationDeadlineAt timestamptz NOT NULL` | `least(signal."createdAt" + interval '120 seconds', "authorizedAt" + interval '30 seconds')`. The 30 s *dispatch window* is a proposed, reviewable constant; it may never exceed the 120 s signal bound. |
-| `fenceVersion bigint NOT NULL` | §3.4. |
+| `authorizationDeadlineAt timestamptz NOT NULL` | `least(signal."receivedAt" + make_interval(secs => 120), "authorizedAt" + make_interval(secs => 30))`. The 30 s *dispatch window* is a proposed, reviewable constant; it may never exceed the receipt bound. |
+| `fenceVersion bigint NOT NULL` | The pre-consumption version (section 3.4.2). |
 
-The guard **refuses to create** a consumption when `clock_timestamp() ≥ signal."createdAt" + 120 s` or when fewer
-than the minimum send window (proposed 5 s) would remain, with `TRADINGVIEW_ENTRY_SIGNAL_EXPIRED`. Existing guards
-make consumption rows immutable (`UPDATE`/`DELETE` forbidden); the migration extends that to the new columns and a
-test proves it. `Signal."createdAt"` is declared `@default(now())` in `prisma/schema.prisma`, but Prisma's query engine may
-supply that value from the application clock. C3B.2 must therefore either prove the ingestion path leaves it to the
-database default or stamp a database-clock reference in the signal's transaction; until then the deadline is only as
-trustworthy as the application/database clock agreement, and this dependency is an explicit open item (§10). Because `now()` is the *start* of the signal's transaction, it can
-only be earlier than the signal's commit, which shortens, never lengthens, the allowed window.
+The guard **refuses to create** a consumption when `external_signal_signal_receipt_open(signalId, minimumSendWindow)` is false
+(`NULL` receipt included), with `TRADINGVIEW_ENTRY_SIGNAL_EXPIRED`; the minimum send window is a proposed 5 s. Existing guards
+make consumption rows immutable; the migration extends that to the new columns and a test proves it.
 
-**What F guarantees, and what it deliberately does not.**
+**What F guarantees, and what it deliberately does not (unchanged in substance).**
 
-* Guaranteed: no consumption is *created* for an already expired signal; every consumption carries a deadline no
-  later than signal + 120 s that the database stamped and nothing can change.
-* **Not guaranteed:** that the transaction *commits* before that deadline. Lock waits, WAL flush, a stalled client
-  or `SET CONSTRAINTS` games can place the commit later. That is harmless **by construction**: a consumption that
-  commits after its deadline is born expired. Nothing may act on it (§3.6), and its exposure is handled by the
-  expired-never-sent protocol (§3.6.3), not by assuming it was never created.
+* Guaranteed: no consumption is *created* for an expired or unreceipted signal; every consumption carries a deadline no later
+  than receipt + 120 s that the database stamped and nothing can change.
+* **Not guaranteed:** that the transaction *commits* before that deadline. Lock waits, WAL flush, a stalled client or
+  `SET CONSTRAINTS` games can place the commit later. That is harmless **by construction**: a consumption that commits after
+  its deadline is born expired and nothing may act on it (section 3.6); its exposure is handled by the expired-never-sent
+  protocol (section 3.6.3).
 
 ### 3.6 Boundary C3C: the actual broker-send boundary **[R3]**
 
@@ -356,8 +579,8 @@ Rows are immutable (`UPDATE`/`DELETE` forbidden; `TRUNCATE` not granted). The `U
 **nondeferrable** (PostgreSQL does not make a unique index check deferrable unless declared so; the migration
 declares them plainly), so the transition is database-enforced independent of `SET CONSTRAINTS`.
 
-`BEFORE INSERT` guard for `SEND_PERMITTED`, run under explicit locks in the §6 order (a subset: exposure advisory,
-`OrderIntent`, claim, fence, then the consumption row):
+`BEFORE INSERT` guard for `SEND_PERMITTED`, run under explicit locks in the section 6.5 order (account identity and
+dispatch-state rows **before** the exposure advisory, intent, claim, fence and the consumption row; section 3.6.7):
 
 * the consumption exists and belongs to this intent; claim `ENTRY_SUBMITTING`, unreleased; intent `submitting`;
 * **`clock_timestamp() < authorizationDeadlineAt − minimum_remaining`** (proposed 2 s), else the insert is refused
@@ -401,7 +624,8 @@ Eligibility (all enforced by the `BEFORE INSERT` guard of `EXPIRED_NEVER_SENT`, 
 2. **no** `SEND_PERMITTED` row exists (guaranteed by the unique index and re-checked);
 3. no `ADAPTER_INVOCATION_STARTED`, `DISPATCH_OUTCOME_RECORDED`, `BROKER_DELIVERY_UNCERTAIN` event; no
    `BrokerOrder`, `BrokerActivity`; claim `ENTRY_SUBMITTING` and unreleased; intent `submitting`;
-4. the fence version equals the version the terminalizer read under lock.
+4. the fence version equals the version the terminalizer read under lock;
+5. **[R4]** the authoritative absence observation of section 3.6.6 (item 3) exists.
 
 Steps, one transaction (READ COMMITTED with explicit locks, so every read is post-lock fresh):
 
@@ -457,6 +681,88 @@ state inactive), the same unique row is inserted with `kind='WITHDRAWN_NEVER_SEN
 of §3.6.3 (same eligibility except step 1's deadline condition is replaced by the stop condition). It never
 applies once any possible-delivery evidence exists.
 
+#### 3.6.6 The broker-send rule, the authoritative client-order-ID lookup and release evidence **[R4]**
+
+**R-SEND (a requirement on C3C, stated once and binding everywhere).** *Only the process that created `SEND_PERMITTED` and
+received acknowledgment of its own successful commit may initiate a POST. A permit discovered on retry, restart or recovery
+never grants another send; reconcile instead.*
+
+Enforcement design:
+
+* The permit row carries a random `permitNonce` generated in the creating process's memory and never re-readable by any
+  other code path (the table grants no `SELECT` of that column to the runtime role; the adapter holds the value it generated).
+  The adapter refuses to run unless it presents a nonce equal to the stored one **and** the permit transaction's `COMMIT`
+  returned success on the same connection in the same call.
+* **Unknown commit outcome is not acknowledgment.** A connection reset, timeout or driver error after `COMMIT` was sent
+  means the permit may or may not exist. That process must not POST; it reads the permit by `orderIntentId` (fresh statement)
+  and, whatever it finds, hands the intent to reconciliation (a found permit is "possible delivery", section 3.6.4).
+* A permit seen by any other process (the same worker after a restart, a recovery pass, a second worker) is evidence of
+  possible delivery and nothing else.
+
+**Authoritative client-order-ID lookup (to be built in C3C, not before; no broker is contacted in C3B.2).**
+
+* *What it is:* a read-only GET of the order by `client_order_id` against the PAPER account's own credentials and the paper
+  API host (Alpaca documents a client-order-ID order lookup; the exact endpoint, status codes and error body are to be
+  confirmed against the current Alpaca reference when C3C is written). It never creates or changes anything, so it is not
+  possible delivery.
+* *Evidence record (new table `ExternalSignalBrokerLookupObservation`, immutable, one row per attempt):* `orderIntentId`,
+  `consumptionId`, `clientOrderId`, `tradingAccountId`, credential fingerprint, `requestedAt` and `respondedAt` stamped by
+  the database, `outcome` ∈ `FOUND` (with `brokerOrderId` and the raw body), `ABSENT_AUTHORITATIVE` (a definitive
+  "not found" from the broker for this exact id), `INDETERMINATE` (timeout, 5xx, auth error, rate limit, malformed body), and
+  `sinceDeadlineMs`. Only `ABSENT_AUTHORITATIVE` and `FOUND` ever change a decision; `INDETERMINATE` never releases anything.
+* *Before every first POST:* permit committed and acknowledged (R-SEND) → lookup → if `FOUND`, link the broker order, advance
+  to `BROKER_ORDER_ACTIVE`, **no POST**; if `ABSENT_AUTHORITATIVE`, re-read the deadline and POST at most once; if
+  `INDETERMINATE`, **no POST**, the permit stands and reconciliation takes over.
+
+**Evidence required to release expired-never-sent exposure** (all conditions, enforced by the terminalizer's guard of
+section 3.6.3, which gains this requirement):
+
+1. `clock_timestamp() ≥ authorizationDeadlineAt` and no `SEND_PERMITTED` row exists (the unique row is the linearization point).
+2. No `ADAPTER_INVOCATION_STARTED`, `DISPATCH_OUTCOME_RECORDED`, `BROKER_DELIVERY_UNCERTAIN` event, `BrokerOrder` or
+   `BrokerActivity` under the shared identity key (section 3.4.6), claim `ENTRY_SUBMITTING` and unreleased, intent `submitting`,
+   fence unchanged since the terminalizer read it under lock.
+3. **At least one `ABSENT_AUTHORITATIVE` observation whose `requestedAt` is later than `authorizationDeadlineAt` plus the
+   adapter's HTTP timeout plus a stall allowance**, for the same account, credential environment and exact
+   `clientOrderId`. (With no permit no compliant adapter sent; the lookup is the backstop against a rogue sender,
+   section 3.6.3's residual assumption.)
+4. An `INDETERMINATE` or older observation does not satisfy item 3; the terminalizer retries the lookup on its schedule.
+
+Exposure under a **committed permit** is never released by this path. It is released only by `FOUND` + normal order
+lifecycle, or by an `ABSENT_AUTHORITATIVE` observation later than `permit.decidedAt + (deadline − decidedAt) + HTTP timeout +
+stall allowance` together with operator confirmation during the canary (section 3.6.4).
+
+#### 3.6.7 C3C send-decision lock order (D3) **[R4]**
+
+The permit/withdrawal/expiry transaction `S` uses the same total order as F (section 6.3). In particular, **account identity
+and dispatch-state locks come before the exposure advisory, the intent, the claim and the fence**:
+
+1. `S` is not an owner operation, so it takes no `User` lock. It starts at the rollout advisory (row 1), rollout state (2) and
+   **dispatch state (3)**.
+2. Source, binding, revision, generation, cycle, account cycle (4 to 9), each a single-table statement.
+3. **`TradingAccount` `FOR SHARE` (10)** followed by assignment, Subscription, Strategy, ExitProfile, Security and allocation
+   (11 to 16), all `FOR SHARE`, and the TradingView authorization (17).
+4. Only then the exposure advisory (21), intent (22), claim (23), fence (24) and, last, the consumption / send-decision row (30).
+
+The emergency-stop checks (`status`, `tradingEnabled`, `killSwitchEnabled`, `tradingBlocked`, dispatch state active) read
+the rows locked in step 1 and 3 **after all locks are held**; nothing re-locks the account later, so a "later emergency
+check" cannot invert the order. A failed check inserts the `WITHDRAWN_NEVER_SENT` row under the same lock set. The
+post-commit `clock_timestamp()` re-read and the lookup (section 3.6.6) happen **outside** any transaction. Probes C6a to C6c
+show the corrected account lock behavior: a kill-switch or pause `UPDATE` waits for a `FOR SHARE` hold, a pause committed after
+a SERIALIZABLE snapshot is `40001`, and a transaction started after the pause reads `PAUSED`.
+
+#### 3.6.8 Sequencing dependency: finalization is not scheduled before the terminalizer exists **[R4]**
+
+A pair that is consumed but never reaches a broker adapter holds its exposure until something proves it was never sent. Until
+C3C's expired-never-sent terminalizer (section 3.6.3) exists, **that is a permanent manual reconciliation**. Therefore:
+
+* **C3B.2** delivers the atomic authorization capability **test-only and default-off**: `finalizeTradingViewDispatch` has no
+  production caller, no scheduler entry and no importer outside tests (a static test asserts this).
+* **C3B.3** delivers scheduler/activation foundation **with finalization disabled**; the scheduler must not call
+  `finalizeTradingViewDispatch`.
+* **C3C** delivers the send decision (permit, withdrawal), the expired-never-sent terminalizer, the broker adapter with the
+  authoritative lookup, and reconciliation.
+* **Scheduling finalization is activated only after the complete C3C lifecycle is validated** (section 8).
+
 ### 3.7 Alternatives considered for the freshness guarantee, and the selection **[R3]**
 
 | Option | Verdict |
@@ -469,8 +775,8 @@ applies once any possible-delivery evidence exists.
 
 **Documented assumptions and limitations of the selection.**
 
-1. All freshness comparisons use the primary's `clock_timestamp()` and `Signal."createdAt"`, whose clock source is an
-   open item (§3.5). A
+1. All freshness comparisons use the primary's `clock_timestamp()` and the database-owned `Signal."receivedAt"` (section
+   3.5), both `timestamptz`. A
    failover to a node with an earlier clock can briefly make an expired deadline look open; the permit's
    uniqueness (the safety property) does not depend on the clock. A clock step is an incident, not a design input.
 2. The deadline bounds initiation by a compliant adapter, not broker receipt (§3.6.4).
@@ -507,12 +813,14 @@ marks the rows revised by this revision, and cases 11 to 13 are added for the C3
 | 5 | Signal expiration **[R3]** | During lock waits, between insert and commit, or after commit. | **Before insert:** the guard refuses to create the consumption (`TRADINGVIEW_ENTRY_SIGNAL_EXPIRED`), definite not-sent refusal. **Between insert and commit, or after commit:** the consumption exists but carries an immutable `authorizationDeadlineAt` at or before signal + 120 s; it is *born expired* if it commits late. Nothing may act on it; see case 11. No commit-time guarantee is claimed. |
 | 6 | Duplicate workers | Second worker's claim insert hits the `orderIntentId` unique (`P2002`) → `NOT_CLAIMED`. Past the claim: F's locks serialize; the second sees an existing consumption or a unique violation on `orderIntentId`/`workerClaimId`/`decisionId`. | No second consumption can exist (four unique constraints). |
 | 7 | F commits but the acknowledgment is lost | Both consumptions exist. Intent `submitting`, claim `ENTRY_SUBMITTING`. | **[R2]** After any failure that may have followed a commit (connection reset, timeout, `57P01`, unknown driver error), the orchestrator **must first read `ExternalSignalBrokerDispatchConsumption` by `orderIntentId`** (fresh `READ COMMITTED` statement) before considering any retry or refusal. If it exists the attempt is over: no retry of F, no refusal/release, hand the intent to recovery/C3C. |
-| 8 | Process crashes immediately after F **[R3]** | Same as row 7, no send decision and no `ADAPTER_INVOCATION_STARTED` event. | A committed pair is **single-use even with no marker**, and **not proof of broker receipt**. **Until C3C exists** (C3B.2, C3B.3) stale recovery treats it as `DISPATCH_OUTCOME_UNKNOWN`, retains exposure and never resends. **With C3C**, once `authorizationDeadlineAt` has passed and no send decision exists, the pair is eligible for the expired-never-sent protocol of §3.6.3 (case 11); before the deadline it is left alone so a live worker can take the permit. |
+| 8 | Process crashes immediately after F **[R3]** | Same as row 7, no send decision and no `ADAPTER_INVOCATION_STARTED` event. | A committed pair is **single-use even with no marker**, and **not proof of broker receipt**. **Until C3C exists no production path can create a pair** (C3B.2 is test-only, C3B.3 does not schedule finalization, section 3.6.8); in a test, stale recovery treats it as `DISPATCH_OUTCOME_UNKNOWN`, retains exposure and never resends. **With C3C**, once `authorizationDeadlineAt` has passed and no send decision exists, the pair is eligible for the expired-never-sent protocol of §3.6.3 (case 11); before the deadline it is left alone so a live worker can take the permit. |
 | 9 | Alpaca already has this client order ID | C3C performs the client-order-ID lookup **before** the first POST and again on any ambiguity. | Link `BrokerOrder`, advance claim to `BROKER_ORDER_ACTIVE`, never POST. No new consumption is created or required. |
 | 10 | F aborts with a retryable DB error (`40001`/`40P01`) | Nothing durable from F. | Up to three attempts, fresh transaction each (fresh snapshot); then refuse as technical not-sent via the independent `READ COMMITTED` path of R-5. Non-retryable classification fails closed. |
 | 11 | **[R3]** Consumed pair, deadline passes before any marker | Consumption exists; no send decision. | C3C-only expired-never-sent terminalization (§3.6.3): unique decision row, evidence class `NOT_SENT_CONSUMED_EXPIRED`, terminal intent, released claim, atomically. Not C2's release. |
 | 12 | **[R3]** Permit and expiry race | Two transactions, one unique row. | Whichever inserts first wins; the other blocks, then fails `23505` (probe P2). Permit-first: no terminalization, reconcile. Expiry-first: no send. |
 | 13 | **[R3]** Marker committed; crash, stall or declined send | `SEND_PERMITTED` exists. HTTP may or may not have started. | Possible delivery. Exposure retained, no resend, attention episode, reconciliation only (§3.6.4). |
+| 14 | **[R4]** Pair committed by a test-only C3B.2 build; no terminalizer exists yet | Pair, fence `v+1`, no send decision. | Not reachable in production (section 3.6.8). Treated as manual-reconciliation exposure until C3C. |
+| 15 | **[R4]** Lost acknowledgment of the *permit* commit | The permit may or may not exist. | No POST by that process (R-SEND); read the permit by `orderIntentId` and reconcile (section 3.6.6). |
 
 **Successful consumption is never treated as proof of broker receipt**, in code, docs or recovery. **No consumed
 exposure is released except by the authoritative reconciliation pathway or the provably-never-sent protocol of
@@ -530,7 +838,7 @@ exposure is released except by the authoritative reconciliation pathway or the p
 | `EXPIRED_NEVER_SENT` / `WITHDRAWN_NEVER_SENT` | terminal; nothing to do | closed | released by §3.6.3 |
 | `DISPATCH_OUTCOME_RECORDED` / `BROKER_DELIVERY_UNCERTAIN` | same as above | same | retained |
 | `BrokerOrder` / `BrokerActivity` | normal order sync takes over | none (resolved) | normal lifecycle |
-| Only an MI consumption (marked) | impossible: deferred pair check fails the commit (fail-closed even under `SET CONSTRAINTS ALL IMMEDIATE`, §3.5 and probe P3) | n/a | n/a |
+| Only an MI consumption (marked) | impossible: deferred pair check fails the commit (fail-closed even under `SET CONSTRAINTS ALL IMMEDIATE`, §3.7 and probe P3) | n/a | n/a |
 | Only a TV consumption | impossible: FK to the MI row | n/a | n/a |
 
 The marked-claim guards forbid releasing a consumed claim through the pre-dispatch path
@@ -548,13 +856,17 @@ regenerated in the same change, from a freshly migrated disposable database, nev
   explicit single-table statements in canonical order, so correctness never depends on the caller having
   pre-locked (R-6) nor on `FOR UPDATE OF a,b,c` ordering (§6.1). It performs the checks below and **stamps**
   `authorizedAt` and `authorizationDeadlineAt`.
-* **`external_signal_dispatch_fence_bump`** and `ExternalSignalDispatchFence` (§3.4).
+* **`external_signal_dispatch_fence_bump`**, `ExternalSignalDispatchFence`, the consumption `AFTER` self-verification and the
+  shared `external_signal_broker_evidence_marked_intents` key (§3.4).
+* **`Signal.receivedAt`**, its guard and `external_signal_signal_receipt_remaining` / `…_open` (§3.5).
+* **Replaced lock modes [R4]**: `external_signal_broker_worker_claim_guard` takes `ta,tas,sub,sec` `FOR SHARE`; the
+  `ExternalSignalEntryExecutionAuthorization` guard takes `FOR SHARE OF tas,ta,s,u` (§6.7). Both keep their other logic.
 * **No deferred commit-stage freshness guard.** Revision 2's `external_signal_final_dispatch_commit_guard` is
   **removed from the design**: it cannot provide the property it claimed (§3.7).
 
 Checks in the consumption guard:
 
-1. **Signal still fresh at authorization**: `clock_timestamp() < signal.createdAt + 120 s − minimum send window`;
+1. **Signal still fresh at authorization [R4]**: `external_signal_signal_receipt_open(signalId, minimum send window)` (database `receivedAt`, section 3.5; a `NULL` receipt fails closed);
    else `TRADINGVIEW_ENTRY_SIGNAL_EXPIRED`. Uses `clock_timestamp()`, not `statement_timestamp()`.
 2. **PAPER BUY only**: account `environment='PAPER'`, intent side `buy`, source `tradingview`.
 3. Account `ACTIVE`, `tradingEnabled`, not `killSwitchEnabled`, not `tradingBlocked`; assignment `enabled &&
@@ -565,144 +877,189 @@ Checks in the consumption guard:
 5. No accepted `EXIT_LONG` on the source cycle; account cycle not `EXIT_PENDING`/terminal.
 6. Claim `ENTRY_SUBMITTING`, unreleased, the owner event cites this worker claim, intent `submitting`.
 7. **No earlier dispatch, broker order or contradictory event**: no other consumption, unenforced dispatch,
-   `BrokerOrder`, `BrokerActivity` or `NOT_SENT/ADAPTER_INVOCATION_STARTED/DISPATCH_OUTCOME/BROKER_DELIVERY_UNCERTAIN`
-   event.
+   `BrokerOrder`, `BrokerActivity` **under the shared identity key of §3.4.6 [R4]** (not `orderIntentId` alone) or
+   `NOT_SENT/ADAPTER_INVOCATION_STARTED/DISPATCH_OUTCOME/BROKER_DELIVERY_UNCERTAIN` event.
 8. **Latest allowed MI decision inside its short window**: `ALLOWED`/`DISPATCH_AUTHORIZED`, highest
    `dispatchSequence` for the intent, `clock_timestamp() < dispatchExpiresAt`.
 9. **Identical identities on both records**: `clientOrderId` and `brokerPostOpportunityId` equal on the MI and TV
    consumption rows, and equal to the claim's.
 10. **Frozen MI obligation** (§1.1): present, belongs to this intent, identity-equal to the decision and the
     account cycle.
-11. **Fence equality** (§3.4): `NEW.fenceVersion` equals the locked fence row's `version`.
+11. **Fence equality [R4]** (§3.4.2): `BEFORE INSERT` requires `NEW.fenceVersion` equal to the locked fence row's `version`; `AFTER INSERT` (after the single bump) requires it to equal `NEW.fenceVersion + 1`.
 12. Nothing session-configurable (`current_setting`, GUC) can relax any of these.
 
 Until this migration exists, the service-level checks of §3.3 are the only enforcement for the time, pause, EXIT
 and obligation items, which is why C3B.2 is "service + migration", not service alone.
 
-## 6. Canonical lock-acquisition contract **[R3]**
+## 6. Lock-acquisition contract **[R4: rewritten]**
 
 ### 6.1 Why the order must be explicit
 
-`SELECT … FROM a JOIN b … FOR UPDATE OF a, b, c` does **not** lock in `FROM` or `OF` order. PostgreSQL locks rows
-as the plan produces them, so the join order the planner picks decides. This was reproduced against the existing
-worker-claim guard (`FOR UPDATE OF i,ac,c,auth,gen,ta,tas,sub,sec,src,b,rev,ec`) and applies equally to the
-TradingView admission lock statement (`market-policy-entry-admission.service.ts:108`,
-`FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec`). Rule: F, the claim transaction, admission and
-the new guards take every lock with **one single-table statement per relation, in the order below**; a guard's
-later multi-table `FOR UPDATE` finds the rows already held and cannot wait. No reliance on multi-table
-declaration order remains anywhere in the contract.
+`SELECT … FROM a JOIN b … FOR UPDATE OF a, b, c` does **not** lock in `FROM` or `OF` order: PostgreSQL locks rows as the
+plan produces them. Measured on the real worker-claim guard (probe C1): blocked on the assignment row, the guard already
+holds `TradingAccount`; blocked on `TradingAccount`, it holds no assignment lock, so its planner order is **TradingAccount
+then assignment**. The same shape is used by the admission lock statement (`market-policy-entry-admission.service.ts:108`,
+`FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec`) and by the TradingView authorization guard (`FOR UPDATE OF
+tas,ta,s,src,b,r,u`). Rule: every TradingView path takes each relation with **one single-table statement, in the order of
+6.5**, in the strongest mode any later trigger will request (never an upgrade), so a guard's multi-table statement finds the
+rows already held and cannot wait.
 
-### 6.2 The reproduced authorization/identity deadlock **[R3]**
+### 6.2 Complete per-operation lock matrix
 
-Revision 2 placed the execution authorization (row 10) **before** `TradingAccount`, `TradingAccountSubscription`,
-`Subscription` and `Security`. The existing identity-invalidation triggers
-(`invalidate_external_signal_entry_authority`, migration `20261029120000`, `ExternalSignalEntryAuthority_*_invalidate`)
-fire `AFTER UPDATE` on those identity tables, so they hold the identity row and then `UPDATE` the authorization:
+"U" = `FOR UPDATE`, "S" = `FOR SHARE`, "KS" = `FOR KEY SHARE`, "NKU" = a row `UPDATE` that does not change a key. Statements
+are in the order PostgreSQL executes them. **Implicit** locks come from triggers and foreign keys; they were extracted from
+the migrated catalog (probe C0, 29 triggers) and, where marked *measured*, observed with `pgrowlocks`. "Today"
+means the code at `733a426`.
 
-```
-F / proposed order:        authorization  →  TradingAccount (etc.)
-identity update trigger:   TradingAccount (the updated row) →  authorization
-```
+| # | Operation (code) | Isolation | Ordered lock sequence, explicit then implicit |
+|---|---|---|---|
+| M1 | **MI grant** `grantAssignmentMarketPolicyEnforcementAuthorization` (service `:507`) | SER | `User` S (`assertEnabledOwner :486`) → assignment **U** (`:511`) → enrollment generation U (`:512`) → *insert; BEFORE `AssignmentEnforcementAuthorization_validate`:* assignment U (held) → generation S → **`TradingAccount` S** → `Subscription` S → `Security` S → `StrategyMarketPolicyRevision` S → `User` S → *AFTER:* event and `SystemEvent` inserts (FK KS) |
+| M2 | **MI revoke** (`:558`) | SER | `User` S → assignment U → MI authorization U → *UPDATE; BEFORE:* `User` S (revoker) → *AFTER:* event |
+| M3 | **MI lapse resolution** (`:589`) | SER | `User` S → assignment U → MI authorization U → *insert; BEFORE:* authorization U (held), `User` S |
+| M4 | MI admission resolver `resolveLockedAssignmentMarketPolicyEnforcement` (`:316`), inside the admission transaction | RC | MI runtime rollout S (caller) → `TradingAccount` KS → assignment KS → `Subscription` KS → `Security` KS → latest MI authorization S |
+| M5 | MI decision insert (`BrokerDispatchDecision_validate`) | RC | MI runtime rollout S → obligation (read) → MI authorization S → *(proposed AFTER fence bump)* |
+| M6 | MI consumption insert (`BrokerDispatchConsumption_validate`) | any | MI authorization S; unlocked reads of assignment, generation, revision, intent, claim; FK KS on decision and intent (*measured* in the pair) |
+| M7 | **TradingView admission** lock statement (`market-policy-entry-admission.service.ts:108`) | RC | one planner-ordered statement U on `ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec` → M4 → exposure advisory (`entry-exposure:<account>:<security>`) → intent and claim inserts → account-cycle `UPDATE` (*BEFORE `parent_lock`:* cycle U, implicit) |
+| M8 | **TradingView worker claim** (`external-signal-broker-worker.service.ts:92-111` + `external_signal_broker_worker_claim_guard`) | SER | rollout advisory → *insert; BEFORE:* advisory (re-entrant) → rollout state U → dispatch state U → one statement U on `i,ac,c,auth,gen,ta,tas,sub,sec,src,b,rev,ec` (planner order, TA before assignment: *measured*) → *back in the service:* **exposure advisory (`:103`, after the guard)** → intent/claim updates → event insert (*BEFORE `external_signal_c2_delivery_event_fence`:* claim U via a same-value `UPDATE`) |
+| M9 | **TradingView authorization grant** (`external-signal-execution-authority.service.ts:101-129`) | SER | owner read → rollout advisory → rollout state **write** (`SET version=version`) → source U → binding U → TV generation U → **`TradingAccount` U** → assignment U → `Subscription` U → `Security` U → *insert; BEFORE `ExternalSignalEntryExecutionAuthorization_guard`:* advisory, rollout state write, one statement U on `tas,ta,s,src,b,r,`**`u`** (adds the strategy revision and **`User` U**) |
+| M10 | TradingView authorization revoke (`:138-151`) | SER | rollout advisory → source U → binding U → authorization U (guard: transition checks only) |
+| M11 | Identity-change `UPDATE` of `TradingAccount`, assignment, `Subscription` or `Security` | any | the row (NKU) → *AFTER:* TradingView authorizations U (`ExternalSignalEntryAuthority_*_invalidate`) → MI authorizations U (`*_invalidate_enforcement_authorization_*`; alphabetical trigger order). `Strategy`, `ExitProfile` and `TradingAccountAllocation` have **no triggers**. |
+| M12 | EXIT correlation (`external-signal-correlation.service.ts:33,38,109`) | RC | source U → binding U → source cycle U → each account cycle U. Signal ingest of an EXIT also runs `Signal_external_exit_touch_source_cycle`: cycle `UPDATE`. |
+| M13 | Any `INSERT`/`UPDATE` of `ExternalSignalTradeCycleAccount` | any | the account-cycle row → *BEFORE `ExternalSignalTradeCycleAccount_parent_lock`:* **parent cycle U (implicit)** → *deferred AFTER `terminal_parent_check`:* cycle U |
+| M14 | Entry recovery (`external-signal-entry-recovery.service.ts:54-55`) | RC | cycle U → account cycle U |
+| M15 | Stale recovery, refusal | RC / SER | recovery: exposure advisory → `FOR UPDATE OF i` (`entry-dispatch-recovery.service.ts:444,1017,1030,1148`); `refuseAndRelease`: intent U (`worker.service:186`); unclaimed refusal: rollout advisory → `FOR UPDATE OF i,ec` (`:153-160`) |
+| M16 | **F** (this design) and M17 **C3C `S`** | SER / RC | rows 0 to 30 of section 6.5, one statement each |
 
-Opposite orders on two relations: a reproducible `40P01`. The grant service already uses the correct direction
-(`external-signal-execution-authority.service.ts:105-118`: `source → binding → generation → TradingAccount →
-TradingAccountSubscription → Subscription → Security`, then the authorization is inserted). The order below follows
-the existing code, and the authorization is placed **after every identity row**.
+*Measured implicit lock sets (probe C1, C3.1, C4):*
 
-### 6.3 The order
+* Current claim guard (fence overlay present): `TradingAccount`, assignment, `Subscription`, `Security`, source, binding, revision,
+  rollout generation, rollout state, dispatch state, source cycle, account cycle, TV authorization, intent, claim all **U**;
+  obligation KS; worker claim written; fence KS + written.
+* Corrected guard after the section 6.5 pre-locks: the same set, but `TradingAccount`, assignment, `Subscription`, `Security`
+  are **S** (no upgrade to U).
+* The pair (beyond intent, claim, fence): rollout generation KS, **dispatch state U**, TV authorization **U**, obligation KS,
+  worker claim KS, decision KS, **MI authorization S**, MI consumption KS + written, TV consumption written.
 
-Top to bottom; nothing may be acquired after a later row. "Mode" is the strongest mode any later trigger will take
-in that transaction (never upgrade). `F` = final transaction; `Claim` = the worker-claim transaction, whose guard
-takes `FOR UPDATE` on the identity rows. **Moved** = position changed in revision 3; **New** = absent before.
+### 6.3 Hazards found (all reproduced)
 
-| # | Relation / lock | Mode (F / Claim) | Acquired by | Notes |
+| ID | Hazard | Status | Probe |
+|---|---|---|---|
+| H1 | TradingView takes `TradingAccount` U then the assignment; MI grant takes the assignment U then `TradingAccount` S. Opposite orders on two relations: `40P01`. Affects rev-3 F (**reproduced** with explicit pre-locks and the real MI grant), the current **claim guard** (**reproduced** alone: TV is the victim, MI is granted), the admission statement (same shape, not separately run) and the **TradingView authorization grant** (**reproduced with both real services**, different owners; TV is the victim with `CONCURRENT_AUTHORITY_CHANGE`). | The last two are **accepted C1/C2 code** | C2.1, C2 (current guard), C8a |
+| H2 | `ExternalSignalEntryExecutionAuthorization_guard` locks **`User` U after the assignment**; every MI owner operation locks `User` S **first**. Same owner: MI holds `User` and waits for the assignment, TV holds the assignment and waits for `User`. The rev-3 matrix did not contain `User` at all. | **Accepted C1 code** | C8b |
+| H3 | `ExternalSignalTradeCycleAccount_parent_lock` locks the parent **cycle after the account-cycle row**; EXIT correlation and entry recovery lock cycle then account cycle. A writer that updates an account cycle without first locking its cycle inverts them. | Existing trigger | C9 |
+| H4 | Planner-ordered multi-table `FOR UPDATE OF` in the claim guard, admission and the authorization guard. | Existing | C1 |
+| H5 | The claim transaction takes the exposure advisory **after** the claim guard; recovery takes it before the intent. | Existing (rev-3 6.4, unchanged) | section 6.6 |
+
+### 6.4 Options evaluated
+
+| Option | Result |
+|---|---|
+| **A. TradingView takes `TradingAccount`, assignment, `Subscription`, `Security` (and allocation) `FOR SHARE`, takes `User` `FOR SHARE` first, never upgrades.** | **Selected.** A TradingView path never needs exclusion from other readers of these rows, only exclusion from their writers: a pause, kill switch, `enabled=false` or status change is an `UPDATE` (NKU), which conflicts with `FOR SHARE` (probes C6a to C6c). The MI grant's S requests are then compatible with everything TradingView holds on those rows, so no cycle can close on them (probes C3.MI, C3.TV, C5). |
+| B. Change the MI services and trigger to lock `TradingAccount` before the assignment | Rejected: edits three MI service transactions **and** the MI authorization trigger, which also serve unmarked PAPER enforcement; large blast radius; the MI trigger order cannot be changed without a migration that touches non-TradingView behavior. |
+| C. Take the TV rollout advisory in MI operations | Rejected: changes unmarked behavior and adds global serialization to owner operations. |
+| D. Retry on `40P01` only | Rejected as a *fix*: deadlock detection already aborts one side after `deadlock_timeout`; retry stays as defense in depth (the victim is TradingView in every reproduction). |
+
+`FOR KEY SHARE` is **not** sufficient for the identity rows (a non-key `UPDATE` does not conflict with it; section 3.1
+item 4); `FOR SHARE` is the smallest mode that preserves pause/kill-switch serialization.
+
+### 6.5 The order, with modes **[R4]**
+
+Top to bottom; nothing may be acquired after a later row. "Mode" is the strongest mode any later trigger in that transaction
+requests, so **the pre-lock mode equals the guard's mode** (hidden upgrades are forbidden: C3.1). F = final transaction;
+Claim = worker claim transaction; S = C3C permit transaction.
+
+| # | Relation / lock | Mode | Acquired by | Notes |
 |---|---|---|---|---|
-| 1 | Advisory `hashtext('external-signal-execution-rollout')` | exclusive | F, Claim, guards (re-entrant), admission, revoke, grant, activate, unclaimed refusal | Serializes all TV dispatch. Acceptable for a PAPER canary. |
-| 2 | `ExternalSignalExecutionRolloutState` id=1 | UPDATE | F; claim guard | |
-| 3 | `ExternalSignalBrokerDispatchState` id=1 | UPDATE | F; claim guard; consumption guard | |
-| 4 | `ExternalSignalSource` | SHARE / UPDATE | F; claim guard; grant; revoke; EXIT correlation | Revoke, EXIT and the source-disable trigger start here. **Moved** after the state rows (before generation). |
-| 5 | `StrategySignalBinding` | SHARE / UPDATE | same | source → binding. |
-| 6 | `StrategySignalRevision` | SHARE / UPDATE | claim guard; F validation | Immediately after its binding. |
-| 7 | `ExternalSignalExecutionRolloutGeneration` (frozen generation) | SHARE / UPDATE | grant (`:111`); claim guard; consumption FK | **Moved** from row 4: grant locks it after binding. |
-| 8 | `ExternalSignalTradeCycle` (source cycle) | SHARE / UPDATE | F; claim guard; EXIT correlation | |
-| 9 | `ExternalSignalTradeCycleAccount` | SHARE / UPDATE | F; claim guard; EXIT correlation | **Source → binding → cycle → account-cycle** is total. |
-| 10 | `TradingAccount` | SHARE / UPDATE | F; claim guard; grant; identity trigger | **Moved before authorization.** Mutable (pause, kill switch): `FOR SHARE`, not `FOR KEY SHARE`. |
-| 11 | `TradingAccountSubscription` (assignment) | SHARE / UPDATE | same | **Moved.** |
-| 12 | `Subscription` | SHARE / UPDATE | same | **Moved.** |
-| 13 | `Strategy` | SHARE | F | New (enabled flag validated). |
-| 14 | `ExitProfile` | SHARE | F | New (enabled flag validated). |
-| 15 | `Security` | SHARE / UPDATE | same as 10 | **Moved.** |
-| 16 | `TradingAccountAllocation` | SHARE | F | **New.** The design validates it (enabled, account-matched) and revision 2 omitted it. Its writers are not known to lock an identity row afterwards; probe required (§9). |
-| 17 | `ExternalSignalEntryExecutionAuthorization` | SHARE / UPDATE | F; consumption guard (`FOR UPDATE`); claim guard; revoke; identity triggers | **Moved after all identity rows.** F stays `FOR UPDATE` because the consumption guard will request it. Revoke: source → binding → authorization (consistent). Identity triggers: identity → authorization (now consistent). |
-| 18 | `MarketPolicyEnforcementRuntimeRollout` id=1 | SHARE | F via `lockMarketPolicyEnforcementRollout` | MI order position 1. |
-| 19 | Latest `AssignmentMarketPolicyEnforcementAuthorization` | SHARE | F via `resolveLockedAssignmentMarketPolicyEnforcement`; MI consumption trigger | |
-| 20 | `StrategyMarketPolicyRevision`, `AssignmentMarketPolicyEnrollmentGeneration` named by the obligation | SHARE | F | New (mutable status). |
-| 21 | Advisory `entry-exposure:<account>:<security>` | exclusive | F; Claim (after §6.4 fix); admission; recovery; release; remediation; C3C permit and terminalizer | **After identity and authorization, before the intent.** |
-| 22 | `OrderIntent` | UPDATE | F; claim guard; C3C | Intent before claim. |
-| 23 | `EntryExposureClaim` | UPDATE | F; claim guard; event fence; C3C | |
-| 24 | `ExternalSignalDispatchFence` | UPDATE | F; consumption guard; every fenced writer's AFTER trigger; C3C | **New (§3.4).** Last, because triggers bump it after the intent and claim writes. |
-| 25 | `ExternalSignalBrokerWorkerClaim` | SHARE | F | Immutable. |
-| 26 | `ExternalSignalEntryExecutionObligation` | SHARE | F; consumption FK | Immutable. |
-| 27 | `OrderIntentMarketPolicyEnforcementObligation` | SHARE | F | New; §1.1. |
-| 28 | Latest `MarketPolicyBrokerDispatchDecision` for the intent | SHARE | F | New. |
-| 29 | Entry `Signal` | SHARE | F (age + identity read) | New; immutable by `external_signal_signal_v2_immutability_guard`. `SignalRoute` and `SignalRoutingRun` are immutable evidence read from the snapshot, as C2 already does. |
-| 30 | Consumption row (C3C: the TV consumption) | UPDATE | C3C permit and terminalizer | New rows in F: MI consumption, TV consumption, optional claim event (key-share via FK; the event fence locks the claim, row 23, already held). |
+| 0 | `User` (actor/owner) | S | MI operations (first); **TV authorization grant (moved here)** | F, Claim and S are not owner operations and take no `User` lock. The authorization guard's `u` becomes `FOR SHARE`. |
+| 1 | Advisory `external-signal-execution-rollout` | excl. | F, Claim, S, guards (re-entrant), admission, grant, revoke, activate, unclaimed refusal | |
+| 2 | `ExternalSignalExecutionRolloutState` id=1 | U | F, Claim, S, TV grant | |
+| 3 | `ExternalSignalBrokerDispatchState` id=1 | U | F, Claim, S, consumption guard | |
+| 4 | `ExternalSignalSource` | S / U | F, Claim, S, grant, revoke, EXIT | |
+| 5 | `StrategySignalBinding` | S / U | same | |
+| 6 | `StrategySignalRevision` | S / U | Claim, F | |
+| 7 | TV rollout generation | S / U | grant, Claim, F | |
+| 8 | `ExternalSignalTradeCycle` | S / U | F, Claim, S, EXIT, entry recovery, **every account-cycle writer (H3)** | Always before row 9. |
+| 9 | `ExternalSignalTradeCycleAccount` | S / U | same | |
+| 10 | **`TradingAccount`** | **S** | F, Claim, S, admission, TV grant | Was U in rev 3, in the claim guard and in the TV grant. |
+| 11 | `TradingAccountSubscription` | **S** | same | MI takes it U, first of its identity rows. |
+| 12 | `Subscription` | **S** | same | |
+| 13 | `Strategy` | S | F, S | enabled flag validated |
+| 14 | `ExitProfile` | S | F, S | |
+| 15 | `Security` | **S** | same | |
+| 16 | **`TradingAccountAllocation`** | S | F, S | A leaf: no trigger, and `trading-account-allocation.service.ts` takes no other lock. Probe C7: a disable waits for the share hold and is `40001` for a stale snapshot. The assignment's allocation foreign key takes KS on it, compatible with S. |
+| 17 | TV authorization | U | F, S, consumption guard, claim guard, revoke, identity triggers | After every identity row, so the identity triggers (M11) agree with it. |
+| 18 | MI runtime rollout id=1 | S | F | |
+| 19 | Latest MI authorization | S | F, MI consumption trigger | MI revoke takes it U **after** the assignment, consistent with 11 < 19. |
+| 20 | MI policy revision, enrollment generation | S | F | |
+| 21 | Advisory `entry-exposure:<account>:<security>` | excl. | F, Claim (after the 6.6 fix), S, admission, recovery, release | After identity, before the intent. |
+| 22 | `OrderIntent` | U | F, Claim, S | |
+| 23 | `EntryExposureClaim` | U | F, Claim, S, event fence | |
+| 24 | `ExternalSignalDispatchFence` | U | F, consumption guard, **every fenced writer's AFTER trigger**, S | Last of the guarded rows. |
+| 25 | `ExternalSignalBrokerWorkerClaim` | S | F | |
+| 26 | `ExternalSignalEntryExecutionObligation` | S | F | |
+| 27 | `OrderIntentMarketPolicyEnforcementObligation` | S | F | |
+| 28 | Latest MI decision | S | F | |
+| 29 | Entry `Signal` | S | F | |
+| 30 | Consumption / send-decision rows | U | S | New rows in F. |
 
-**Derivation and what is proven.** Rows 4-9 are the observed EXIT-correlation and revoke orders; the grant order
-(rollout state, source, binding, generation, account, assignment, Subscription, Security, then the authorization
-insert; it does not lock the revision) is the subsequence 2, 4, 5, 7, 10, 11, 12, 15, 17; rows 10-15 → 17 is the identity-trigger order; rows 21-23 are the recovery, claim-guard
-and exposure order. The table is a total order consistent with every path named above, from the sources cited. It
-is **not** proven by execution yet: §9 requires a two-connection probe of every adjacent pair listed there on
-PostgreSQL 16 and 17 before C3B.2 acceptance.
+**Why this is deadlock-free against Market Intelligence (argument, with the probes that cover it).** A cycle between an MI
+operation and a TradingView operation needs TradingView to hold something MI requests while requesting something MI holds.
+MI's requests are `User` S, `TradingAccount` S, `Subscription` S, `Security` S, the enrollment generation, and (revoke/lapse)
+its own authorization U. TradingView now holds `User` at most S, and `TradingAccount`/`Subscription`/`Security` at most S, so
+none of those requests can wait on TradingView. MI's U requests are on the **assignment** and its **own authorization**,
+both of which MI takes in an order (assignment, then authorization) that TradingView respects (11 < 19). The remaining
+exposure is writers of the identity rows (M11), which hold the row (NKU) and then update authorization rows: they conflict
+with TradingView's S at the row, before they hold anything TradingView wants. Probes: C3.MI and C3.TV (MI grant, both queue
+orders), C5 (MI revoke), C6a to C6c (pause/kill switch), C7 (allocation), C8 (TV grant). This is an argument with these
+interleavings measured, not a proof of every pair.
 
-**Admission** currently takes rows 4-17 in one planner-ordered statement (`:108`). It must be rewritten to
-single-table statements in this order before C3B.2; the order change does not alter its behavior.
+### 6.6 Worker-claim / recovery lock inversion: hazard, fix and prerequisite **[R2, order updated R3/R4]**
 
-### 6.4 Worker-claim / recovery lock inversion: hazard, fix and prerequisite **[R2, order updated R3]**
+The independent audit reproduced a `40P01` between the existing worker claim and stale recovery: the claim transaction takes
+the claim guard's intent/identity locks first and the `entry-exposure` advisory lock afterwards (`:103`), while recovery takes
+the advisory lock first, then `FOR UPDATE OF i`. Opposite orders on the same intent.
 
-The independent audit **reproduced a `40P01` deadlock** between the existing worker claim and stale recovery:
-
-* `processTradingViewOrderIntentForC2` (`external-signal-broker-worker.service.ts`) inserts the worker claim
-  first. The claim trigger takes the `OrderIntent` (and identity) rows `FOR UPDATE` and only afterwards does the
-  service take the `entry-exposure` advisory lock (`:103`).
-* Recovery (`entry-dispatch-recovery.service.ts:1017`, `:444`, `:1148`) takes the `entry-exposure` advisory lock
-  first, then `FOR UPDATE OF i`.
-
-Opposite orders on the same intent; PostgreSQL aborts one side with `40P01`. It is not a safety violation (the
-classifier retries it) but it is nondeterministic stalling and a flake source under the C3B.2 interleavings.
-
-**Corrected claim transaction (applies the revision-3 order):**
+**Corrected claim transaction (the 6.5 order, one contract for Claim, F and S):**
 
 1. rollout advisory (row 1);
-2. explicit single-table pre-locks of rows 2-17, **identity rows (10-16) before the authorization (17)**, in the
-   Claim mode;
+2. explicit single-table pre-locks of rows 2 to 20 (identity rows `FOR SHARE`, authorization U);
 3. exposure advisory (row 21);
-4. the claim insert (its guard finds rows 2-17, the intent and the claim already held; the fence is taken at row 24);
-5. the exposure/intent updates and the claim event, as today.
+4. the claim insert, whose guard finds rows 2 to 20, the intent and the claim already held;
+5. the intent/claim updates and the claim event as today.
 
-If the claim transaction only moved the advisory lock ahead of the claim insert, it would sit before the claim
-guard's identity `FOR UPDATE` while admission holds identity `FOR SHARE` and then waits for the advisory lock, an
-admission-versus-claim inversion; hence step 2. Recovery, which takes only rows 21 → 22, is consistent. The
-corrected order is the **same** order F uses (§3.3 step 1): one contract for both.
+Only moving the advisory lock ahead of the insert would put it before the guard's identity locks while admission holds
+identity locks and then waits for the advisory lock, hence step 2. This checkpoint does **not** change the worker path (C3B.1
+forbids it); the correction and its probes are a hard prerequisite of C3B.2 acceptance.
 
-This checkpoint does **not** change the worker path (C3B.1 forbids it); it records the fix and makes it a hard
-prerequisite.
+### 6.7 Required code and migration changes for the lock correction (smallest set)
 
-### 6.5 Other hazards
+1. **Claim guard** `external_signal_broker_worker_claim_guard`: `FOR UPDATE OF i,ac,c,auth,gen,ta,tas,sub,sec,src,b,rev,ec` →
+   `FOR UPDATE OF i,ac,c,auth,gen,src,b,rev,ec FOR SHARE OF ta,tas,sub,sec` (probe C3.0: the corrected guard is the real
+   guard text with only this change).
+2. **TV authorization guard** `ExternalSignalEntryExecutionAuthorization_guard`: `FOR UPDATE OF tas,ta,s,src,b,r,u` →
+   `FOR UPDATE OF src,b,r FOR SHARE OF tas,ta,s,u`; **TV grant service**: `User` S first, then `TradingAccount`,
+   assignment, `Subscription`, `Security` `FOR SHARE` (source, binding and generation unchanged).
+3. **Admission** (`market-policy-entry-admission.service.ts:108`): single-table statements in the 6.5 order; identity rows S.
+4. **Writers of `TradingAccountSubscription`/account cycle** (H3): lock the cycle (row 8) before the account cycle (row 9);
+   an audit of every account-cycle writer is a proof obligation.
+5. **Audit**: any transaction that updates `TradingAccount` and later locks `TradingAccountSubscription` (none is known; the
+   allocation, risk and workflow services were not audited in this revision).
 
-* **A. TV rollout advisory (row 1) before the MI rollout row (row 18).** No existing path takes the MI rollout row
-  and *then* the TV advisory (MI transitions take `User FOR SHARE → MI rollout`). Keep it so and test it.
-* **B.** Exposure advisory vs `OrderIntent`: superseded by §6.4.
-* **D. Unlocked reads in the MI consumption trigger.** It reads intent and claim unlocked. F's rows 22-23 close that
-  for TradingView; the MI trigger is unchanged so unmarked behavior is unchanged.
+### 6.8 Other hazards
+
+* **A. TV rollout advisory (row 1) before the MI rollout row (row 18).** No existing path takes the MI rollout row and then the
+  TV advisory (MI transitions take `User` S then the MI rollout). Keep it so and test it.
+* **D. Unlocked reads in the MI consumption trigger.** It reads intent and claim unlocked. F's rows 22 and 23 close that for
+  TradingView; the MI trigger is unchanged so unmarked behavior is unchanged.
 * **E. Authorization revoke vs F.** Same relative order (4 → 5 → 17). No inversion.
-* **F. EXIT ingestion.** Correlation does not take the rollout advisory lock; it takes `source → binding → cycle →
-  account cycle` (rows 4, 5, 8, 9). F uses that order, so EXIT and F interleave only at rows 8-9.
-* **G. Global serialization.** Rows 1-3 make TV dispatch single-file, intentional for the canary and why
-  `lock_timeout` is mandatory on F.
-* **H. Fence writers (new, §3.4).** Order sync and other writers of `BrokerOrder`/`BrokerActivity` must lock the
-  intent and claim (rows 22-23) before the fenced insert so the AFTER-trigger bump (row 24) comes last. Audit and
-  probe every fenced writer; an inversion is an aborted transaction, never a bypass.
+* **F. EXIT ingestion.** Correlation does not take the rollout advisory lock; it takes source → binding → cycle → account
+  cycle (rows 4, 5, 8, 9). F uses that order, so EXIT and F interleave only at rows 8 to 9. EXIT ingestion also rewrites the
+  cycle row (a version change F's SERIALIZABLE lock turns into `40001`).
+* **G. Global serialization.** Rows 1 to 3 make TV dispatch single-file, intentional for the canary and why `lock_timeout` is
+  mandatory on F.
+* **H. Fence writers.** Order sync and other writers of `BrokerOrder`/`BrokerActivity` must lock the intent and claim
+  (rows 22 and 23) before the fenced write so the AFTER bump (row 24) comes last; audit and probe every fenced writer. An
+  inversion is an aborted transaction, never a bypass.
 
 ## 7. Recovery interaction
 
@@ -720,31 +1077,42 @@ takes the exposure advisory lock and the intent lock, then **re-reads the consum
 fresh statement snapshot immediately before releasing**, so a lost-acknowledgment commit (case 7) can never be
 released as not-sent. C3C adds the single separately keyed release of §3.6.3.
 
-## 8. Remaining work and prerequisites
+## 8. Sequencing, remaining work and prerequisites **[R4: revised]**
 
-* **Prerequisite to C3B.2 acceptance:** the §6.4 correction of the worker-claim path with explicit pre-locks and
-  its probes; the admission lock statement rewritten in canonical single-table order (§6.3); the C3B.1 migration
-  applied to development by the product owner; the preflight green on the real runtime identity.
-* **C3B.2:** this contract, the three MI-service refactors, `finalizeTradingViewDispatch`, the §5.3 migration
-  (fence table and bump triggers, consumption deadline columns and guard, a regenerated security manifest), and
-  the §9 tests.
-* **C3B.3:** worker scheduling and rollout/activation operations, still with the adapter disabled.
-* **C3C:** the send-decision table and guards, the expired-never-sent terminalizer, the broker adapter
-  (client-order-ID lookup, single POST, pre-POST PostgreSQL-clock re-read), authoritative reconciliation and the
-  only release path for retained exposure.
-* **Before any canary:** broker-enabled readiness (`npm run db:security-preflight -- --mode broker-enabled` green
-  on the real runtime connection); the role cutover with session draining applied and verified; the §6.4
-  correction; the §1.1 obligation checks; a defined global kill procedure; a PAPER rehearsal with the activation
-  epoch; SELL and LIVE remain disabled. Also, retained as documented pre-canary hardening (found by the same
-  audits, not part of C3B.1):
-  1. **Function configuration drift**: the manifest pins body, language, volatility and the trusted
-     `search_path`, but not other `proconfig` entries such as `statement_timeout`; a function could gain or lose
-     such a setting unnoticed.
-  2. **PostgreSQL 17 `MAINTAIN` privilege** and the associated denial-of-service exposure through
-     `VACUUM`/`ANALYZE`/`REINDEX`-class operations on application tables.
-  3. **Driver-adapter package class-identity consistency** between the packages that supply the pg adapter and the
-     pg driver, so error classes and `instanceof` checks cannot silently diverge.
+Hermes identified an operational dependency: a consumed pair that never reaches a broker adapter holds its exposure until the
+expired-never-sent protocol proves it was never sent, and until C3C builds that terminalizer the only recourse is manual
+reconciliation. The roadmap is therefore:
 
+| Step | Content | Broker / production effect |
+|---|---|---|
+| **C3B.2** | The atomic authorization capability: the section 11.3 migration (fence, receipt clock, lock corrections, replaced consumption guard), `finalizeTradingViewDispatch`, the three MI refactors and the section 9 tests. **Test-only and default-off.** | None. No production caller. A static test asserts that nothing outside tests imports `finalizeTradingViewDispatch`. |
+| **C3B.3** | Scheduler and activation *foundation* only: worker scheduling, rollout/activation operations, observability. **Finalization stays disabled**; the scheduler must not call F. | None. |
+| **C3C** | The send decision (`SEND_PERMITTED`, `WITHDRAWN_NEVER_SENT`), the **expired-never-sent terminalizer**, the broker adapter, the authoritative client-order-ID lookup and the authoritative reconciliation, per sections 3.6.1 to 3.6.7. | First (PAPER only) broker effect, behind the activation gate. |
+| **Activation** | Scheduling finalization is switched on **only after the complete C3C lifecycle has been validated end to end**: pair → permit → lookup → POST → observation, and every non-send path (expiry, withdrawal, stalled worker, lost acknowledgment, declined send) ending in either reconciliation or the terminalizer. | The canary. |
+
+The broker-send rule is unchanged and stated in section 3.6.6 (R-SEND): only the process that created `SEND_PERMITTED` and
+received acknowledgment of its own successful commit may initiate a POST; a permit discovered on retry, restart or recovery
+never grants another send; reconcile instead.
+
+**Prerequisites to C3B.2 acceptance.**
+
+* The section 6.7 lock corrections (claim guard, authorization guard and grant, admission statement, account-cycle writers)
+  with their probes re-run against the real services.
+* The section 6.6 worker-claim path correction (explicit pre-locks, exposure advisory before the insert) and its probes.
+* The C3B.1 migration applied to development by the product owner and the preflight green on the real runtime identity.
+
+**Before any canary** (unchanged from revision 3 and still required): broker-enabled readiness (`npm run
+db:security-preflight -- --mode broker-enabled` green on the real runtime connection); the role cutover with session
+draining applied and verified; the section 1.1 obligation checks; a defined global kill procedure; a PAPER rehearsal with the
+activation epoch; SELL and LIVE remain disabled. Also retained as documented pre-canary hardening (found by the same audits,
+not part of C3B.1):
+
+1. **Function configuration drift**: the manifest pins body, language, volatility and the trusted `search_path`, but not
+   other `proconfig` entries such as `statement_timeout`.
+2. **PostgreSQL 17 `MAINTAIN` privilege** and the associated denial-of-service exposure through `VACUUM`/`ANALYZE`/`REINDEX`-class
+   operations on application tables.
+3. **Driver-adapter package class-identity consistency** between the packages that supply the pg adapter and the pg driver, so
+   error classes and `instanceof` checks cannot silently diverge.
 ## 9. Required interleaving and acceptance tests (future implementation; none are written in this checkpoint)
 
 Every test uses **two independent PostgreSQL connections** (separate sessions, not two statements on one client),
@@ -777,22 +1145,132 @@ barriers placed at the contested statement (not timing guesses). For each scenar
 | 10 | **No second consumption, broker invocation or exposure release under uncertainty**: every row of the §5 matrix, plus permit-committed crash, stalled worker, and declined send, asserting retained exposure and zero POST. | n/a | n/a |
 | 11 | Fence proof obligations of §3.4 (version conflict via a lock-only competitor, real Prisma isolation, trigger/FK, direct-SQL bypass, duplicate workers, existing guards), and the `xmin` negative control reproducing probes P1/P1b. | | |
 | 12 | Missing MI obligation fixture, duplicate admission, wrong-identity obligation; direct-SQL consumption by a session that skipped pre-locks and the fence. | refused before any decision; guard rejects | n/a |
+| 13 | **[R4] Fence version protocol** through `prisma.$transaction(…, { isolationLevel: 'Serializable' })` and the pg adapter: success (`v → v+1`, stored `v`), rollback, retry, wrong/stale/`NULL` version, fenced write inside the window, missing bump (probes A1 to A5b, raw `pg` today). | n/a | pair at `v+1`; rolled back at `v` |
+| 14 | **[R4] Concurrent release and stale finalizer**: RC, RR and SER releasers and writers × both commit orders × {evidence event, intent update, claim release, `BrokerOrder`, `BrokerActivity` attribution}, each with its negative control (probes A6, A7, A8 today). | stale writer `40001` or already sees the pair | writer waits then is refused |
+| 15 | **[R4] Receipt clock**: ingestion through the real service (the field is never supplied, `receivedAt` read back), supplied/advanced/backdated values rejected, immutability, historical `NULL` fails closed at admission, claim, F and C3C, nine time zones × three ways of setting them, `ALTER DATABASE`/startup zones, DST seconds-interval (probes B0 to B5 today, direct SQL). | | |
+| 16 | **[R4] Lock matrix**: every row of section 6.2 against every other contested row in both queue orders with the real services, including the TV authorization grant after the section 6.7 fix, admission, the claim, F and S against MI grant, revoke and lapse; zero `40P01` (probes C2 to C9 today). | | |
+| 17 | **[R4] Unmarked compatibility**: the existing legacy fill-import, broker-activity synchronization, order-lifecycle and entry-exposure integration suites run unchanged against a database carrying the new triggers; fence tuple counters unchanged (probe D5 today, SQL level). | | |
+| 18 | **[R4] EXIT ingestion as a fence**: a SERIALIZABLE F whose snapshot predates an EXIT ingest fails `40001` at the cycle lock. | | |
+| 19 | **[R4] Shared identity key**: quarantine, fence, F step 3 and the consumption guard use `external_signal_broker_evidence_marked_intents`; a `BrokerOrder` under another intent with the marked `clientOrderId` is rejected (probes D4 to D4c today). | | |
+| 20 | **[R4] Sequencing guards**: no importer of `finalizeTradingViewDispatch` outside tests; the C3B.3 scheduler never calls it; a pair created in a test is reported as manual-reconciliation exposure until C3C. | | |
+| 21 | **[R4] Real decision phase**: `prepareObligatedBrokerDecision` with a real frozen obligation, its decision insert's fence bump and lock order versus F (the probes seed the `ALLOWED` decision with triggers off). | | |
 
 ## 10. Disposable-database probe evidence
 
-The probes are in [`scripts/design-probes/c3b2-postgres-probes.mjs`](../../scripts/design-probes/c3b2-postgres-probes.mjs).
-They create and drop a scratch database on a throwaway server, touch no application schema and issue no broker
-call. They were run against PostgreSQL **16.13** and **17.11** with identical outcomes:
+### 10.1 Primitive probes (revision 3, retained)
+
+[`scripts/design-probes/c3b2-postgres-probes.mjs`](../../scripts/design-probes/c3b2-postgres-probes.mjs) creates and drops a
+scratch database on a throwaway server, touches no application schema and issues no broker call. PostgreSQL **16.13** and
+**17.11**, identical outcomes:
 
 | Probe | Observation (both versions) | Used for |
 |---|---|---|
-| P1 | SERIALIZABLE reader sees 0 events; a competitor locks the claim `FOR UPDATE`, inserts an event, commits; the reader's later `UPDATE` of the claim returns **ok** (no `40001`), still sees 0 events, and `xmin` equals its transaction id. | A row "touch" and an `xmin` check do not detect lock-only evidence writers (§3.4). |
-| P1 (fence) | Same competitor also bumps a fence row; the reader's `SELECT … FOR UPDATE` on the fence raises **`40001`**. | The fence counter works (§3.4). |
+| P1 | SERIALIZABLE reader sees 0 events; a competitor locks the claim `FOR UPDATE`, inserts an event, commits; the reader's later `UPDATE` of the claim returns **ok** (no `40001`), still sees 0 events, and `xmin` equals its transaction id. | A row "touch" and an `xmin` check do not detect lock-only evidence writers (3.4). |
+| P1 (fence) | Same competitor also bumps a fence row; the reader's `SELECT … FOR UPDATE` on the fence raises **`40001`**. | The fence counter works (3.4). |
 | P1b | After a `plpgsql` `EXCEPTION` block writes the row, `xmin` ≠ the top-level transaction id. | `xmin` is unreliable under subtransactions. |
-| P2 | Unique-index insert of a second decision blocks while the first is uncommitted, then `23505`; if the first rolls back the second succeeds. | Permit versus expiry linearization (§3.6.2). |
-| P3 | With `SET CONSTRAINTS ALL IMMEDIATE`, a "deferred" check ran 2 ms after the insert; the commit was reached ~1.5 s later after a lock wait. | Deferred triggers are not a commit-time guarantee (§3.7). |
-| P3 | `track_commit_timestamp = off`; `pg_xact_commit_timestamp()` errors. | Commit-timestamp tracking is not available by default (§3.7). |
+| P2 | Unique-index insert of a second decision blocks while the first is uncommitted, then `23505`; if the first rolls back the second succeeds. | Permit versus expiry linearization (3.6.2). |
+| P3 | With `SET CONSTRAINTS ALL IMMEDIATE`, a "deferred" check ran 2 ms after the insert; the commit was reached ~1.5 s later after a lock wait. | Deferred triggers are not a commit-time guarantee (3.7). |
+| P3 | `track_commit_timestamp = off`; `pg_xact_commit_timestamp()` errors. | Commit-timestamp tracking is not available by default (3.7). |
 
-**Not yet probed (required before implementation):** the clock source of `Signal."createdAt"` on the real ingestion path, the real Prisma `Serializable` transaction and driver adapter,
-the proposed fence triggers on the real tables, the lock-order pairs of §6.3, and PostgreSQL behavior under the
-exact interleavings of §9. Nothing in this document is approved on the strength of the primitive probes alone.
+### 10.2 Real-schema probes (revision 4)
+
+[`scripts/design-probes/c3b2-r4-real-schema-probes.ts`](../../scripts/design-probes/c3b2-r4-real-schema-probes.ts) (with
+`c3b2-r4-{fence,receipt,compat,locks}-section.ts` and the overlay
+[`c3b2-r4-overlay.sql`](../../scripts/design-probes/c3b2-r4-overlay.sql)) creates a scratch database, replays **all 107
+repository migrations** into it, applies the **proposed** fence and receipt objects, and builds real TradingView graphs with
+the production fixture and services (`createTradingViewGraphFixture`, the MI policy, enrollment and grant services, the TV
+authorization grant service). `fetch` is replaced by a spy that fails the run on any request, and the run reports
+`no broker request was attempted`. Run it against a throwaway server only:
+`PROBE_BASE_URL=postgresql://postgres:pw@localhost:55416 npx tsx scripts/design-probes/c3b2-r4-real-schema-probes.ts`
+(optionally `PROBE_ONLY=fence,receipt,locks,compat`). Recorded results:
+[`c3b2-r4-results-pg16.json`](../../scripts/design-probes/c3b2-r4-results-pg16.json) and
+[`c3b2-r4-results-pg17.json`](../../scripts/design-probes/c3b2-r4-results-pg17.json).
+
+**Result: 61 checks on PostgreSQL 16.13 and 61 on 17.11, 0 failures on each, no broker request.**
+
+| Group | Checks | What they establish |
+|---|---|---|
+| setup | 1 | Real graph, worker claim, MI authorization (production services) and seeded `ALLOWED` decision build on the migrated schema. |
+| A (fence), 29 | A0, A1, A2, A2b, A3, A4, A5, A5b, A6.0, A6.O1/O2/O3a/O3b × {RC, SER}, A6c, A7.1/A7.2 × {RC, SER}, A7.3 × {RR, SER}, A7.4, A7.4b, A8 | Section 3.4: the rev-3 contradiction (A1), the corrected protocol and its final values (A2, A3, A5), guard and self-verification (A4, A5b), one-shot unique constraints (A2b), lock-only competitors in both orders and isolation levels (A6), concurrent release (A7), and the existing evidence fence (A8). Negative controls A6c and A7.4 demonstrate the hazards. |
+| B (receipt), 9 | B0, B1, B1b, B1c, B2, B2b, B3, B4, B5 | Section 3.5: types and defaults, 27 zone/setter combinations identical, legacy comparison wrong in five zones, startup and database-level zones, stamping and rejection, immutability, backfill trap, seconds-only interval. |
+| D (compat), 5 | D2, D4, D4b, D4c, D5 | Sections 3.4.6 and 3.4.7: bump counts, the shared key, the quarantine gap, unmarked inertness. |
+| C (locks), 16 | C0, C1a, C2.1, C3.0, C3.MI, C3.TV, C3.1, C4, C5, C6a to C6c, C7, C8a, C8b, C9 | Section 6: catalog extraction, measured lock sets, the deadlock reproductions and the corrected order in both queue orders, no hidden upgrade, MI revoke, pause/kill switch, allocation, the two accepted-code inversions and the account-cycle trigger lock. |
+
+*Selected measurements.* Fence after a successful pair: `v=8` read, `8` after the MI insert, `9` after the TV insert and at
+commit, `fenceVersion=8` stored; rolled back: `8`. Rev-3 protocol: `supplied 8, current 9`, rejected. Stale releaser (A7.4
+control, fence off): evidence, intent block and release **all committed** with the pair intact; with the fence: `40001` at each
+step. Lock reproductions: rev-3 pre-locks vs real MI grant, `40P01` for TV in about 1.0 s; current claim guard vs real MI
+grant, TV `40P01`, MI granted; TV authorization grant vs MI grant, TV `CONCURRENT_AUTHORITY_CHANGE`; late `User` U vs
+MI, MI `CONCURRENT_AUTHORIZATION_CHANGE`; corrected order: both queue orders complete in about 30 ms with zero deadlocks.
+
+**What these probes do not prove (so nothing here is approved on their strength alone):**
+
+* The `ALLOWED` MI decision is **seeded with triggers off** (the repository's own C3A seeds do the same); the real
+  `prepareObligatedBrokerDecision` chain and its decision-insert bump are not exercised (test 21).
+* MI grant and revoke run through the real services; MI **lapse** and **admission** are source-derived, and the TradingView
+  **admission** statement was not run (the claim guard has the same shape).
+* The fence was exercised with raw `pg` sessions, not through Prisma's `$transaction({ isolationLevel: 'Serializable' })`
+  with the pg driver adapter.
+* Unmarked compatibility was exercised with SQL equivalents of the legacy paths, not the services.
+* EXIT ingestion's cycle touch is read from the catalog, not probed.
+* The overlay's bump function dispatches through `to_jsonb`; the production functions must be typed and plan-checked.
+
+## 11. Revision-4 summary: corrections, remaining proof obligations and recommended C3B.2 scope **[R4]**
+
+### 11.1 Statements corrected by this revision
+
+| Earlier statement | Correction |
+|---|---|
+| Both consumption inserts are in the fence's bump set and the guard checks `fenceVersion` equals the fence (rev 3, 3.4) | Self-defeating (probe A1). Only the TV consumption bumps, once, after its own guard. |
+| The current evidence fence never changes the exposure claim row (rev 3, 3.4) | It runs a same-value `UPDATE` of the claim (`lastDiagnosedAt`), which writes a new version. Coverage and gaps are in 3.4.5. |
+| One bump per logical event | Not required and not true (probe D2: 3 statements, 4 bumps). Requirement: strictly increasing, never skippable. |
+| `Signal.createdAt` plus `clock_timestamp()` bounds the signal at 120 s (rev 3, 3.5) | Session-time-zone dependent and application-clock written; replaced by `Signal.receivedAt` (3.5). |
+| `MarketPolicyBrokerDispatchDecision.obligationId` is nullable and nothing requires an obligation (rev 2/3, 1.1) | A `CHECK` requires it for every consumable decision (1.1). |
+| The rev-3 lock order is acyclic (rev 3, 6.3) | It omitted `User`, the implicit `parent_lock` trigger and the TV authorization grant; it used `TradingAccount` U (probe C2.1). Replaced by 6.5. |
+| Stale recovery treats a pair as `DISPATCH_OUTCOME_UNKNOWN` "until C3C" (rev 3, case 8) | No production path may create a pair before C3C exists (3.6.8). |
+| Absence checks keyed on `orderIntentId` are sufficient | They miss activity tied through its `BrokerOrder` and a `BrokerOrder` carrying the marked `clientOrderId` (D4b/D4c). |
+
+### 11.2 Remaining proof obligations
+
+Each is a test or audit that must pass before C3B.2 is accepted. None is claimed by revision 4.
+
+1. Re-run probes C2 to C9 with the **corrected services and migration** (TV grant `User` S first and `FOR SHARE`, admission
+   single-table statements, claim path pre-locks, account-cycle writers) instead of the statement replays used here.
+2. Run the TradingView **admission** lock statement and MI **lapse** resolution against each other and against MI grant
+   and revoke in both queue orders.
+3. Audit every transaction that updates `TradingAccount` and later locks the assignment, `Subscription`, `Security` or `User`;
+   audit every account-cycle writer for cycle-first ordering (H3).
+4. Prove the fence through Prisma `Serializable` interactive transactions and the pg adapter, with the real
+   `prepareObligatedBrokerDecision` creating the decision (bump position and lock order versus F).
+5. Probe the EXIT-ingest cycle touch as a fence (`40001` at F's cycle lock).
+6. Run the existing legacy fill-import, broker-activity synchronization, order-lifecycle and entry-exposure suites against a
+   database with the new triggers; measure the added cost on the hot `BrokerOrder`/`BrokerActivity` paths with typed
+   functions and the new partial index.
+7. Prove `receivedAt` through the real ingestion service (never supplied, read back), at admission, claim, F and the permit,
+   with a deliberately skewed application clock, and confirm `transaction_timestamp()` semantics under Prisma's interactive
+   transaction (the start of the transaction is the receipt; a long-open transaction only shortens the window).
+8. Assert that no runtime role holds `session_replication_role`, trigger-disable or table-owner privilege, and that no role
+   can `UPDATE`/`DELETE`/`TRUNCATE` the fence or `UPDATE` `receivedAt` (the preflight must be extended).
+9. Decide, with the product owner, whether to add the sender-asserted event-age bound of 3.5.3.
+10. Confirm the Alpaca client-order-ID lookup endpoint, status codes, rate limits and duplicate-`client_order_id` behavior
+    against the current Alpaca reference (C3C; no broker contact before then).
+
+### 11.3 Recommended C3B.2 implementation scope (test-only, default-off)
+
+*In scope.* One forward-only migration, regenerated security manifest and preflight, containing: (1) the two lock-mode
+corrections of 6.7 (claim guard, TV authorization guard); (2) `Signal.receivedAt` with its guard, immutability, the two
+functions and a `Timestamptz(6)` Prisma field; (3) `ExternalSignalDispatchFence`, its create/bump/guard/verify objects, the
+shared evidence key function and the partial `clientOrderId` index; (4) the TV consumption columns (`authorizedAt`,
+`authorizationDeadlineAt`, `fenceVersion`) and the replaced consumption guard of 5.3, calling the receipt function. Service
+changes: the TV grant and admission lock order, the claim path pre-locks of 6.6, the three MI refactors of section 2, the
+shared key in the quarantine, and `finalizeTradingViewDispatch` with the F steps of 3.3. Tests: section 9 rows 1 to 21. A
+static test that no production code imports F.
+
+*Out of scope (must not appear in C3B.2).* The send-decision table, the terminalizer, the adapter, the lookup, any scheduler
+entry or activation, relaxation of the broker-evidence quarantine, `EXIT` or SELL work, LIVE, and any broker call.
+
+### 11.4 What Hermes is asked to review
+
+The fence protocol of 3.4.2 and its alternatives; the receipt clock of 3.5 and the decision on 3.5.3; the lock correction of
+6.4 to 6.7, especially the two accepted-code inversions (H1/H2) found by the catalog extraction, which are defects in
+already-accepted C1/C2 code and may warrant a separate fix ahead of C3B.2; and the sequencing of section 8.

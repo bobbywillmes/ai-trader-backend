@@ -1,0 +1,889 @@
+{
+  "server": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "migrations": 107,
+  "setup": {
+    "real graph, worker claim and MI decision build on the migrated schema": {
+      "pass": true,
+      "detail": {
+        "prepared": {
+          "decisionId": 1
+        },
+        "fenceAfterSetup": 8
+      }
+    }
+  },
+  "fence": {
+    "A0 direct UPDATE, DELETE and TRUNCATE of the fence are rejected": {
+      "pass": true,
+      "detail": {
+        "direct": "dispatch fence accepts only trigger-issued +1 increments",
+        "del": "dispatch fence rows are never deleted or truncated",
+        "trunc": "dispatch fence rows are never deleted or truncated"
+      }
+    },
+    "A1 revision-3 protocol (MI consumption in the bump set) is self-defeating": {
+      "pass": true,
+      "detail": {
+        "fenceReadByF": 8,
+        "fenceAfterMiInsert": 9,
+        "tvInsert": {
+          "ok": false,
+          "message": "TradingView dispatch fence version is stale or missing (supplied 8, current 9)"
+        }
+      }
+    },
+    "A2 corrected protocol commits the pair; MI insert leaves the version unchanged, the TV insert advances it exactly once": {
+      "pass": true,
+      "detail": {
+        "v0": 8,
+        "vAfterMi": 8,
+        "vAfterTv": 9,
+        "committed": 9,
+        "storedFenceVersion": 8,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A2b a second consumption for the same intent is rejected by the existing constraints": {
+      "pass": true,
+      "detail": {
+        "fenceRead": 9,
+        "second": {
+          "ok": false,
+          "code": "23505",
+          "message": "duplicate key value violates unique constraint \"BrokerDispatchConsumption_decision_key\""
+        }
+      }
+    },
+    "A3 rolled-back pair restores the fence and leaves no consumption; a retry then succeeds": {
+      "pass": true,
+      "detail": {
+        "before": 8,
+        "v0": 8,
+        "inTx": 9,
+        "after": 8,
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        },
+        "retryFinal": 9
+      }
+    },
+    "A4 wrong, stale or missing fenceVersion is rejected": {
+      "pass": true,
+      "detail": {
+        "plus1": "REJECTED",
+        "minus1": "REJECTED",
+        "null": "REJECTED"
+      }
+    },
+    "A5 fenced write between fence read and TV insert is rejected; a fenced write after the pair is legal and keeps raising the version": {
+      "pass": true,
+      "detail": {
+        "midWrite": "REJECTED",
+        "laterWrite": "committed at 10 (stored 8)"
+      }
+    },
+    "A5b consumption without a fence advance is impossible (self-verification)": {
+      "pass": true,
+      "detail": "TradingView dispatch fence did not advance exactly once for the pair (stored 8, current 8)"
+    },
+    "A6.0 today the quarantine rejects BrokerOrder evidence for a marked intent": {
+      "pass": true,
+      "detail": "marked external signal broker evidence is quarantined in Phase 4A.2C1"
+    },
+    "A6.O1 [W READ COMMITTED] competitor BrokerOrder committed after F's snapshot: row locks pass, fence lock raises 40001": {
+      "pass": true,
+      "detail": {
+        "quarantineLetItThrough": true,
+        "rowLocks": true,
+        "fence": "40001"
+      }
+    },
+    "A6.O2 [W READ COMMITTED] stale competitor after F committed the pair: proceeds and raises the fence again": {
+      "pass": true,
+      "detail": {
+        "write": "ok",
+        "commit": "ok",
+        "fence": 10,
+        "v": 8
+      }
+    },
+    "A6.O3a [W READ COMMITTED] in-flight competitor: F waits at the intent lock, then is aborted at the fence (40001)": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "40001"
+      }
+    },
+    "A6.O3a [W READ COMMITTED] in-flight competitor: F waits at the intent lock, then commits the pair after a rollback": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "committed pair, fence 9"
+      }
+    },
+    "A6.O3b [W READ COMMITTED] competitor blocked by F's locks proceeds only after F commits: ok at the next fence version": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "write": "ok",
+        "commit": "ok",
+        "fence": 10,
+        "v": 8
+      }
+    },
+    "A6.O1 [W SERIALIZABLE] competitor BrokerOrder committed after F's snapshot: row locks pass, fence lock raises 40001": {
+      "pass": true,
+      "detail": {
+        "quarantineLetItThrough": true,
+        "rowLocks": true,
+        "fence": "40001"
+      }
+    },
+    "A6.O2 [W SERIALIZABLE] stale competitor after F committed the pair: serialization failure": {
+      "pass": true,
+      "detail": {
+        "write": "40001",
+        "commit": "ok",
+        "fence": 9,
+        "v": 8
+      }
+    },
+    "A6.O3a [W SERIALIZABLE] in-flight competitor: F waits at the intent lock, then is aborted at the fence (40001)": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "40001"
+      }
+    },
+    "A6.O3a [W SERIALIZABLE] in-flight competitor: F waits at the intent lock, then commits the pair after a rollback": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "committed pair, fence 9"
+      }
+    },
+    "A6.O3b [W SERIALIZABLE] competitor blocked by F's locks proceeds only after F commits: 40001": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "write": "40001",
+        "commit": "40001",
+        "fence": 9,
+        "v": 8
+      }
+    },
+    "A6c negative control: without the BrokerOrder bump F commits a pair next to committed broker evidence": {
+      "pass": true,
+      "detail": {
+        "brokerOrders": 1,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.1 [R READ COMMITTED] release waits for F, then cannot release the consumed claim": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "release": "P0001",
+        "released": false
+      }
+    },
+    "A7.2 [R READ COMMITTED] release after the pair committed is refused": {
+      "pass": true,
+      "detail": {
+        "release": "P0001"
+      }
+    },
+    "A7.1 [R SERIALIZABLE] release waits for F, then cannot release the consumed claim": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "release": "P0001",
+        "released": false
+      }
+    },
+    "A7.2 [R SERIALIZABLE] release after the pair committed is refused": {
+      "pass": true,
+      "detail": {
+        "release": "P0001"
+      }
+    },
+    "A7.3 [R REPEATABLE READ] a stale releaser holding valid not-sent evidence is stopped (40001) and the consumed claim stays unreleased": {
+      "pass": true,
+      "detail": {
+        "evidence": "40001",
+        "intent": "40001",
+        "release": "40001",
+        "commit": "40001",
+        "claimReleased": false,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.3 [R SERIALIZABLE] a stale releaser holding valid not-sent evidence is stopped (40001) and the consumed claim stays unreleased": {
+      "pass": true,
+      "detail": {
+        "evidence": "40001",
+        "intent": "40001",
+        "release": "40001",
+        "commit": "40001",
+        "claimReleased": false,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.4 [R REPEATABLE READ] negative control: with the fence bump triggers disabled the same stale releaser RELEASES the consumed claim": {
+      "pass": true,
+      "detail": {
+        "evidence": "ok",
+        "intent": "ok",
+        "release": "ok",
+        "commit": "ok",
+        "claimReleased": true,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.4b [R SERIALIZABLE] control without the fence: recorded outcome (SSI alone may or may not abort this shape)": {
+      "pass": true,
+      "detail": {
+        "evidence": "40001",
+        "intent": "40001",
+        "release": "40001",
+        "commit": "40001",
+        "claimReleased": false,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A8 [D1] the existing evidence fence makes a SERIALIZABLE claim lock fail (40001) after an evidence event": {
+      "pass": true,
+      "detail": {
+        "insert": "ok",
+        "claimLock": "40001"
+      }
+    }
+  },
+  "receipt": {
+    "B0 Signal.createdAt is timestamp without time zone with a session-TimeZone default; receivedAt is timestamptz with no default": {
+      "pass": true,
+      "detail": {
+        "createdAt": {
+          "data_type": "timestamp without time zone",
+          "column_default": "CURRENT_TIMESTAMP"
+        },
+        "receivedAt": {
+          "data_type": "timestamp with time zone",
+          "column_default": null,
+          "is_nullable": "YES"
+        }
+      }
+    },
+    "B1 receivedAt freshness is the same for every zone and every way of setting it (stale=false, 60s=true, fresh=true, historical NULL=false)": {
+      "pass": true,
+      "detail": {
+        "SET TIME ZONE": {
+          "UTC": "ok; receipt stale=false legacy stale=false",
+          "America/New_York": "ok; receipt stale=false legacy stale=true",
+          "America/Los_Angeles": "ok; receipt stale=false legacy stale=true",
+          "America/Phoenix": "ok; receipt stale=false legacy stale=true",
+          "Asia/Kolkata": "ok; receipt stale=false legacy stale=false",
+          "Pacific/Kiritimati": "ok; receipt stale=false legacy stale=false",
+          "Etc/GMT+12": "ok; receipt stale=false legacy stale=true",
+          "PST8PDT": "ok; receipt stale=false legacy stale=true",
+          "Asia/Tokyo": "ok; receipt stale=false legacy stale=false"
+        },
+        "set_config": {
+          "UTC": "ok; receipt stale=false legacy stale=false",
+          "America/New_York": "ok; receipt stale=false legacy stale=true",
+          "America/Los_Angeles": "ok; receipt stale=false legacy stale=true",
+          "America/Phoenix": "ok; receipt stale=false legacy stale=true",
+          "Asia/Kolkata": "ok; receipt stale=false legacy stale=false",
+          "Pacific/Kiritimati": "ok; receipt stale=false legacy stale=false",
+          "Etc/GMT+12": "ok; receipt stale=false legacy stale=true",
+          "PST8PDT": "ok; receipt stale=false legacy stale=true",
+          "Asia/Tokyo": "ok; receipt stale=false legacy stale=false"
+        },
+        "SET LOCAL in txn": {
+          "UTC": "ok; receipt stale=false legacy stale=false",
+          "America/New_York": "ok; receipt stale=false legacy stale=true",
+          "America/Los_Angeles": "ok; receipt stale=false legacy stale=true",
+          "America/Phoenix": "ok; receipt stale=false legacy stale=true",
+          "Asia/Kolkata": "ok; receipt stale=false legacy stale=false",
+          "Pacific/Kiritimati": "ok; receipt stale=false legacy stale=false",
+          "Etc/GMT+12": "ok; receipt stale=false legacy stale=true",
+          "PST8PDT": "ok; receipt stale=false legacy stale=true",
+          "Asia/Tokyo": "ok; receipt stale=false legacy stale=false"
+        }
+      }
+    },
+    "B1b negative control: the legacy createdAt comparison accepts a 200-second-old signal in at least one session time zone": {
+      "pass": true
+    },
+    "B1c startup-parameter and ALTER DATABASE time zones cannot extend the window": {
+      "pass": true,
+      "detail": {
+        "viaStartup": {
+          "America/Los_Angeles": true,
+          "Pacific/Kiritimati": true
+        },
+        "databaseLevel": {
+          "stale200": {
+            "receipt": false,
+            "legacy": true
+          },
+          "mid60": {
+            "receipt": true,
+            "legacy": true
+          },
+          "fresh0": {
+            "receipt": true,
+            "legacy": true
+          },
+          "historicalNull": {
+            "receipt": false,
+            "legacy": true
+          }
+        }
+      }
+    },
+    "B2 insert is stamped by the database at transaction start (conservative: earlier than the insert after a 2 s stall) and a supplied value is rejected": {
+      "pass": true,
+      "detail": {
+        "stamped": {
+          "receivedAt": "2026-11-01T22:18:36.038Z",
+          "ageMsAtRead": 2010
+        },
+        "supplied": "Signal.receivedAt is database-owned and cannot be supplied"
+      }
+    },
+    "B2b a hostile session time zone does not shift the stamp, and an advanced value is rejected": {
+      "pass": true,
+      "detail": {
+        "stampedUnderKiritimati": "2026-11-01T22:18:38.052Z",
+        "advanced": "Signal.receivedAt is database-owned and cannot be supplied"
+      }
+    },
+    "B3 receivedAt cannot be changed, filled in for a historical NULL row, or cleared": {
+      "pass": true,
+      "detail": {
+        "upd": "Signal.receivedAt is immutable",
+        "fill": "Signal.receivedAt is immutable",
+        "clear": "Signal.receivedAt is immutable"
+      }
+    },
+    "B4 negative control: ADD COLUMN DEFAULT now() makes a 30-day-old row look fresh; the default-less column leaves it NULL (fails closed)": {
+      "pass": true,
+      "detail": {
+        "looks_fresh": true,
+        "safe_null": true
+      }
+    },
+    "B5 interval '1 day' is session/DST dependent while a seconds interval is absolute (so the window is make_interval(secs => 120))": {
+      "pass": true,
+      "detail": {
+        "dayInNewYork": "2026-03-08T11:00:00.000Z",
+        "dayInUtc": "2026-03-08T12:00:00.000Z",
+        "secondsInNewYork": "2026-03-08T12:00:00.000Z"
+      }
+    }
+  },
+  "compat": {
+    "D5 unmarked intent lifecycle, claim, broker order, legacy fill import, activity sync and attribution run without error and never touch the fence": {
+      "pass": true,
+      "detail": {
+        "errors": [],
+        "fenceTupleWritesInTransaction": {
+          "ins": 0,
+          "upd": 0,
+          "del": 0
+        },
+        "before": {
+          "n": 33,
+          "s": 277
+        },
+        "after": {
+          "n": 33,
+          "s": 277
+        }
+      }
+    },
+    "D4 every broker-evidence shape linked to a marked intent (orderIntentId, orderId via BrokerOrder, attribution, move-away, clientOrderId) advances that intent's fence": {
+      "pass": true,
+      "detail": [
+        {
+          "label": "BrokerOrder with orderIntentId",
+          "ok": true,
+          "bumps": 1
+        },
+        {
+          "label": "BrokerActivity by orderId only",
+          "ok": true,
+          "bumps": 1
+        },
+        {
+          "label": "BrokerActivity attribution updateMany",
+          "ok": true,
+          "bumps": 1
+        },
+        {
+          "label": "BrokerActivity moved away from the marked intent",
+          "ok": true,
+          "bumps": 1
+        },
+        {
+          "label": "BrokerOrder under an unmarked intent with the marked clientOrderId",
+          "ok": true,
+          "bumps": 1
+        }
+      ]
+    },
+    "D4b the absence check keyed on orderIntentId alone misses evidence the shared key finds; the key function finds all shapes": {
+      "pass": true,
+      "detail": {
+        "activityByIntentIdOnly": 0,
+        "brokerOrderByIntentIdOnly": 0
+      }
+    },
+    "D4c with the quarantine enabled it rejects a BrokerOrder for the marked intent but keys on orderIntentId only: a BrokerOrder under an unmarked intent carrying the marked clientOrderId got through": {
+      "pass": true,
+      "detail": {
+        "direct": "marked external signal broker evidence is quarantined in Phase 4A.2C1",
+        "shape5": {
+          "label": "BrokerOrder under an unmarked intent with the marked clientOrderId",
+          "ok": true,
+          "bumps": 1
+        }
+      }
+    },
+    "D2 one logical lifecycle event spanning several fenced rows advances the version once per row change (strictly increasing, never skipped, not \"one per event\")": {
+      "pass": true,
+      "detail": {
+        "before": 8,
+        "after": 12
+      }
+    }
+  },
+  "lockStatements": {
+    "AssignmentMarketPolicyEnforcementAuthorization.AssignmentEnforcementAuthorization_validate [BEFORE] validate_assignment_market_policy_enforcement_authorization": [
+      "21: -- FOR UPDATE on the assignment serializes direct-SQL grants against in-flight entry admission.",
+      "24: FROM \"TradingAccountSubscription\" WHERE id = NEW.\"accountSubscriptionId\" FOR UPDATE;",
+      "25: SELECT * INTO g FROM \"AssignmentMarketPolicyEnrollmentGeneration\" WHERE id = NEW.\"enrollmentGenerationId\" FOR SHARE;",
+      "31: SELECT environment, \"accountHolderUserId\" INTO account_environment, holder_id FROM \"TradingAccount\" WHERE id = NEW.\"tradingAccountId\" FOR SHARE;",
+      "36: FROM \"Subscription\" WHERE id = assignment_subscription FOR SHARE;",
+      "37: SELECT symbol INTO security_symbol FROM \"Security\" WHERE id = assignment_security FOR SHARE;",
+      "43: SELECT r.status, p.\"strategyId\" INTO revision_status, revision_strategy FROM \"StrategyMarketPolicyRevision\" r JOIN \"StrategyMarketPolicy\" p ON p.id = r.\"policyId\" WHERE r",
+      "45: -- FOR SHARE serializes the grant against a concurrent disable or demotion of the granting owner.",
+      "46: SELECT \"platformRole\", enabled INTO actor_role, actor_enabled FROM \"User\" WHERE id = NEW.\"authorizedByUserId\" FOR SHARE;",
+      "66: SELECT \"platformRole\", enabled INTO actor_role, actor_enabled FROM \"User\" WHERE id = NEW.\"revokedByUserId\" FOR SHARE;"
+    ],
+    "AssignmentMarketPolicyEnforcementAuthorization.AssignmentEnforcementAuthorization_record_event [AFTER] record_assignment_market_policy_enforcement_authorization_event": [
+      "6: INSERT INTO \"AssignmentMarketPolicyEnforcementAuthorizationEvent\" (",
+      "32: INSERT INTO \"SystemEvent\" (type, \"entityType\", \"entityId\", message, \"payloadJson\", severity, \"tradingAccountId\", \"actorUserId\")"
+    ],
+    "EntryExposureClaim.EntryExposureClaim_dispatch_fence_bump [AFTER] external_signal_dispatch_fence_bump": [
+      "26: UPDATE \"ExternalSignalDispatchFence\" SET version = version + 1 WHERE \"orderIntentId\" = one;"
+    ],
+    "EntryExposureClaimEvent.EntryExposureClaimEvent_external_signal_c2_delivery_fence [BEFORE] external_signal_c2_delivery_event_fence": [
+      "11: UPDATE \"EntryExposureClaim\" SET \"lastDiagnosedAt\"=\"lastDiagnosedAt\" WHERE id=NEW.\"claimId\" RETURNING \"releasedAt\" INTO released_at;"
+    ],
+    "EntryExposureClaimEvent.EntryExposureClaimEvent_dispatch_fence_bump [AFTER] external_signal_dispatch_fence_bump": [
+      "26: UPDATE \"ExternalSignalDispatchFence\" SET version = version + 1 WHERE \"orderIntentId\" = one;"
+    ],
+    "ExternalSignalBrokerDispatchConsumption.ExternalSignalBrokerDispatchConsumption_guard [BEFORE] external_signal_broker_consumption_guard": [
+      "9: PERFORM pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint);",
+      "10: SELECT * INTO ds FROM \"ExternalSignalBrokerDispatchState\" WHERE id=1 FOR UPDATE;",
+      "17: SELECT * INTO auth FROM \"ExternalSignalEntryExecutionAuthorization\" WHERE id=NEW.\"executionAuthorizationId\" FOR UPDATE;"
+    ],
+    "ExternalSignalBrokerDispatchConsumption.ExternalSignalBrokerDispatchConsumption_zz_fence_guard [BEFORE] external_signal_dispatch_fence_consumption_guard": [
+      "7: SELECT version INTO v FROM \"ExternalSignalDispatchFence\" WHERE \"orderIntentId\" = NEW.\"orderIntentId\" FOR UPDATE;"
+    ],
+    "ExternalSignalBrokerDispatchConsumption.ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump [AFTER] external_signal_dispatch_fence_bump": [
+      "26: UPDATE \"ExternalSignalDispatchFence\" SET version = version + 1 WHERE \"orderIntentId\" = one;"
+    ],
+    "ExternalSignalBrokerWorkerClaim.ExternalSignalBrokerWorkerClaim_guard [BEFORE] external_signal_broker_worker_claim_guard": [
+      "8: PERFORM pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint);",
+      "9: SELECT * INTO es FROM \"ExternalSignalExecutionRolloutState\" WHERE id=1 FOR UPDATE;",
+      "10: SELECT * INTO ds FROM \"ExternalSignalBrokerDispatchState\" WHERE id=1 FOR UPDATE;",
+      "61: FOR UPDATE OF i,ac,c,auth,gen,ta,tas,sub,sec,src,b,rev,ec;"
+    ],
+    "ExternalSignalBrokerWorkerClaim.ExternalSignalBrokerWorkerClaim_dispatch_fence_bump [AFTER] external_signal_dispatch_fence_bump": [
+      "26: UPDATE \"ExternalSignalDispatchFence\" SET version = version + 1 WHERE \"orderIntentId\" = one;"
+    ],
+    "ExternalSignalEntryExecutionAuthorization.ExternalSignalEntryExecutionAuthorization_guard [BEFORE] external_signal_entry_authorization_guard": [
+      "14: PERFORM pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint);",
+      "15: UPDATE \"ExternalSignalExecutionRolloutState\" SET version=version WHERE id=1 RETURNING * INTO state_row;",
+      "18: INTO a FROM \"TradingAccountSubscription\" tas JOIN \"TradingAccount\" ta ON ta.id=tas.\"tradingAccountId\" JOIN \"Subscription\" s ON s.id=tas.\"subscriptionId\" JOIN \"ExternalSig"
+    ],
+    "ExternalSignalTradeCycleAccount.ExternalSignalTradeCycleAccount_terminal_parent_check [AFTER] check_external_signal_account_terminal_parent": [
+      "8: WHERE id = NEW.\"externalSignalTradeCycleId\" FOR UPDATE;"
+    ],
+    "ExternalSignalTradeCycleAccount.ExternalSignalTradeCycleAccount_parent_lock [BEFORE] lock_external_signal_account_cycle_parent": [
+      "7: WHERE id = NEW.\"externalSignalTradeCycleId\" FOR UPDATE;"
+    ],
+    "MarketPolicyBrokerDispatchConsumption.BrokerDispatchConsumption_validate [BEFORE] validate_market_policy_broker_dispatch_consumption": [
+      "24: SELECT * INTO a FROM \"AssignmentMarketPolicyEnforcementAuthorization\" WHERE id = d.\"authorizationId\" FOR SHARE;"
+    ],
+    "MarketPolicyBrokerDispatchDecision.BrokerDispatchDecision_validate [BEFORE] validate_market_policy_broker_dispatch_decision": [
+      "38: SELECT * INTO rollout FROM \"MarketPolicyEnforcementRuntimeRollout\" WHERE id = 1 FOR SHARE;",
+      "68: SELECT * INTO a FROM \"AssignmentMarketPolicyEnforcementAuthorization\" WHERE id = o.\"authorizationId\" FOR SHARE;"
+    ],
+    "MarketPolicyBrokerDispatchDecision.MarketPolicyBrokerDispatchDecision_dispatch_fence_bump [AFTER] external_signal_dispatch_fence_bump": [
+      "26: UPDATE \"ExternalSignalDispatchFence\" SET version = version + 1 WHERE \"orderIntentId\" = one;"
+    ],
+    "OrderIntent.OrderIntent_capture_market_policy_coverage [AFTER] capture_order_intent_market_policy_coverage": [
+      "43: INSERT INTO \"OrderIntentMarketPolicyCoverage\" ("
+    ],
+    "OrderIntent.OrderIntent_dispatch_fence_create [AFTER] external_signal_dispatch_fence_create": [
+      "7: INSERT INTO \"ExternalSignalDispatchFence\" (\"orderIntentId\", version) VALUES (NEW.id, 1);"
+    ],
+    "OrderIntent.OrderIntent_dispatch_fence_bump [AFTER] external_signal_dispatch_fence_bump": [
+      "26: UPDATE \"ExternalSignalDispatchFence\" SET version = version + 1 WHERE \"orderIntentId\" = one;"
+    ],
+    "Security.Security_invalidate_enforcement_authorization [AFTER] invalidate_enforcement_authorization_on_security_change": [
+      "6: UPDATE \"AssignmentMarketPolicyEnforcementAuthorization\""
+    ],
+    "Security.ExternalSignalEntryAuthority_security_invalidate [AFTER] invalidate_external_signal_entry_authority": [
+      "6: UPDATE \"ExternalSignalEntryExecutionAuthorization\" SET status='INVALIDATED',\"invalidationReasonCode\"=TG_ARGV[0]"
+    ],
+    "Signal.Signal_external_exit_touch_source_cycle [AFTER] external_signal_exit_touch_source_cycle": [
+      "7: UPDATE \"ExternalSignalTradeCycle\" SET \"updatedAt\"=statement_timestamp() WHERE id=NEW.\"externalSignalTradeCycleId\";"
+    ],
+    "Subscription.Subscription_invalidate_enforcement_authorization [AFTER] invalidate_enforcement_authorization_on_subscription_change": [
+      "6: UPDATE \"AssignmentMarketPolicyEnforcementAuthorization\""
+    ],
+    "Subscription.ExternalSignalEntryAuthority_subscription_invalidate [AFTER] invalidate_external_signal_entry_authority": [
+      "6: UPDATE \"ExternalSignalEntryExecutionAuthorization\" SET status='INVALIDATED',\"invalidationReasonCode\"=TG_ARGV[0]"
+    ],
+    "TradingAccount.TradingAccount_invalidate_enforcement_authorization_holder [AFTER] invalidate_enforcement_authorization_on_account_holder_change": [
+      "6: UPDATE \"AssignmentMarketPolicyEnforcementAuthorization\""
+    ],
+    "TradingAccount.ExternalSignalEntryAuthority_account_invalidate [AFTER] invalidate_external_signal_entry_authority": [
+      "6: UPDATE \"ExternalSignalEntryExecutionAuthorization\" SET status='INVALIDATED',\"invalidationReasonCode\"=TG_ARGV[0]"
+    ],
+    "TradingAccountSubscription.account_subscription_routing_identity [BEFORE] derive_account_subscription_routing_identity": [
+      "7: FROM \"Subscription\" WHERE id = NEW.\"subscriptionId\" FOR KEY SHARE;"
+    ],
+    "TradingAccountSubscription.TradingAccountSubscription_invalidate_enforcement_authorization [AFTER] invalidate_enforcement_authorization_on_assignment_change": [
+      "6: UPDATE \"AssignmentMarketPolicyEnforcementAuthorization\""
+    ],
+    "TradingAccountSubscription.ExternalSignalEntryAuthority_assignment_invalidate [AFTER] invalidate_external_signal_entry_authority": [
+      "6: UPDATE \"ExternalSignalEntryExecutionAuthorization\" SET status='INVALIDATED',\"invalidationReasonCode\"=TG_ARGV[0]"
+    ]
+  },
+  "locks": {
+    "C0 trigger lock statements extracted from the migrated catalog": {
+      "pass": true,
+      "detail": {
+        "triggers": 29
+      }
+    },
+    "C1a the current claim guard locks TradingAccount and TradingAccountSubscription FOR UPDATE (and Subscription, Security)": {
+      "pass": true,
+      "detail": [
+        "TradingAccount#1:Update",
+        "TradingAccountSubscription#37:Update",
+        "Subscription#37:Update",
+        "Security#40:Update",
+        "ExternalSignalSource#1:Update",
+        "StrategySignalBinding#1:Update",
+        "StrategySignalRevision#1:Update",
+        "ExternalSignalExecutionRolloutGeneration#2:Update",
+        "ExternalSignalExecutionRolloutState#1:Update",
+        "ExternalSignalBrokerDispatchState#1:Update",
+        "ExternalSignalTradeCycle#37:Update",
+        "ExternalSignalTradeCycleAccount#37:Update",
+        "ExternalSignalEntryExecutionAuthorization#37:Update",
+        "ExternalSignalEntryExecutionObligation#37:KeyShare",
+        "ExternalSignalBrokerWorkerClaim#37:written",
+        "OrderIntent#40:Update",
+        "EntryExposureClaim#39:Update",
+        "ExternalSignalDispatchFence#40:KeyShare",
+        "ExternalSignalDispatchFence#40:written"
+      ]
+    },
+    "C2.1 reproduction: revision-3 order (TradingAccount FOR UPDATE before the assignment) deadlocks with the real MI grant (40P01 / CONCURRENT_AUTHORIZATION_CHANGE)": {
+      "pass": true,
+      "detail": {
+        "variant": "rev3 pre-locks (TradingAccount FOR UPDATE, then assignment FOR UPDATE)",
+        "firstInQueue": "MI",
+        "elapsedMs": 1012,
+        "mi": "GRANTED",
+        "tv": "40P01 deadlock detected",
+        "deadlock": true
+      }
+    },
+    "C3.0 the corrected guard is the real guard text with only the identity lock mode changed": {
+      "pass": true
+    },
+    "C3.MI corrected order (MI first in the queue): no deadlock; the MI grant is granted and the claim insert succeeds": {
+      "pass": true,
+      "detail": {
+        "variant": "rev4 pre-locks (TradingAccount FOR SHARE, assignment FOR SHARE) then corrected guard",
+        "firstInQueue": "MI",
+        "elapsedMs": 28,
+        "mi": "GRANTED",
+        "tv": "STEPS_OK",
+        "deadlock": false
+      }
+    },
+    "C3.TV corrected order (TV first in the queue): no deadlock; the MI grant is granted and the claim insert succeeds": {
+      "pass": true,
+      "detail": {
+        "variant": "rev4 pre-locks (TradingAccount FOR SHARE, assignment FOR SHARE) then corrected guard",
+        "firstInQueue": "TV",
+        "elapsedMs": 28,
+        "mi": "GRANTED",
+        "tv": "STEPS_OK",
+        "deadlock": false
+      }
+    },
+    "C3.1 no hidden lock upgrade: after the corrected guard the four identity relations are held SHARE (never UPDATE)": {
+      "pass": true,
+      "detail": {
+        "upgrades": [],
+        "corrected": [
+          "TradingAccount#1:Share",
+          "TradingAccountSubscription#45:Share",
+          "Subscription#45:Share",
+          "Security#48:Share",
+          "ExternalSignalSource#1:Update",
+          "StrategySignalBinding#1:Update",
+          "StrategySignalRevision#1:Update",
+          "ExternalSignalExecutionRolloutGeneration#2:Update",
+          "ExternalSignalExecutionRolloutState#1:Update",
+          "ExternalSignalBrokerDispatchState#1:Update",
+          "ExternalSignalTradeCycle#45:Update",
+          "ExternalSignalTradeCycleAccount#45:Update",
+          "ExternalSignalEntryExecutionAuthorization#45:Update",
+          "ExternalSignalEntryExecutionObligation#45:KeyShare",
+          "ExternalSignalBrokerWorkerClaim#44:written",
+          "OrderIntent#48:Update",
+          "EntryExposureClaim#47:Update",
+          "ExternalSignalDispatchFence#48:KeyShare",
+          "ExternalSignalDispatchFence#48:written"
+        ]
+      }
+    },
+    "C4 pair lock set recorded": {
+      "pass": true
+    },
+    "C5 MI revoke (real service) against the corrected TradingView sequence (TradingAccount, assignment, then MI authorization FOR SHARE): no deadlock; the revoke is never lost (TradingView proceeds or gets 40001 and must retry)": {
+      "pass": true,
+      "detail": {
+        "revoke": "REVOKED",
+        "tv": "40001 could not serialize access due to concurrent update"
+      }
+    },
+    "C7 allocation disable waits for a TradingView FOR SHARE hold and is a 40001 for a stale TradingView snapshot": {
+      "pass": true,
+      "detail": {
+        "waits": true,
+        "update": true,
+        "stale": "40001"
+      }
+    },
+    "C8a EXISTING INVERSION: the TradingView authorization grant (TradingAccount FOR UPDATE before the assignment) deadlocks with the MI grant (assignment before TradingAccount FOR SHARE)": {
+      "pass": true,
+      "detail": {
+        "mi": "OK",
+        "tv": "CONCURRENT_AUTHORITY_CHANGE Execution authority changed concurrently; reload before retrying."
+      }
+    },
+    "C8b EXISTING INVERSION: the guard late User FOR UPDATE deadlocks with MI User-first order; taking User FOR SHARE first removes it": {
+      "pass": true,
+      "detail": {
+        "late": {
+          "mi": "CONCURRENT_AUTHORIZATION_CHANGE A concurrent authorization change was detected; reload and retry.",
+          "tv": "ok",
+          "deadlock": true
+        },
+        "first": {
+          "mi": "GRANTED",
+          "tv": "ok",
+          "deadlock": false
+        }
+      }
+    },
+    "C9 an account-cycle UPDATE holds the account-cycle row and then waits for the parent cycle (trigger); against the EXIT-correlation order (cycle, then account) it deadlocks unless the writer locks the cycle first": {
+      "pass": true,
+      "detail": {
+        "waitsOnCycle": true,
+        "holdsAccount": true,
+        "exitSecondLock": "ok",
+        "writer": "40P01"
+      }
+    },
+    "C6a a kill-switch UPDATE waits for a TradingView FOR SHARE hold on the account": {
+      "pass": true,
+      "detail": {
+        "waits": true,
+        "update": "applied after release"
+      }
+    },
+    "C6b a pause committed after the TradingView snapshot is a 40001 on the FOR SHARE read, never a stale pass": {
+      "pass": true,
+      "detail": "40001"
+    },
+    "C6c a transaction started after the pause reads PAUSED under FOR SHARE": {
+      "pass": true,
+      "detail": "PAUSED"
+    }
+  },
+  "lockSets": {
+    "TV worker-claim insert, CURRENT guard": [
+      "TradingAccount#1:Update",
+      "TradingAccountSubscription#37:Update",
+      "Subscription#37:Update",
+      "Security#40:Update",
+      "ExternalSignalSource#1:Update",
+      "StrategySignalBinding#1:Update",
+      "StrategySignalRevision#1:Update",
+      "ExternalSignalExecutionRolloutGeneration#2:Update",
+      "ExternalSignalExecutionRolloutState#1:Update",
+      "ExternalSignalBrokerDispatchState#1:Update",
+      "ExternalSignalTradeCycle#37:Update",
+      "ExternalSignalTradeCycleAccount#37:Update",
+      "ExternalSignalEntryExecutionAuthorization#37:Update",
+      "ExternalSignalEntryExecutionObligation#37:KeyShare",
+      "ExternalSignalBrokerWorkerClaim#37:written",
+      "OrderIntent#40:Update",
+      "EntryExposureClaim#39:Update",
+      "ExternalSignalDispatchFence#40:KeyShare",
+      "ExternalSignalDispatchFence#40:written"
+    ],
+    "TV worker-claim insert, CORRECTED guard (after TradingAccount and assignment FOR SHARE pre-locks)": [
+      "TradingAccount#1:Share",
+      "TradingAccountSubscription#45:Share",
+      "Subscription#45:Share",
+      "Security#48:Share",
+      "ExternalSignalSource#1:Update",
+      "StrategySignalBinding#1:Update",
+      "StrategySignalRevision#1:Update",
+      "ExternalSignalExecutionRolloutGeneration#2:Update",
+      "ExternalSignalExecutionRolloutState#1:Update",
+      "ExternalSignalBrokerDispatchState#1:Update",
+      "ExternalSignalTradeCycle#45:Update",
+      "ExternalSignalTradeCycleAccount#45:Update",
+      "ExternalSignalEntryExecutionAuthorization#45:Update",
+      "ExternalSignalEntryExecutionObligation#45:KeyShare",
+      "ExternalSignalBrokerWorkerClaim#44:written",
+      "OrderIntent#48:Update",
+      "EntryExposureClaim#47:Update",
+      "ExternalSignalDispatchFence#48:KeyShare",
+      "ExternalSignalDispatchFence#48:written"
+    ],
+    "pair F: locks added by the MI + TV consumption inserts (beyond intent, claim, fence)": [
+      "ExternalSignalExecutionRolloutGeneration#2:KeyShare",
+      "ExternalSignalBrokerDispatchState#1:Update",
+      "ExternalSignalEntryExecutionAuthorization#46:Update",
+      "ExternalSignalEntryExecutionObligation#46:KeyShare",
+      "ExternalSignalBrokerWorkerClaim#45:KeyShare",
+      "ExternalSignalDispatchFence#49:KeyShare",
+      "ExternalSignalDispatchFence#49:written",
+      "AssignmentMarketPolicyEnforcementAuthorization#35:Share",
+      "MarketPolicyBrokerDispatchDecision#30:KeyShare",
+      "MarketPolicyBrokerDispatchConsumption#27:KeyShare",
+      "MarketPolicyBrokerDispatchConsumption#27:written",
+      "ExternalSignalBrokerDispatchConsumption#26:written"
+    ]
+  },
+  "lockOrderEvidence": {
+    "current guard blocked on TradingAccountSubscription": {
+      "isBlocked": true,
+      "alreadyHolds": "TradingAccount: true"
+    },
+    "current guard blocked on TradingAccount": {
+      "isBlocked": true,
+      "alreadyHolds": "TradingAccountSubscription: false"
+    },
+    "current guard vs real MI grant": {
+      "name": "CURRENT guard alone, no pre-locks, MI queued first",
+      "mi": "GRANTED",
+      "tv": "40P01 deadlock detected",
+      "deadlock": true
+    },
+    "TV authorization grant (real service) vs MI grant (real service), different owners": {
+      "bothWaiting": true,
+      "mi": "OK",
+      "tv": "CONCURRENT_AUTHORITY_CHANGE Execution authority changed concurrently; reload before retrying.",
+      "deadlockVictim": true
+    },
+    "User lock position": {
+      "guard order (assignment, then User FOR UPDATE)": {
+        "mi": "CONCURRENT_AUTHORIZATION_CHANGE A concurrent authorization change was detected; reload and retry.",
+        "tv": "ok",
+        "deadlock": true
+      },
+      "corrected (User FOR SHARE first)": {
+        "mi": "GRANTED",
+        "tv": "ok",
+        "deadlock": false
+      }
+    }
+  },
+  "lockRaces": {
+    "reproduction": [
+      {
+        "variant": "rev3 pre-locks (TradingAccount FOR UPDATE, then assignment FOR UPDATE)",
+        "firstInQueue": "MI",
+        "elapsedMs": 1012,
+        "mi": "GRANTED",
+        "tv": "40P01 deadlock detected",
+        "deadlock": true
+      },
+      {
+        "name": "CURRENT guard alone, no pre-locks, MI queued first",
+        "mi": "GRANTED",
+        "tv": "40P01 deadlock detected",
+        "deadlock": true
+      }
+    ],
+    "corrected": [
+      {
+        "variant": "rev4 pre-locks (TradingAccount FOR SHARE, assignment FOR SHARE) then corrected guard",
+        "firstInQueue": "MI",
+        "elapsedMs": 28,
+        "mi": "GRANTED",
+        "tv": "STEPS_OK",
+        "deadlock": false
+      },
+      {
+        "variant": "rev4 pre-locks (TradingAccount FOR SHARE, assignment FOR SHARE) then corrected guard",
+        "firstInQueue": "TV",
+        "elapsedMs": 28,
+        "mi": "GRANTED",
+        "tv": "STEPS_OK",
+        "deadlock": false
+      }
+    ]
+  },
+  "network": {
+    "no broker request was attempted": {
+      "pass": true,
+      "detail": []
+    }
+  }
+}
