@@ -23,6 +23,11 @@ async function main() {
   const url = diagnostic ? (process.env.SECURITY_PREFLIGHT_DATABASE_URL ?? process.env.DATABASE_URL) : process.env.DATABASE_URL;
   if (!url) throw new Error(diagnostic ? 'DATABASE_URL or SECURITY_PREFLIGHT_DATABASE_URL is required.' : 'DATABASE_URL is required.');
   const configured = describeConfiguredConnection(url);
+  if (configured.unsupportedSchema !== null) {
+    // The backend's adapter ignores ?schema=, so assessing that schema would authorize a boundary it does not use.
+    console.error(`Invalid configuration: DATABASE_URL requests schema "${configured.unsupportedSchema}", but the backend always runs in "${configured.schema}". Remove the schema parameter.`);
+    process.exit(64);
+  }
   const options: AssessmentOptions = parsed.mode === 'BROKER_ENABLED'
     ? { mode: parsed.mode, expected: { role: parsed.runtimeRole ?? DEFAULT_RUNTIME_ROLE, database: configured.database, schema: configured.schema } }
     : diagnostic ? { mode: parsed.mode, inspectRole: parsed.runtimeRole! } : { mode: parsed.mode };

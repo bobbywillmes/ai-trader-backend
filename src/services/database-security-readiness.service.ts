@@ -162,6 +162,8 @@ export async function assessDatabaseSecurity(query: SqlRows, options: Assessment
     if (drift.functionsMissing.length) findings.push({ code: 'PROTECTED_FUNCTION_MISSING', message: `${drift.functionsMissing.length} reviewed function(s) are missing from the schema.`, detail: drift.functionsMissing });
     if (drift.functionsUnreviewed.length) findings.push({ code: 'FUNCTION_NOT_IN_MANIFEST', message: `${drift.functionsUnreviewed.length} application function(s) are not in the reviewed security manifest; review and add them with their migration.`, detail: drift.functionsUnreviewed });
     if (drift.triggersChanged.length) findings.push({ code: 'TRIGGER_DEFINITION_CHANGED', message: `${drift.triggersChanged.length} trigger(s) differ from the reviewed definition (timing, events, scope, WHEN, columns, arguments or bound function).`, detail: drift.triggersChanged });
+    // The 27 critical triggers above remain an additional, narrower check; this covers every reviewed trigger.
+    if (drift.triggersMissing.length) findings.push({ code: 'PROTECTED_TRIGGER_MISSING', message: `${drift.triggersMissing.length} reviewed trigger(s) are missing from the schema.`, detail: drift.triggersMissing });
     if (drift.triggersUnreviewed.length) findings.push({ code: 'TRIGGER_NOT_IN_MANIFEST', message: `${drift.triggersUnreviewed.length} trigger(s) are not in the reviewed security manifest.`, detail: drift.triggersUnreviewed });
   }
 
@@ -238,18 +240,22 @@ function finish(options: { mode: SecurityReadinessMode; now?: Date }, schema: st
   };
 }
 
+/** SQL expression for a function-body digest: CRLF becomes LF, a standalone CR is kept. */
+export const bodyDigestSql = (body: string) => `encode(sha256(convert_to(replace(${body}, chr(13) || chr(10), chr(10)), 'UTF8')), 'hex')`;
+
 export type SecurityCatalog = { functions: Record<string, ManifestFunction>; triggers: Record<string, ManifestTrigger> };
 
 /**
- * Reads the definition facts the manifest pins. Bodies are hashed in the database after removing carriage
- * returns, so a checkout with CRLF line endings produces the same digest as one with LF.
+ * Reads the definition facts the manifest pins. Bodies are hashed in the database after converting only CRLF
+ * line endings to LF, so a checkout with CRLF line endings produces the same digest as one with LF. A standalone
+ * carriage return is preserved: inside a string literal it is part of the function's semantics.
  */
 export async function readSecurityCatalog(query: SqlRows): Promise<SecurityCatalog> {
   const functions = await query<{ signature: string } & ManifestFunction>(
     `SELECT p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS signature,
             l.lanname::text AS language, p.provolatile::text AS volatility, p.prokind::text AS kind, p.prosecdef AS "securityDefiner",
             p.proisstrict AS strict, pg_get_function_result(p.oid) AS result,
-            encode(sha256(convert_to(replace(p.prosrc || coalesce(pg_get_function_sqlbody(p.oid), ''), chr(13), ''), 'UTF8')), 'hex') AS "bodySha256"
+            ${bodyDigestSql("p.prosrc || coalesce(pg_get_function_sqlbody(p.oid), '')")} AS "bodySha256"
      FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang
      WHERE n.nspname=current_schema() AND p.prokind IN ('f','p') AND l.lanname NOT IN ('c','internal')
        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.deptype='e')
@@ -292,7 +298,7 @@ export function compareWithManifest(catalog: SecurityCatalog, manifest: { functi
       const fields = differing(catalog.triggers[key]!, manifest.triggers[key]!);
       return fields.length ? [{ trigger: key, fields, found: catalog.triggers[key] }] : [];
     }),
-    // A reviewed trigger that is absent is reported by the critical-trigger audit as "missing".
+    triggersMissing: names(manifest.triggers, catalog.triggers),
     triggersUnreviewed: names(catalog.triggers, manifest.triggers),
   };
 }

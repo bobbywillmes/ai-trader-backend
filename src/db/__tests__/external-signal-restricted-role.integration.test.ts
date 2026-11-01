@@ -572,7 +572,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         }
         expect(cli(['--mode=development-observation'], url).status).toBe(0);
         expect(cli(['--mode', 'development-observation'], url).report).toMatchObject({ mode: 'DEVELOPMENT_OBSERVATION', startupAllowed: true });
-      });
+      }, 20_000);
 
       it('control 2: a hardened database cannot authorize an application configured for an unsafe one', async () => {
         const unsafeApp = urlOf(unsafeDatabase, 'ai_trader_app');
@@ -733,12 +733,92 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         await secClean();
       });
 
+      const triggerDef = async (table: string, trigger: string) => (await sec.query(`SELECT pg_get_triggerdef(t.oid) AS def FROM pg_trigger t WHERE t.tgrelid=$1::regclass AND t.tgname=$2`, [`public."${table}"`, trigger])).rows[0].def as string;
+      const splitKey = (key: string) => key.split('/') as [string, string];
+      // Committed drop, visible to the runtime session and the CLI. The trigger is restored from its catalog definition;
+      // secClean then proves the restoration equals the reviewed manifest.
+      const dropCommitted = async (key: string, assess: () => Promise<void> | void) => {
+        const [table, trigger] = splitKey(key); const def = await triggerDef(table, trigger);
+        try { await sec.query(`DROP TRIGGER "${trigger}" ON public."${table}"`); await assess(); }
+        finally { await sec.query(def); }
+        await secClean();
+      };
+
+      it('refuses every reviewed trigger that is missing, including the critical and the otherwise harmless ones', async () => {
+        const { SECURITY_MANIFEST } = await import('../../services/database-security-manifest.js');
+        const critical = new Set(CRITICAL_TRIGGERS.map(([table, trigger]) => `${table}/${trigger}`));
+        const noncritical = Object.keys(SECURITY_MANIFEST.triggers).filter(key => !critical.has(key));
+        expect(noncritical.length).toBeGreaterThan(100);
+        const harmless = noncritical.find(key => !['EntryExposureClaimEvent/EntryExposureClaimEvent_append_only', 'OrderIntent/OrderIntent_require_market_policy_enforcement_obligation'].includes(key) && SECURITY_MANIFEST.triggers[key]!.when === '' && SECURITY_MANIFEST.triggers[key]!.events === 'UPDATE')!;
+        expect(harmless).toBeDefined();
+        for (const key of ['EntryExposureClaimEvent/EntryExposureClaimEvent_append_only', 'OrderIntent/OrderIntent_require_market_policy_enforcement_obligation', harmless]) {
+          expect(SECURITY_MANIFEST.triggers[key], key).toBeDefined();
+          await dropCommitted(key, async () => {
+            const report = await preflight('BROKER_ENABLED');
+            expect(report.findings.map(finding => finding.code), key).toContain('PROTECTED_TRIGGER_MISSING');
+            expect(report.ready).toBe(false); expect(report.brokerReadinessAuthorized).toBe(false); expect(report.startupAllowed).toBe(false);
+            const refused = brokerCli(); expect(refused.status, key).toBe(1); expectRefused(refused, 'PROTECTED_TRIGGER_MISSING');
+          });
+        }
+        // Sweep: every other noncritical reviewed trigger, dropped one at a time inside a transaction that is rolled back
+        // (so nothing is re-created from a deparsed definition), is reported missing by the broker-enabled assessment.
+        const survivors: string[] = [];
+        for (const key of noncritical) {
+          const [table, trigger] = splitKey(key);
+          await sec.query('BEGIN');
+          try {
+            await sec.query(`DROP TRIGGER "${trigger}" ON public."${table}"`);
+            const report = await assessDatabaseSecurity(rowsOf(sec) as never, { mode: 'BROKER_ENABLED', expected: { role: 'postgres', database: secDatabase, schema: 'public' } });
+            if (!report.findings.some(finding => finding.code === 'PROTECTED_TRIGGER_MISSING') || report.brokerReadinessAuthorized) survivors.push(key);
+          } finally { await sec.query('ROLLBACK'); }
+        }
+        expect(survivors, 'reviewed triggers whose absence went undetected').toEqual([]);
+        await secClean();
+      }, 180_000);
+
+      it('hashes function bodies with CRLF equal to LF but keeps a standalone carriage return significant', async () => {
+        const { readSecurityCatalog, bodyDigestSql } = await import('../../services/database-security-readiness.service.js');
+        const definition = (eol: string) => `CREATE FUNCTION sec_digest_probe() RETURNS text LANGUAGE sql SET search_path = pg_catalog, public, pg_temp AS $$${eol}SELECT 'a'::text${eol}$$`;
+        const digest = async (sql: string) => { await sec.query(sql); try { return (await readSecurityCatalog(rowsOf(sec) as never)).functions['sec_digest_probe()']!.bodySha256; } finally { await sec.query(`DROP FUNCTION sec_digest_probe()`); } };
+        const lf = await digest(definition('\n')); const crlf = await digest(definition('\r\n')); const cr = await digest(definition('\r'));
+        expect(crlf).toBe(lf); expect(cr).not.toBe(lf);
+        const literal = async (body: string) => (await sec.query(`SELECT ${bodyDigestSql('$1::text')} AS d`, [body])).rows[0].d as string;
+        expect(await literal('x\r\ny')).toBe(await literal('x\ny'));
+        expect(await literal("'ab\rc'")).not.toBe(await literal("'abc'"));
+        await secClean();
+      });
+
+      it('control 11: a standalone carriage return placed inside a status literal changes the digest and is refused', async () => {
+        const original = (await sec.query(`SELECT pg_get_functiondef('external_signal_order_intent_dispatch_quarantine()'::regprocedure) AS def`)).rows[0].def as string;
+        const needle = "NEW.status IN ('received','pending','blocked','failed')";
+        expect(original).toContain(needle);
+        try {
+          await sec.query(original.replace(needle, "NEW.status IN ('received','pending','blocked\r','failed')"));
+          const report = await preflight('BROKER_ENABLED');
+          expect(report.findings.map(finding => finding.code)).toEqual(['PROTECTED_FUNCTION_CHANGED']);
+          expectRefused(brokerCli(), 'PROTECTED_FUNCTION_CHANGED');
+        } finally { await sec.query(original); }
+        await secClean();
+      });
+
+      it('control 12: the backend always runs in public, so a DATABASE_URL naming another schema is rejected rather than assessed', async () => {
+        for (const suffix of ['?schema=other', '?schema=trading', '?schema=public&schema=other']) {
+          const result = cli(['--mode', 'broker-enabled'], `${secUrl('ai_trader_app')}${suffix}`);
+          expect(result.status, suffix).toBe(64); expect(result.stdout).toBe(''); expect(result.stderr).toMatch(/always runs in "public"/);
+          expect(result.report?.brokerReadinessAuthorized ?? false).toBe(false);
+        }
+        expect(cli(['--mode', 'broker-enabled'], `${secUrl('ai_trader_app')}?schema=public`).report?.brokerReadinessAuthorized).toBe(true);
+        // A connection whose active schema differs from the runtime schema is not authorized either.
+        const other = await assessDatabaseSecurity(rowsOf(runtime) as never, { mode: 'BROKER_ENABLED', expected: { role: 'ai_trader_app', database: secDatabase, schema: 'other' } });
+        expect(other.brokerReadinessAuthorized).toBe(false); expect(other.findings.map(finding => finding.code)).toContain('RUNTIME_IDENTITY_MISMATCH');
+      });
+
       it('keeps the reviewed manifest equal to what a fresh migration installs, and consistent with the critical-trigger list', async () => {
         const { readSecurityCatalog, compareWithManifest } = await import('../../services/database-security-readiness.service.js');
         const { SECURITY_MANIFEST } = await import('../../services/database-security-manifest.js');
         const catalog = await readSecurityCatalog(rowsOf(sec) as never);
         const drift = compareWithManifest(catalog);
-        expect(drift, 'regenerate with scripts/generate-database-security-manifest.ts after a migration changes a function or trigger').toEqual({ functionsChanged: [], functionsMissing: [], functionsUnreviewed: [], triggersChanged: [], triggersUnreviewed: [] });
+        expect(drift, 'regenerate with scripts/generate-database-security-manifest.ts after a migration changes a function or trigger').toEqual({ functionsChanged: [], functionsMissing: [], functionsUnreviewed: [], triggersChanged: [], triggersMissing: [], triggersUnreviewed: [] });
         expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(117);
         for (const [table, trigger, fn] of CRITICAL_TRIGGERS) expect(SECURITY_MANIFEST.triggers[`${table}/${trigger}`], `${table}/${trigger}`).toMatchObject({ function: `${fn}()`, enabled: 'O', timing: expect.stringMatching(/^(BEFORE|AFTER)$/), scope: expect.stringMatching(/^(ROW|STATEMENT)$/) });
         expect(SECURITY_MANIFEST.migration).toBe((await sec.query(`SELECT migration_name FROM _prisma_migrations ORDER BY migration_name DESC LIMIT 1`)).rows[0].migration_name);

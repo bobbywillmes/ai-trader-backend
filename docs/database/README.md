@@ -83,7 +83,11 @@ Checks, all through effective privileges and the catalogs:
   timing, events, row/statement scope, `WHEN` expression, columns, arguments, enabled state and bound function;
   and every application function's language, volatility, result and **body digest**. A function or trigger that is
   new, changed or missing relative to the manifest is a finding. The manifest is code-controlled and reviewed; it
-  is never derived from the database being assessed. After a migration adds or replaces a function or trigger,
+  is never derived from the database being assessed. A **reviewed trigger that is missing** from the database is
+  a `PROTECTED_TRIGGER_MISSING` finding (all 140 reviewed triggers, in addition to the 27 critical-trigger
+  checks). Function-body digests treat only **CRLF** as a line ending (it becomes LF, so a Windows checkout and a
+  Linux checkout agree); a **standalone carriage return is preserved**, because inside a string literal it is part
+  of the function's behavior. After a migration adds or replaces a function or trigger,
   regenerate it from a freshly migrated **disposable** database and commit the diff with the migration:
   `npx tsx scripts/generate-database-security-manifest.ts --from <disposable database url>`. An integration test
   fails when the manifest and a fresh migration disagree.
@@ -94,6 +98,11 @@ objects) or a privileged role attribute. It is safe to rerun and is **not** appl
 order, including draining existing sessions before reconnecting as the final identity and running the
 broker-enabled preflight before restoring broker-capable operations, is in
 `docs/architecture/tradingview-paper-execution-authority.md` ("Database least-privilege design").
+
+**Schema boundary.** The backend's database adapter (`src/db/prisma.ts`, `PrismaPg` built from the connection
+string alone) always runs in `public`; `node-postgres` ignores a `?schema=` URL parameter. The preflight therefore
+assesses `public` and **rejects** (exit 64, nothing printed to stdout) a `DATABASE_URL` that names any other schema,
+instead of assessing a schema the backend does not use. There is no configurable production schema.
 
 Migrations that replace a function must restate the trusted `search_path` (repeat the audit block from
 `20261031120000_tradingview_dispatch_safety_hardening`); a static test enforces it for every migration from that

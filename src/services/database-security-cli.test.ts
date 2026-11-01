@@ -49,8 +49,11 @@ describe('security preflight argument parsing', () => {
 
   it('reads only non-secret facts from the configured connection', () => {
     const configured = describeConfiguredConnection('postgresql://ai_trader_app:s3cret%21@db.internal:5432/ai_trader?schema=trading');
-    expect(configured).toEqual({ user: 'ai_trader_app', database: 'ai_trader', schema: 'trading' });
+    // The adapter ignores ?schema=, so the assessed schema is always the one it really uses and the override is reported.
+    expect(configured).toEqual({ user: 'ai_trader_app', database: 'ai_trader', schema: 'public', unsupportedSchema: 'trading' });
     expect(JSON.stringify(configured)).not.toContain('s3cret');
-    expect(describeConfiguredConnection('postgresql://u:p@h/db')).toEqual({ user: 'u', database: 'db', schema: 'public' });
+    expect(describeConfiguredConnection('postgresql://u:p@h/db')).toEqual({ user: 'u', database: 'db', schema: 'public', unsupportedSchema: null });
+    expect(describeConfiguredConnection('postgresql://u:p@h/db?schema=public').unsupportedSchema).toBeNull();
+    expect(describeConfiguredConnection('postgresql://u:p@h/db?schema=public&schema=other').unsupportedSchema).toBe('public,other');
   });
 });

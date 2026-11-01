@@ -66,14 +66,24 @@ export function parsePreflightArgs(argv: readonly string[], env: Readonly<Record
 export const DEFAULT_RUNTIME_ROLE = 'ai_trader_app';
 
 /**
- * Non-secret facts about the connection the backend uses, read from DATABASE_URL without ever keeping
- * the password: the login role, database name and schema the application is configured for.
+ * The schema the backend's database adapter actually uses. src/db/prisma.ts builds PrismaPg from the connection
+ * string alone, with no schema option, and node-postgres ignores a `?schema=` URL parameter, so the backend
+ * runs in the connection's default schema: `public`. This is a fact about the adapter, not a setting.
  */
-export function describeConfiguredConnection(connectionString: string): { user: string | null; database: string | null; schema: string } {
+export const RUNTIME_SCHEMA = 'public';
+
+/**
+ * Non-secret facts about the connection the backend uses, read from DATABASE_URL without ever keeping
+ * the password: the login role and database name, plus the schema the adapter really uses. A `?schema=`
+ * override is reported in `unsupportedSchema` rather than silently assessed, because the backend ignores it.
+ */
+export function describeConfiguredConnection(connectionString: string): { user: string | null; database: string | null; schema: string; unsupportedSchema: string | null } {
   const url = new URL(connectionString);
+  const requested = url.searchParams.getAll('schema');
   return {
     user: url.username ? decodeURIComponent(url.username) : null,
     database: decodeURIComponent(url.pathname.replace(/^\//, '')) || null,
-    schema: url.searchParams.get('schema') ?? 'public',
+    schema: RUNTIME_SCHEMA,
+    unsupportedSchema: requested.length === 0 || (requested.length === 1 && requested[0] === RUNTIME_SCHEMA) ? null : requested.join(','),
   };
 }
