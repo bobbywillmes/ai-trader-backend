@@ -9,37 +9,52 @@ vi.mock('./risk-gate.service.js', () => ({ evaluateOrderRisk: vi.fn(), logRiskGa
 vi.mock('./order-audit.service.js', () => ({ recordOrderIntentRiskEvaluation: vi.fn() }));
 vi.mock('./trading-account-entry-risk-usage.service.js', () => ({ getSizingEstimatedNotional: vi.fn(() => null) }));
 
-/** The object Prisma's pg adapter throws, with the fields DriverAdapterError defines. */
-const adapterError = (cause: Record<string, unknown>) => Object.assign(new Error('driver failure'), { name: 'DriverAdapterError', cause });
+import { Prisma } from '@prisma/client';
+import { DriverAdapterError } from '@prisma/driver-adapter-utils';
+import pg from 'pg';
+
+/** The error Prisma's pg adapter throws: a real DriverAdapterError carrying the server SQLSTATE. */
+const adapterError = (cause: Record<string, unknown>) => new DriverAdapterError({ kind: 'postgres', code: String(cause.originalCode ?? ''), severity: 'ERROR', message: 'driver failure', detail: undefined, column: undefined, hint: undefined, ...cause } as never);
+const known = (code: string, meta?: Record<string, unknown>) => new Prisma.PrismaClientKnownRequestError('prisma failure', { code, clientVersion: 'test', ...(meta ? { meta } : {}) });
+const pgError = (code: string) => Object.assign(new pg.DatabaseError('pg failure', 0, 'error'), { code });
 
 describe('TradingView C2 concurrency error classification', () => {
   it.each([
-    [{ code: 'P2034' }, true],
-    [{ code: 'P2010', meta: { code: '40001' } }, true],
-    [{ code: 'P2010', meta: { code: '40P01' } }, true],
-    [{ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40001' } } } }, true],
-    [{ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40P01' } } } }, true],
-    [{ code: 'P2010', meta: { code: '23505' } }, false],
-    [{ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: 'P0001' } } }, message: 'deadlock detected' }, false],
-    [{ code: 'P2010', message: 'SQLSTATE 40001 serialization failure' }, false],
-    [{ code: 'P2002', meta: { code: '40001' } }, false],
-    [{ code: '40001', severity: 'ERROR' }, true],
-    [{ code: '40P01', severity: 'ERROR' }, true],
-    [{ cause: { originalCode: '40001' } }, false],
-    [{ name: 'Error', cause: { originalCode: '40P01' } }, false],
-    [{ name: 'DriverAdapterError', cause: { originalCode: 'P0001', originalMessage: 'deadlock detected 40001' } }, false],
-    [{ name: 'DriverAdapterError', cause: { originalCode: 40001 } }, false],
-    [{ name: 'DriverAdapterError', cause: { kind: 'postgres', message: 'could not serialize access' } }, false],
-    [{ name: 'DriverAdapterError' }, false],
-  ] as const)('classifies %j as retryable=%s', (error, expected) => {
+    ['P2034', known('P2034'), true],
+    ['P2010 meta.code 40001', known('P2010', { code: '40001' }), true],
+    ['P2010 meta.code 40P01', known('P2010', { code: '40P01' }), true],
+    ['P2010 driver cause 40001', known('P2010', { driverAdapterError: { cause: { originalCode: '40001' } } }), true],
+    ['P2010 driver cause 40P01', known('P2010', { driverAdapterError: { cause: { originalCode: '40P01' } } }), true],
+    ['P2010 unique violation', known('P2010', { code: '23505' }), false],
+    ['P2010 application P0001 with deadlock text', Object.assign(known('P2010', { driverAdapterError: { cause: { originalCode: 'P0001' } } }), { message: 'deadlock detected' }), false],
+    ['P2010 message only', Object.assign(known('P2010'), { message: 'SQLSTATE 40001 serialization failure' }), false],
+    ['P2002 carrying a 40001 meta', known('P2002', { code: '40001' }), false],
+    ['pg 40001', pgError('40001'), true],
+    ['pg 40P01', pgError('40P01'), true],
+    ['pg unique violation', pgError('23505'), false],
+    ['adapter 40001', adapterError({ originalCode: '40001' }), true],
+    ['adapter 40P01', adapterError({ originalCode: '40P01' }), true],
+    ['adapter application P0001 with 40001 text', adapterError({ originalCode: 'P0001', originalMessage: 'deadlock detected 40001' }), false],
+    ['adapter without SQLSTATE', adapterError({ originalCode: undefined, originalMessage: 'could not serialize access' }), false],
+    ['plain Error with SQLSTATE text', new Error('could not serialize access 40001 deadlock detected 40P01'), false],
+    ['null', null, false],
+  ] as const)('classifies a real %s error as retryable=%s', (_label, error, expected) => {
     expect(retryableConcurrencyFailure(error)).toBe(expected);
   });
 
-  it('classifies a top-level DriverAdapterError by its structured SQLSTATE only', () => {
-    expect(retryableConcurrencyFailure(adapterError({ originalCode: '40001', originalMessage: 'could not serialize access', kind: 'TransactionWriteConflict' }))).toBe(true);
-    expect(retryableConcurrencyFailure(adapterError({ originalCode: '40P01', originalMessage: 'deadlock detected', kind: 'postgres' }))).toBe(true);
-    expect(retryableConcurrencyFailure(new Error('could not serialize access 40001 deadlock detected 40P01'))).toBe(false);
-    expect(retryableConcurrencyFailure(null)).toBe(false);
+  it.each([
+    [{ code: 'P2034' }],
+    [{ code: 'P2010', meta: { code: '40001' } }],
+    [{ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40P01' } } } }],
+    [{ code: '40001', severity: 'ERROR' }],
+    [{ code: '40P01' }],
+    [{ name: 'DriverAdapterError', cause: { originalCode: '40001' } }],
+    [Object.assign(new Error('driver failure'), { name: 'DriverAdapterError', cause: { originalCode: '40P01' } })],
+    [Object.assign(new Error('fake'), { name: 'PrismaClientKnownRequestError', code: 'P2034' })],
+    [Object.assign(new Error('fake'), { code: '40001' })],
+    [Object.assign(Object.create(null), { code: 'P2034' })],
+  ])('rejects the constructed lookalike %j for lacking error-type provenance', (error) => {
+    expect(retryableConcurrencyFailure(error)).toBe(false);
   });
 });
 

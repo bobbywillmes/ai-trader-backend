@@ -5,6 +5,7 @@ import { readFile } from 'node:fs/promises';
 import { Client } from 'pg';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createTradingViewGraphFixture } from './tradingview-graph.fixture.js';
+import { assessDatabaseSecurity, CRITICAL_TRIGGERS, type SecurityReadinessMode } from '../../services/database-security-readiness.service.js';
 
 vi.mock('../../services/risk-gate.service.js', () => ({
   evaluateOrderRisk: vi.fn(async () => ({ allowed: true, statusCode: 200, reason: 'allowed', details: { rule: 'restricted-role' } })),
@@ -181,7 +182,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     it('audits the catalog: every application function pins exactly the trusted path, none is SECURITY DEFINER, ownership is unchanged', async () => {
       expect((await superDb.query(unpinnedFunctionsSql)).rows).toEqual([]);
       const counted = (await superDb.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE l.lanname='plpgsql')::int AS plpgsql, count(*) FILTER (WHERE p.prosecdef)::int AS definers, count(*) FILTER (WHERE pg_get_userbyid(p.proowner)<>'ai_trader_migrator')::int AS foreign_owner, count(*) FILTER (WHERE array_length(p.proconfig,1)<>1)::int AS extra_settings ${applicationFunctions}`)).rows[0];
-      expect(counted).toEqual({ total: 116, plpgsql: 112, definers: 0, foreign_owner: 0, extra_settings: 0 });
+      expect(counted).toEqual({ total: 117, plpgsql: 113, definers: 0, foreign_owner: 0, extra_settings: 0 });
     });
 
     it('closes nested name resolution: every application function that another application function calls is itself pinned', async () => {
@@ -236,7 +237,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         await superDb.query(`CREATE ROLE restricted_temp_group NOLOGIN`);
         await superDb.query(`GRANT TEMPORARY ON DATABASE "${database}" TO restricted_temp_group`);
         await superDb.query(`GRANT restricted_temp_group TO ai_trader_app`);
-        await expect(superDb.query(script)).rejects.toThrow(/ai_trader_app still holds TEMPORARY.*restricted_temp_group/);
+        await expect(superDb.query(script)).rejects.toThrow(/ai_trader_app must hold no role membership.*restricted_temp_group.*nothing was changed/s);
       } finally {
         await superDb.query(`REVOKE restricted_temp_group FROM ai_trader_app`).catch(() => undefined);
         await superDb.query(`REVOKE TEMPORARY ON DATABASE "${database}" FROM restricted_temp_group`).catch(() => undefined);
@@ -325,4 +326,188 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     const writes = (fetchSpy.mock.calls as unknown as Array<[unknown, { method?: string }?]>).filter(([, init]) => (init?.method ?? 'GET').toUpperCase() !== 'GET');
     expect(writes).toEqual([]);
   }, 120_000);
+
+  it('cannot delete a TradingView-marked exposure claim, including an unclaimed ENTRY_PENDING claim with no events', async () => {
+    expect((await app.query(`SELECT has_table_privilege(current_user,'"EntryExposureClaim"','DELETE') AS can_delete`)).rows[0].can_delete).toBe(true);
+    const unclaimed = await fixture.admit('restricted-delete-unclaimed');
+    expect((await app.query(`SELECT ec.status,count(e.id)::int events FROM "EntryExposureClaim" ec LEFT JOIN "EntryExposureClaimEvent" e ON e."claimId"=ec.id WHERE ec.id=$1 GROUP BY ec.status`, [unclaimed.claimId])).rows[0]).toEqual({ status: 'ENTRY_PENDING', events: 0 });
+    const claimed = await fixture.admit('restricted-delete-claimed'); await fixture.workerClaim(claimed);
+    for (const target of [unclaimed, claimed]) {
+      await expect(app.query(`DELETE FROM "EntryExposureClaim" WHERE id=$1`, [target.claimId])).rejects.toThrow(/marked exposure ownership is permanent/);
+      expect((await app.query(`SELECT count(*)::int n FROM "EntryExposureClaim" WHERE id=$1`, [target.claimId])).rows[0].n).toBe(1);
+    }
+    await expect(app.query(`DELETE FROM "EntryExposureClaim" WHERE "orderIntentId" IN ($1,$2)`, [unclaimed.intentId, claimed.intentId])).rejects.toThrow(/permanent/);
+  });
+
+  // ---------------------------------------------------------------------------------------------
+  // Phase 4A.2C3B.1: role-membership revocation and the read-only security preflight. A second
+  // database keeps these scenarios independent of the TEMPORARY state the tests above leave behind.
+  // ---------------------------------------------------------------------------------------------
+  describe('role-membership security and database security readiness', () => {
+    const secDatabase = `restricted_sec_${randomUUID().replaceAll('-', '')}`;
+    let sec: Client, runtime: Client, versionNum = 0;
+    const secUrl = (role?: string) => { const url = new URL(sourceUrl); if (role) { url.username = role; url.password = password; } url.pathname = `/${secDatabase}`; url.searchParams.delete('schema'); return url.toString(); };
+    const rowsOf = (client: Client) => async (sql: string, params?: unknown[]) => (await client.query(sql, params)).rows;
+    const preflight = (mode: SecurityReadinessMode, client = runtime) => assessDatabaseSecurity(rowsOf(client) as never, { mode, runtimeRole: 'ai_trader_app' });
+    const codes = async (client = runtime) => (await preflight('BROKER_ENABLED', client)).findings.map(finding => finding.code);
+    const script = () => readFile('docs/database/least-privilege-temporary-revocation.sql', 'utf8');
+    const resetTemporary = async () => { await sec.query(`GRANT TEMPORARY ON DATABASE "${secDatabase}" TO PUBLIC`); await sec.query(`REVOKE TEMPORARY ON DATABASE "${secDatabase}" FROM ai_trader_app`); };
+    const scenario = async (setup: string[], restore: string[], expected: string) => {
+      try {
+        for (const sql of setup) await sec.query(sql);
+        const broker = await preflight('BROKER_ENABLED'); const development = await preflight('DEVELOPMENT_OBSERVATION');
+        expect(broker.findings.map(finding => finding.code), JSON.stringify(broker.findings)).toContain(expected);
+        expect(broker.ready).toBe(false); expect(broker.startupAllowed).toBe(false);
+        expect(development.findings.map(finding => finding.code)).toContain(expected); expect(development.startupAllowed).toBe(true);
+      } finally { for (const sql of restore) await sec.query(sql); }
+    };
+
+    beforeAll(async () => {
+      await admin.query(`CREATE DATABASE "${secDatabase}" OWNER ai_trader_migrator`);
+      const migrated = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], { env: { ...process.env, DATABASE_URL: secUrl('ai_trader_migrator') }, encoding: 'utf8', timeout: 180_000 });
+      expect(migrated.status, `${migrated.stderr}\n${migrated.stdout}`).toBe(0);
+      const migrator = new Client({ connectionString: secUrl('ai_trader_migrator') }); await migrator.connect();
+      await migrator.query(await readFile('docs/database/least-privilege-grants.sql', 'utf8')); await migrator.end();
+      sec = new Client({ connectionString: secUrl() }); await sec.connect();
+      runtime = new Client({ connectionString: secUrl('ai_trader_app') }); await runtime.connect();
+      versionNum = Number((await sec.query(`SHOW server_version_num`)).rows[0].server_version_num);
+    }, 240_000);
+    afterAll(async () => {
+      await runtime?.end().catch(() => undefined); await sec?.end().catch(() => undefined);
+      await admin?.query(`DROP DATABASE IF EXISTS "${secDatabase}" WITH (FORCE)`);
+    });
+
+    it('reports the TEMPORARY gap as outstanding hardening: development may start, broker-enabled readiness fails closed', async () => {
+      const development = await preflight('DEVELOPMENT_OBSERVATION'); const broker = await preflight('BROKER_ENABLED');
+      expect(development.findings.map(finding => finding.code)).toEqual(['RUNTIME_ROLE_TEMPORARY_PRIVILEGE']);
+      expect(development).toMatchObject({ ready: false, startupAllowed: true });
+      expect(broker).toMatchObject({ ready: false, startupAllowed: false });
+    });
+
+    it('revokes TEMPORARY with the administrative script, repeatably, keeps the migrator privilege, then reads clean at both levels', async () => {
+      await sec.query(await script()); await sec.query(await script());
+      expect((await sec.query(`SELECT has_database_privilege('ai_trader_app',current_database(),'TEMPORARY') AS app, has_database_privilege('ai_trader_migrator',current_database(),'TEMPORARY') AS migrator`)).rows[0]).toEqual({ app: false, migrator: true });
+      for (const mode of ['DEVELOPMENT_OBSERVATION', 'BROKER_ENABLED'] as const) expect(await preflight(mode)).toMatchObject({ ready: true, startupAllowed: true, findings: [], runtimeRole: 'ai_trader_app' });
+    });
+
+    it('runs without any access to the migration history table', async () => {
+      expect((await runtime.query(`SELECT has_table_privilege(current_user,'"_prisma_migrations"','SELECT') AS can_read`)).rows[0].can_read).toBe(false);
+      await expect(runtime.query(`SELECT 1 FROM "_prisma_migrations"`)).rejects.toThrow(/permission denied/);
+      expect((await preflight('BROKER_ENABLED')).ready).toBe(true);
+    });
+
+    it('is read-only: the whole assessment runs inside a read-only transaction without error', async () => {
+      await runtime.query('BEGIN READ ONLY');
+      try { expect((await preflight('BROKER_ENABLED')).findings).toEqual([]); } finally { await runtime.query('ROLLBACK'); }
+    });
+
+    describe.each([
+      ['INHERIT FALSE, SET TRUE (the Hermes finding)', 'WITH INHERIT FALSE, SET TRUE'],
+      ['INHERIT TRUE, SET FALSE', 'WITH INHERIT TRUE, SET FALSE'],
+      ['INHERIT FALSE, SET FALSE', 'WITH INHERIT FALSE, SET FALSE'],
+      ['ADMIN OPTION', 'WITH ADMIN OPTION'],
+      ['INHERIT TRUE, SET TRUE', 'WITH INHERIT TRUE, SET TRUE'],
+    ])('membership %s', (_label, options) => {
+      it('is rejected by the revocation script before it changes anything, and is reported by the preflight', async () => {
+        if (versionNum < 160000) return;
+        await resetTemporary();
+        await sec.query(`CREATE ROLE sec_member_group NOLOGIN`);
+        try {
+          await sec.query(`GRANT TEMPORARY ON DATABASE "${secDatabase}" TO sec_member_group`);
+          await sec.query(`GRANT sec_member_group TO ai_trader_app ${options}`);
+          await expect(sec.query(await script())).rejects.toThrow(/ai_trader_app must hold no role membership.*sec_member_group.*nothing was changed/s);
+          // Nothing was revoked: PUBLIC still holds TEMPORARY, so the failure was not a half-applied cutover.
+          expect((await sec.query(`SELECT has_database_privilege('public',current_database(),'TEMPORARY') AS pub`)).rows[0].pub).toBe(true);
+          expect(await codes()).toContain('RUNTIME_ROLE_MEMBERSHIP');
+        } finally {
+          await sec.query(`REVOKE sec_member_group FROM ai_trader_app`).catch(() => undefined);
+          await sec.query(`REVOKE TEMPORARY ON DATABASE "${secDatabase}" FROM sec_member_group`).catch(() => undefined);
+          await sec.query(`DROP ROLE sec_member_group`);
+          await sec.query(await script());
+        }
+      });
+    });
+
+    it('demonstrates why: a non-inherited SET-capable membership leaves has_database_privilege false yet permits TEMPORARY objects', async () => {
+      if (versionNum < 160000) return;
+      await resetTemporary();
+      await sec.query(`CREATE ROLE sec_set_group NOLOGIN`);
+      try {
+        await sec.query(`REVOKE TEMPORARY ON DATABASE "${secDatabase}" FROM PUBLIC`);
+        await sec.query(`GRANT TEMPORARY ON DATABASE "${secDatabase}" TO sec_set_group`);
+        await sec.query(`GRANT sec_set_group TO ai_trader_app WITH INHERIT FALSE, SET TRUE`);
+        expect((await runtime.query(`SELECT has_database_privilege(current_user,current_database(),'TEMPORARY') AS direct`)).rows[0].direct).toBe(false);
+        const attacker = new Client({ connectionString: secUrl('ai_trader_app') }); await attacker.connect();
+        try {
+          await expect(attacker.query(`CREATE TEMP TABLE sneaky (id integer)`)).rejects.toThrow(/permission denied/);
+          await attacker.query(`SET ROLE sec_set_group`);
+          await attacker.query(`CREATE TEMP TABLE sneaky (id integer)`);
+          await attacker.query(`RESET ROLE`);
+        } finally { await attacker.end(); }
+      } finally {
+        await sec.query(`REVOKE sec_set_group FROM ai_trader_app`); await sec.query(`REVOKE TEMPORARY ON DATABASE "${secDatabase}" FROM sec_set_group`); await sec.query(`DROP ROLE sec_set_group`);
+        await sec.query(await script());
+      }
+    });
+
+    it('rejects a predefined-role membership and a role with a privileged attribute', async () => {
+      await resetTemporary();
+      try {
+        await sec.query(`GRANT pg_read_all_data TO ai_trader_app`);
+        await expect(sec.query(await script())).rejects.toThrow(/must hold no role membership.*pg_read_all_data/s);
+      } finally { await sec.query(`REVOKE pg_read_all_data FROM ai_trader_app`); }
+      try {
+        await sec.query(`ALTER ROLE ai_trader_app CREATEDB`);
+        await expect(sec.query(await script())).rejects.toThrow(/must be a plain role.*CREATEDB.*nothing was changed/s);
+      } finally { await sec.query(`ALTER ROLE ai_trader_app NOCREATEDB`); await sec.query(await script()); }
+      expect((await preflight('BROKER_ENABLED')).ready).toBe(true);
+    });
+
+    it('removes a direct TEMPORARY grant to the runtime role, so the post-check never has to fail', async () => {
+      await sec.query(`GRANT TEMPORARY ON DATABASE "${secDatabase}" TO ai_trader_app`);
+      await sec.query(await script());
+      expect((await sec.query(`SELECT has_database_privilege('ai_trader_app',current_database(),'TEMPORARY') AS app`)).rows[0].app).toBe(false);
+    });
+
+    it.each([
+      ['a superuser runtime role', [`ALTER ROLE ai_trader_app SUPERUSER`], [`ALTER ROLE ai_trader_app NOSUPERUSER`], 'RUNTIME_ROLE_SUPERUSER'],
+      ['a CREATEROLE runtime role', [`ALTER ROLE ai_trader_app CREATEROLE`], [`ALTER ROLE ai_trader_app NOCREATEROLE`], 'RUNTIME_ROLE_PRIVILEGED_ATTRIBUTE'],
+      ['a BYPASSRLS runtime role', [`ALTER ROLE ai_trader_app BYPASSRLS`], [`ALTER ROLE ai_trader_app NOBYPASSRLS`], 'RUNTIME_ROLE_PRIVILEGED_ATTRIBUTE'],
+      ['a runtime role that owns a table', [`CREATE TABLE sec_owned_probe (id integer)`, `ALTER TABLE sec_owned_probe OWNER TO ai_trader_app`], [`DROP TABLE IF EXISTS sec_owned_probe`], 'RUNTIME_ROLE_OWNS_OBJECTS'],
+      ['a runtime role that owns a guard function', [`ALTER FUNCTION external_signal_exposure_claim_delete_guard() OWNER TO ai_trader_app`], [`ALTER FUNCTION external_signal_exposure_claim_delete_guard() OWNER TO ai_trader_migrator`], 'RUNTIME_ROLE_OWNS_OBJECTS'],
+      ['a role that may SET session_replication_role', [`GRANT SET ON PARAMETER session_replication_role TO ai_trader_app`], [`REVOKE SET ON PARAMETER session_replication_role FROM ai_trader_app`], 'RUNTIME_ROLE_CAN_BYPASS_TRIGGERS'],
+      ['a role with the TEMPORARY privilege', [`GRANT TEMPORARY ON DATABASE current_database_placeholder TO ai_trader_app`], [`REVOKE TEMPORARY ON DATABASE current_database_placeholder FROM ai_trader_app`], 'RUNTIME_ROLE_TEMPORARY_PRIVILEGE'],
+      ['a role that can read the migration history table', [`GRANT SELECT ON "_prisma_migrations" TO ai_trader_app`], [`REVOKE SELECT ON "_prisma_migrations" FROM ai_trader_app`], 'RUNTIME_ROLE_MIGRATION_ADMINISTRATOR'],
+      ['a disabled critical trigger', [`ALTER TABLE "EntryExposureClaim" DISABLE TRIGGER "EntryExposureClaim_external_signal_delete_guard"`], [`ALTER TABLE "EntryExposureClaim" ENABLE TRIGGER "EntryExposureClaim_external_signal_delete_guard"`], 'CRITICAL_TRIGGER_UNSAFE'],
+      ['a replica-only critical trigger', [`ALTER TABLE "EntryExposureClaim" ENABLE REPLICA TRIGGER "EntryExposureClaim_external_signal_c2_guard"`], [`ALTER TABLE "EntryExposureClaim" ENABLE TRIGGER "EntryExposureClaim_external_signal_c2_guard"`], 'CRITICAL_TRIGGER_UNSAFE'],
+      ['a dropped critical trigger', [`DROP TRIGGER "EntryExposureClaim_external_signal_delete_guard" ON "EntryExposureClaim"`], [`CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" BEFORE DELETE ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`], 'CRITICAL_TRIGGER_UNSAFE'],
+      ['a function that lost its search_path pin', [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() RESET search_path`], [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
+      ['a function replaced by a migration without restating its pin', [`CREATE OR REPLACE FUNCTION external_signal_stale_admission_elapsed(observed_utc timestamp, at_instant timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT (observed_utc AT TIME ZONE 'UTC') <= at_instant - interval '15 minutes' $$`], [`ALTER FUNCTION external_signal_stale_admission_elapsed(timestamp, timestamptz) SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
+      ['a function with a different pinned path', [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SET search_path = public, pg_catalog`], [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
+      ['a protected function that became SECURITY DEFINER', [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SECURITY DEFINER`], [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SECURITY INVOKER`], 'FUNCTION_SECURITY_DEFINER'],
+    ] as const)('detects %s', async (_label, setup, restore, expected) => {
+      if (expected === 'RUNTIME_ROLE_CAN_BYPASS_TRIGGERS' && versionNum < 150000) return;
+      const fill = (sql: string) => sql.replaceAll('current_database_placeholder', `"${secDatabase}"`);
+      await scenario(setup.map(fill), restore.map(fill), expected);
+      expect((await preflight('BROKER_ENABLED')).findings, 'the scenario was fully restored').toEqual([]);
+    });
+
+    it('treats an unevaluable check as a finding, so broker-enabled readiness fails closed and development still starts', async () => {
+      const broken = await assessDatabaseSecurity(async () => { throw new Error('catalog unavailable'); }, { mode: 'BROKER_ENABLED', runtimeRole: 'ai_trader_app' });
+      expect(broken.ready).toBe(false); expect(broken.startupAllowed).toBe(false);
+      expect(broken.findings.map(finding => finding.code)).toContain('CHECK_UNAVAILABLE');
+      expect((await assessDatabaseSecurity(async () => { throw new Error('catalog unavailable'); }, { mode: 'DEVELOPMENT_OBSERVATION' })).startupAllowed).toBe(true);
+    });
+
+    it('lists exactly the critical triggers a fresh migration installs', async () => {
+      const installed = (await sec.query(`SELECT c.relname AS t, t.tgname AS n FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_proc p ON p.oid=t.tgfoid WHERE NOT t.tgisinternal AND p.proname LIKE 'external_signal%'`)).rows.map(row => `${row.t}/${row.n}`).sort();
+      expect(CRITICAL_TRIGGERS.map(([table, trigger]) => `${table}/${trigger}`).sort()).toEqual(installed);
+    });
+
+    it('performs no write: nothing in the assessment changes the catalog state it reads', async () => {
+      const snapshot = async () => (await sec.query(`SELECT (SELECT count(*) FROM pg_auth_members) AS members, (SELECT count(*) FROM pg_trigger) AS triggers, (SELECT md5(string_agg(proconfig::text || prosecdef::text, ',' ORDER BY oid)) FROM pg_proc WHERE pronamespace='public'::regnamespace) AS functions, (SELECT datacl::text FROM pg_database WHERE datname=current_database()) AS acl`)).rows[0];
+      const before = await snapshot(); await preflight('BROKER_ENABLED'); await preflight('DEVELOPMENT_OBSERVATION');
+      expect(await snapshot()).toEqual(before);
+    });
+  });
 });

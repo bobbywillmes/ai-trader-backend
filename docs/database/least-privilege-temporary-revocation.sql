@@ -30,6 +30,8 @@ DECLARE
   is_super boolean;
   database_owner name;
   restored text;
+  memberships text;
+  app_attributes text;
 BEGIN
   SELECT rolsuper INTO is_super FROM pg_roles WHERE rolname=current_user;
   SELECT pg_get_userbyid(datdba) INTO database_owner FROM pg_database WHERE datname=target;
@@ -38,6 +40,26 @@ BEGIN
   END IF;
   IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='ai_trader_app') OR NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname='ai_trader_migrator') THEN
     RAISE EXCEPTION 'create ai_trader_app and ai_trader_migrator before revoking TEMPORARY';
+  END IF;
+
+  -- The runtime role must be a plain login role with no memberships at all. Any pg_auth_members row is
+  -- rejected whatever its options: a membership with INHERIT FALSE grants no privileges by itself, but
+  -- with SET TRUE (the PostgreSQL 16 default for a plain GRANT of a role) the role can SET ROLE into the
+  -- granted role, create temporary objects as it, then RESET ROLE, so the privilege check below would
+  -- not see it. On PostgreSQL 15 and earlier membership always implies SET ROLE. Roles reached through a
+  -- chain start with a direct row, so a direct-row check covers the chain. This runs before any change,
+  -- so an unsafe role leaves the database exactly as it was.
+  -- to_jsonb keeps this valid on every version: PostgreSQL 16 adds the inherit_option and set_option columns.
+  SELECT string_agg(pg_get_userbyid(am.roleid) || ' ' || (to_jsonb(am) - 'oid' - 'roleid' - 'member' - 'grantor')::text, '; ' ORDER BY am.roleid) INTO memberships
+    FROM pg_auth_members am WHERE am.member = (SELECT oid FROM pg_roles WHERE rolname='ai_trader_app');
+  IF memberships IS NOT NULL THEN
+    RAISE EXCEPTION 'ai_trader_app must hold no role membership, including a non-inheriting or SET-capable one; found: %. Revoke each (REVOKE <role> FROM ai_trader_app) and rerun; nothing was changed.', memberships;
+  END IF;
+  SELECT concat_ws(', ', CASE WHEN rolsuper THEN 'SUPERUSER' END, CASE WHEN rolcreaterole THEN 'CREATEROLE' END, CASE WHEN rolcreatedb THEN 'CREATEDB' END,
+                   CASE WHEN rolreplication THEN 'REPLICATION' END, CASE WHEN rolbypassrls THEN 'BYPASSRLS' END) INTO app_attributes
+    FROM pg_roles WHERE rolname='ai_trader_app';
+  IF app_attributes <> '' THEN
+    RAISE EXCEPTION 'ai_trader_app must be a plain role; it holds: %; nothing was changed.', app_attributes;
   END IF;
 
   EXECUTE format('REVOKE TEMPORARY ON DATABASE %I FROM PUBLIC', target);

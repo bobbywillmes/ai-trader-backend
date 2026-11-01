@@ -65,6 +65,8 @@ import { ORDER_INTENT_MARKET_POLICY_COMPARISON_WORKER_INTERVAL_MS } from '../wor
 import { runOrderIntentBrokerComparisonWorker } from '../workers/order-intent-broker-comparison.worker.js';
 import { ORDER_INTENT_BROKER_COMPARISON_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { closeBrokerObservationPrisma } from '../db/broker-observation-prisma.js';
+import { prisma } from '../db/prisma.js';
+import { assessDatabaseSecurity } from '../services/database-security-readiness.service.js';
 import { PAPER_BROKER_WRITE_ATTENTION_INTERVAL_MS } from '../workers/worker-health.definitions.js';
 import { runExternalSignalCorrelationWorker } from '../workers/external-signal-correlation.worker.js';
 import { EXTERNAL_SIGNAL_CORRELATION_WORKER_INTERVAL_MS } from '../workers/worker-health.definitions.js';
@@ -429,6 +431,14 @@ async function startServer() {
   server = app.listen(env.PORT, () => {
     logStartupReport(startupReport);
   });
+
+  // Observation only: reports outstanding production-role hardening and never delays or blocks startup.
+  void assessDatabaseSecurity((sql, params) => prisma.$queryRawUnsafe(sql, ...(params ?? [])), { mode: 'DEVELOPMENT_OBSERVATION' })
+    .then((report) => {
+      if (report.ready) logger.info('Database security preflight found no outstanding hardening.');
+      else logger.warn({ findings: report.findings.map((finding) => finding.code) }, 'Database security preflight found outstanding hardening; broker-enabled readiness would fail closed (npm run db:security-preflight).');
+    })
+    .catch((error) => logger.warn({ error }, 'Database security preflight could not run.'));
 
   startWorkers();
 }

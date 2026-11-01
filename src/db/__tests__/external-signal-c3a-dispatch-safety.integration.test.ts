@@ -14,6 +14,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
 const C2_MIGRATION = '20261030180000_tradingview_controlled_worker_claim';
 const C2_MIGRATION_SHA256 = '0553f72918251f8221bd62a0590377bb022ff4c52f9328f11615f9def14e1e77';
 const C3A_MIGRATION = '20261031120000_tradingview_dispatch_safety_hardening';
+const C3A_MIGRATION_SHA256 = '47f1332f1988ee3a863351b95b6bc8672214fe8fb3004885dd66c17022b85402';
+const C3B1_MIGRATION = '20261101120000_tradingview_marked_exposure_claim_delete_protection';
 
 type Isolation = 'READ COMMITTED' | 'REPEATABLE READ' | 'SERIALIZABLE';
 const [RC, RR, SER]: Isolation[] = ['READ COMMITTED', 'REPEATABLE READ', 'SERIALIZABLE'];
@@ -572,6 +574,55 @@ const matrix = (pairs: Array<[Isolation, Isolation]>) => pairs.flatMap(([eventIs
       expect((await attention(graph.intentId))[0].status).toBe('OPEN');
     }, 30_000);
 
+    it.each([
+      ['ACTIVE', 'INVALID'], ['PAUSED', 'REVOKED'], ['DISABLED', 'NEEDS_VERIFICATION'],
+    ])('reports uncertainty for a %s account whose credential is %s, through the real scheduler and without a broker request', async (accountStatus, credentialStatus) => {
+      const graph = await admit(`c3b1-credless-${accountStatus}`);
+      await workerClaim(graph);
+      await db.query(insertEventSql, [graph.claimId, 'ADAPTER_INVOCATION_STARTED']);
+      const original = (await db.query(`SELECT status::text AS status,"tradingEnabled","killSwitchEnabled" FROM "TradingAccount" WHERE id=$1`, [paperId])).rows[0] as { status: string; tradingEnabled: boolean; killSwitchEnabled: boolean };
+      const originalCredential = (await db.query(`SELECT status::text AS status FROM "TradingAccountCredential" WHERE "tradingAccountId"=$1`, [paperId])).rows[0]?.status as string | undefined;
+      expect(originalCredential, 'the fixture account must have a credential to make unusable').toBeDefined();
+      fetchSpy.mockClear();
+      try {
+        await db.query(`UPDATE "TradingAccountCredential" SET status=$2::"BrokerCredentialStatus" WHERE "tradingAccountId"=$1`, [paperId, credentialStatus]);
+        await db.query(`UPDATE "TradingAccount" SET status=$2::"TradingAccountStatus","tradingEnabled"=$3,"killSwitchEnabled"=$4 WHERE id=$1`, [paperId, accountStatus, accountStatus === 'ACTIVE' && original.tradingEnabled, accountStatus !== 'ACTIVE' || original.killSwitchEnabled]);
+        const first = accountResult(await tick());
+        expect(first).toMatchObject({ outcome: 'CREDENTIALS_UNAVAILABLE', account: { eligible: false, reason: 'credentials_unavailable_with_exposure' } });
+        const opened = await attention(graph.intentId);
+        expect(opened).toHaveLength(1);
+        expect(opened[0]).toMatchObject({ status: 'OPEN', severity: 'ERROR', policy: 'AUTHORITATIVE_ONLY', occurrences: 1, resolvedAt: null });
+        expect(opened[0].detailsJson).toMatchObject({ exposureRetained: true, definitelyNotSent: false, deliveryEventTypes: ['ADAPTER_INVOCATION_STARTED'] });
+        expect(await openedEvents(opened[0].id)).toBe(1);
+
+        // Quiet while nothing changed and the refresh is not due: no new episode, count or event.
+        await tick(); await tick();
+        const quiet = await attention(graph.intentId);
+        expect(quiet).toHaveLength(1);
+        expect({ id: quiet[0].id, occurrences: quiet[0].occurrences, events: await openedEvents(quiet[0].id) }).toEqual({ id: opened[0].id, occurrences: 1, events: 1 });
+
+        // Material evidence updates the same episode.
+        await db.query(insertEventSql, [graph.claimId, 'BROKER_DELIVERY_UNCERTAIN']);
+        await tick();
+        const changed = await attention(graph.intentId);
+        expect(changed).toHaveLength(1);
+        expect(changed[0].id).toBe(opened[0].id);
+        expect(changed[0].detailsJson.deliveryEventTypes).toEqual(['ADAPTER_INVOCATION_STARTED', 'BROKER_DELIVERY_UNCERTAIN']);
+        expect(await openedEvents(opened[0].id)).toBe(2);
+
+        // Ownership is preserved and nothing was dispatched, released or sent.
+        expect(await graphState(graph)).toEqual({ intent: 'submitting', claim: 'ENTRY_SUBMITTING', released: false, not_sent: 0, failures: 0 });
+        expect((await db.query(`SELECT count(*)::int n FROM "BrokerOrder" WHERE "orderIntentId"=$1`, [graph.intentId])).rows[0].n).toBe(0);
+        expect(fetchSpy).not.toHaveBeenCalled();
+      } finally {
+        await db.query(`UPDATE "TradingAccount" SET status=$2::"TradingAccountStatus","tradingEnabled"=$3,"killSwitchEnabled"=$4 WHERE id=$1`, [paperId, original.status, original.tradingEnabled, original.killSwitchEnabled]);
+        await db.query(`UPDATE "TradingAccountCredential" SET status=$2::"BrokerCredentialStatus" WHERE "tradingAccountId"=$1`, [paperId, originalCredential]);
+      }
+      // Credentials returning does not resolve the episode; only authoritative evidence can.
+      await tick();
+      expect((await attention(graph.intentId))[0]).toMatchObject({ status: 'OPEN', resolvedAt: null });
+    }, 60_000);
+
     it('a claim that never had uncertainty still recovers as definitely not sent', async () => {
       const graph = await admit('c3a-crash-clean');
       await workerClaim(graph);
@@ -641,6 +692,73 @@ const matrix = (pairs: Array<[Isolation, Isolation]>) => pairs.flatMap(([eventIs
       await c2.query(insertEventSql, [legacy.claimId, 'ADAPTER_INVOCATION_STARTED']);
       const triggers = (await c2.query(`SELECT tgname FROM pg_trigger WHERE tgrelid IN ('"EntryExposureClaim"'::regclass,'"EntryExposureClaimEvent"'::regclass) AND NOT tgisinternal ORDER BY 1`)).rows.map(row => row.tgname);
       expect(triggers).toEqual(expect.arrayContaining(['EntryExposureClaim_external_signal_acquired_at_stamp', 'EntryExposureClaim_external_signal_c2_guard', 'EntryExposureClaimEvent_external_signal_c2_delivery_fence', 'EntryExposureClaimEvent_external_signal_c2_not_sent_guard']));
+    });
+
+    it('upgrades the C3A database with the C3B.1 migration: marked claims become undeletable, unmarked claims are unchanged, history is preserved', async () => {
+      const claimed = await seed(c2); const unclaimed = await seed(c2, { worker: false, notSent: false, claimStatus: 'ENTRY_PENDING' }); const legacy = await seed(c2, { marked: false, worker: false, notSent: false });
+      const counts = async () => (await c2.query(`SELECT (SELECT count(*)::int FROM "EntryExposureClaim") AS claims,(SELECT count(*)::int FROM "EntryExposureClaimEvent") AS events,(SELECT count(*)::int FROM "OrderIntent") AS intents`)).rows[0];
+      // Before the migration an unclaimed marked claim without events can be deleted, orphaning its intent.
+      const orphanProbe = await seed(c2, { worker: false, notSent: false, claimStatus: 'ENTRY_PENDING' });
+      await c2.query(`DELETE FROM "EntryExposureClaim" WHERE id=$1`, [orphanProbe.claimId]);
+      expect((await c2.query(`SELECT count(*)::int n FROM "OrderIntent" WHERE id=$1`, [orphanProbe.intentId])).rows[0].n).toBe(1);
+      const before = await counts();
+      await applyMigrations(c2, [C3B1_MIGRATION]);
+      expect(await counts()).toEqual(before);
+      expect((await c2.query(unpinned)).rows).toEqual([]);
+      for (const target of [unclaimed, claimed]) {
+        await expect(c2.query(`DELETE FROM "EntryExposureClaim" WHERE id=$1`, [target.claimId])).rejects.toThrow(/marked exposure ownership is permanent/);
+      }
+      expect(await counts()).toEqual(before);
+      await c2.query(`DELETE FROM "EntryExposureClaim" WHERE id=$1`, [legacy.claimId]);
+      expect((await counts()).claims).toBe(before.claims - 1);
+    });
+  });
+
+  describe('marked EntryExposureClaim DELETE protection (Phase 4A.2C3B.1)', () => {
+    const deleteSql = `DELETE FROM "EntryExposureClaim" WHERE id=$1`;
+    const exists = async (claimId: number) => (await db.query(`SELECT count(*)::int n FROM "EntryExposureClaim" WHERE id=$1`, [claimId])).rows[0].n === 1;
+
+    it.each([
+      ['an unclaimed ENTRY_PENDING claim with no events', { worker: false, notSent: false, claimStatus: 'ENTRY_PENDING' }],
+      ['a worker-claimed ENTRY_SUBMITTING claim', {}],
+    ] as const)('refuses to delete %s and leaves the exposure slot occupied', async (_label, options) => {
+      const seeded = await seed(db, options);
+      await expect(db.query(deleteSql, [seeded.claimId])).rejects.toThrow(/marked exposure ownership is permanent/);
+      expect(await exists(seeded.claimId)).toBe(true);
+      expect((await db.query(`SELECT status FROM "OrderIntent" WHERE id=$1`, [seeded.intentId])).rows).toHaveLength(1);
+    });
+
+    it('does not weaken the one-unreleased-claim-per-symbol exclusivity constraint', async () => {
+      const index = (await db.query(`SELECT indexdef FROM pg_indexes WHERE tablename='EntryExposureClaim' AND indexdef ILIKE '%UNIQUE%' AND indexdef ILIKE '%tradingAccountId%' AND indexdef ILIKE '%securityId%'`)).rows;
+      expect(index.some(row => /WHERE/i.test(row.indexdef))).toBe(true);
+    });
+
+    it('keeps unmarked PAPER/LIVE claim deletion behavior unchanged', async () => {
+      const legacy = await seed(db, { marked: false, worker: false, notSent: false });
+      await db.query(deleteSql, [legacy.claimId]);
+      expect(await exists(legacy.claimId)).toBe(false);
+    });
+
+    it('offers no bypass: neither session_replication_role as an ordinary session nor a setting disables the guard', async () => {
+      const seeded = await seed(db, { worker: false, notSent: false, claimStatus: 'ENTRY_PENDING' });
+      await db.query(`SELECT set_config('ai_trader.external_signal_rollout_transition','1',false)`);
+      await expect(db.query(deleteSql, [seeded.claimId])).rejects.toThrow(/permanent/);
+      expect(await exists(seeded.claimId)).toBe(true);
+    });
+  });
+
+  describe('migration security drift (static)', () => {
+    it('every migration from C3A onward that defines a function restates the trusted search_path audit, and the applied C3A migration is unchanged', async () => {
+      const names = (await readdir('prisma/migrations', { withFileTypes: true })).filter(entry => entry.isDirectory()).map(entry => entry.name).sort();
+      const unrestated: string[] = [];
+      for (const name of names.filter(candidate => candidate >= C3A_MIGRATION)) {
+        const sql = await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8');
+        if (/CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)/i.test(sql) && !sql.includes('application functions still lack the trusted search_path')) unrestated.push(name);
+        expect(/SECURITY\s+DEFINER/i.test(sql.replace(/--.*$/gm, '')), `${name} must not introduce SECURITY DEFINER`).toBe(false);
+      }
+      expect(unrestated).toEqual([]);
+      const c3a = (await readFile(`prisma/migrations/${C3A_MIGRATION}/migration.sql`, 'utf8')).replaceAll('\r\n', '\n');
+      expect(createHash('sha256').update(c3a).digest('hex')).toBe(C3A_MIGRATION_SHA256);
     });
   });
 });

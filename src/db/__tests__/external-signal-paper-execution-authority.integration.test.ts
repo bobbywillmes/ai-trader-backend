@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import { spawnSync } from 'node:child_process';
 import { readFile, readdir } from 'node:fs/promises';
 import { Client } from 'pg';
+import { Prisma } from '@prisma/client';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const admissionHarness = vi.hoisted(() => ({ riskAllowed: true }));
@@ -145,7 +146,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
         try { await loser.query(`UPDATE c2_serialization_probe SET value=value+1 WHERE id=1`); }
         catch (error) { sqlState = (error as { code?: string }).code ?? null; }
         expect(sqlState).toBe('40001');
-        expect(classify({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: sqlState } } } })).toBe(true);
+        expect(classify(new Prisma.PrismaClientKnownRequestError('probe', { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: sqlState } } } }))).toBe(true);
         await loser.query('ROLLBACK');
       } finally { await first.end(); await second.end(); }
     }
@@ -167,8 +168,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       const deadlock = outcomes.find(outcome => outcome.status === 'rejected') as PromiseRejectedResult | undefined;
       expect((deadlock?.reason as { code?: string })?.code).toBe('40P01');
       const classify = (await import('../../services/external-signal-broker-worker.service.js')).retryableConcurrencyFailure;
-      expect(classify({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: '40P01' } } } })).toBe(true);
-      expect(classify({ code: 'P2010', meta: { driverAdapterError: { cause: { originalCode: 'P0001', originalMessage: 'deadlock detected' } } } })).toBe(false);
+      expect(classify(new Prisma.PrismaClientKnownRequestError('probe', { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: '40P01' } } } }))).toBe(true);
+      expect(classify(new Prisma.PrismaClientKnownRequestError('deadlock detected', { code: 'P2010', clientVersion: 'test', meta: { driverAdapterError: { cause: { originalCode: 'P0001', originalMessage: 'deadlock detected' } } } }))).toBe(false);
       await first.query('ROLLBACK').catch(() => undefined); await second.query('ROLLBACK').catch(() => undefined);
     } finally { await first.end(); await second.end(); }
   });

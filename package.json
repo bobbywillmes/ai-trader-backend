@@ -83,7 +83,8 @@
     "acceptance:ui:network-check": "tsx scripts/ui-acceptance/network-check.ts",
     "acceptance:ui:stop": "tsx scripts/ui-acceptance/manage.ts stop",
     "acceptance:live-entry:test": "vitest run --config vitest.acceptance.config.ts",
-    "graphify:update": "graphify extract . --code-only && graphify cluster-only . --no-label"
+    "graphify:update": "graphify extract . --code-only && graphify cluster-only . --no-label",
+    "db:security-preflight": "tsx scripts/check-database-security.ts"
   },
   "devDependencies": {
     "@ngrok/ngrok": "^1.7.0",
@@ -100,6 +101,7 @@
   "dependencies": {
     "@prisma/adapter-pg": "^7.8.0",
     "@prisma/client": "^7.8.0",
+    "@prisma/driver-adapter-utils": "7.8.0",
     "argon2": "^0.44.0",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",

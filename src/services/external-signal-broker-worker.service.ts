@@ -1,4 +1,6 @@
-import type { PrismaClient } from '@prisma/client';
+import { Prisma, type PrismaClient } from '@prisma/client';
+import { DriverAdapterError } from '@prisma/driver-adapter-utils';
+import pg from 'pg';
 import { prisma } from '../db/prisma.js';
 import { placeOrderSchema } from '../validators/place-order.schema.js';
 import { evaluateOrderRisk, logRiskGateBlockedOrder } from './risk-gate.service.js';
@@ -12,35 +14,43 @@ type Db = PrismaClient;
 const C2_REFUSAL = 'TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE';
 const C2_MAX_SIGNAL_AGE_MS = 120_000;
 const SERIALIZATION_RETRIES = 2;
+const { DatabaseError } = pg;
 export type TradingViewC2WorkerResult = { outcome: 'NOT_CLAIMED' | 'LOST_REFUSAL_RACE' } | { outcome: 'RISK_DENIED'; reason: string } | { outcome: 'C2_DISPATCH_REFUSED' };
 const errorCode = (error: unknown) => error && typeof error === 'object' && 'code' in error ? String(error.code) : null;
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : String(error);
 const record = (value: unknown): Record<string, unknown> | null => value != null && typeof value === 'object' ? value as Record<string, unknown> : null;
-const RETRYABLE_SQLSTATES = ['40001', '40P01'];
-const sqlStateFromPrismaError = (error: unknown) => {
-  const meta = record(record(error)?.meta);
+const RETRYABLE_SQLSTATES: readonly string[] = ['40001', '40P01'];
+const sqlStateFromPrismaError = (error: Prisma.PrismaClientKnownRequestError) => {
+  const meta = record(error.meta);
   const driver = record(meta?.driverAdapterError);
   const cause = record(driver?.cause);
-  const metaCause = record(meta?.cause);
   // Prisma adapters expose the server SQLSTATE through driverAdapterError.cause.originalCode.
   // P2010 from raw queries may instead expose meta.code. Only exact PostgreSQL codes count;
   // free-form messages are deliberately excluded from authority over retries.
-  for (const value of [cause?.originalCode, cause?.code, metaCause?.originalCode, metaCause?.code, meta?.code]) {
+  for (const value of [cause?.originalCode, meta?.code]) {
     if (typeof value === 'string' && /^[0-9A-Z]{5}$/.test(value)) return value;
   }
   return null;
 };
+/**
+ * Whether a failed transaction may be retried in a fresh snapshot. Authenticity comes from class identity
+ * (`instanceof`), never from an object's shape, `name`, `code` or message: a constructed lookalike with a
+ * matching `code` is refused. Recognized: Prisma P2034, Prisma P2010 wrapping 40001/40P01, a top-level
+ * DriverAdapterError whose structured SQLSTATE is 40001/40P01, and a node-postgres DatabaseError.
+ * Limitation: `instanceof` holds only while one copy of each class is loaded (the lockfile pins a single
+ * @prisma/driver-adapter-utils); a duplicate copy fails closed, i.e. is not retried, and the bounded
+ * attempt that raised it surfaces the error rather than looping.
+ */
 export const retryableConcurrencyFailure = (error: unknown) => {
-  const code = errorCode(error);
-  if (code === 'P2034') return true;
-  if (RETRYABLE_SQLSTATES.includes(code ?? '')) return true;
-  if (code === 'P2010') return RETRYABLE_SQLSTATES.includes(sqlStateFromPrismaError(error) ?? '');
-  // A commit or ORM failure can reach the caller as the adapter's own unwrapped error. Only that exact
-  // error type qualifies, so an arbitrary error with a similar `cause` is never retried.
-  const root = record(error);
-  if (root?.name !== 'DriverAdapterError') return false;
-  const originalCode = record(root.cause)?.originalCode;
-  return typeof originalCode === 'string' && RETRYABLE_SQLSTATES.includes(originalCode);
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (error.code === 'P2034') return true;
+    return error.code === 'P2010' && RETRYABLE_SQLSTATES.includes(sqlStateFromPrismaError(error) ?? '');
+  }
+  if (error instanceof DriverAdapterError) {
+    const originalCode = record(error.cause)?.originalCode;
+    return typeof originalCode === 'string' && RETRYABLE_SQLSTATES.includes(originalCode);
+  }
+  return error instanceof DatabaseError && RETRYABLE_SQLSTATES.includes(error.code ?? '');
 };
 
 /** Explicit C2-only path. No scheduler calls it and every allowed candidate is refused before dispatch. */

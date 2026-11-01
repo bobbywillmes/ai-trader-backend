@@ -534,12 +534,25 @@ export async function recoverStaleSubmittingIntents() {
   const results = [];
   for (const account of accounts) {
     if (!account.eligible) {
+      // Delivery uncertainty is local evidence, so it is reported without broker credentials and for any
+      // account status. This path performs no broker request, release or dispatch; the account's
+      // credential-dependent recovery stays skipped below.
+      let deliveryAttention: Awaited<ReturnType<typeof observeTradingViewDeliveryUncertaintyForAccount>> | { error: string } | undefined;
+      if (account.exposureSummary.tradingViewDeliveryAttentionDue > 0) {
+        try {
+          deliveryAttention = await observeTradingViewDeliveryUncertaintyForAccount(account.tradingAccountId);
+        } catch (error) {
+          deliveryAttention = { error: sanitizeError(error) };
+          logger.warn({ tradingAccountId: account.tradingAccountId, error }, 'Credential-independent TradingView delivery attention refresh failed; it is retried on the next tick.');
+        }
+      }
       results.push({
         account,
         outcome:
           account.reason === 'credentials_unavailable_with_exposure'
             ? 'CREDENTIALS_UNAVAILABLE' as const
             : 'SKIPPED' as const,
+        ...(deliveryAttention ? { deliveryAttention } : {}),
       });
       continue;
     }

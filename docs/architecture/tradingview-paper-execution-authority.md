@@ -487,6 +487,26 @@ and the drain). In addition:
 - Confirm a single writer for each PAPER broker account before any broker-enabled canary.
 - Apply this migration to persistent databases only after independent acceptance.
 
+## Phase 4A.2C3B.1 security prerequisites (broker-inert)
+
+Forward-only migration `20261101120000_tradingview_marked_exposure_claim_delete_protection` adds
+`external_signal_exposure_claim_delete_guard` / `EntryExposureClaim_external_signal_delete_guard`: a
+TradingView-marked `EntryExposureClaim` can never be deleted, claimed or not, with or without events. Unmarked
+PAPER/LIVE claims and the one-unreleased-claim-per-symbol partial unique index are untouched, and there is no
+bypass setting. The applied C3A migration is unchanged.
+
+Other C3B.1 changes: the TEMPORARY-revocation script rejects every role membership of the runtime role
+(including `INHERIT FALSE, SET TRUE`); a read-only database security preflight
+(`npm run db:security-preflight`, `docs/database/README.md`) with development-observation and broker-enabled
+levels; delivery-uncertainty attention is observed for accounts with unusable credentials (no broker request,
+ownership retained, never auto-resolved); and the retry classifier recognizes only genuine Prisma
+`PrismaClientKnownRequestError` (P2034, P2010 wrapping 40001/40P01), `DriverAdapterError` and node-postgres
+`DatabaseError` instances by class identity, so a constructed lookalike is refused. Class identity holds only
+while a single copy of each class is loaded; a duplicate copy fails closed (not retried).
+
+The final-dispatch transaction for C3B.2 is specified in
+`docs/architecture/tradingview-c3b2-final-dispatch-transaction.md` and is not implemented.
+
 ## Deployment and rollback floor
 
 The foundation migration is forward-only once EXECUTE generations, activation history, authorizations, or marked intents exist. Rolling application code back before Phase 4A.2A would remove recognition and quarantine of marked intents and is unsafe without a separately reviewed compatibility fix. This checkpoint does not apply or activate the migration.
