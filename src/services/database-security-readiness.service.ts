@@ -4,17 +4,31 @@
 // It never reads "_prisma_migrations", never grants, alters or creates anything, and cannot activate
 // execution. Every query is a SELECT, so it also runs as the least-privilege runtime role it assesses.
 //
-// Two reporting levels share one set of findings:
+// Three modes share one set of findings:
 //   DEVELOPMENT_OBSERVATION  reports outstanding hardening; `ready` stays informative and the process may start.
-//   BROKER_ENABLED           fails closed: any finding, or any failure to evaluate, means not ready.
+//   BROKER_ENABLED           fails closed: any finding, or any failure to evaluate, means not ready. It assesses the
+//                            connection it runs over, so that connection must BE the configured restricted runtime
+//                            identity (session_user = current_user = expected role, expected database and schema).
+//   ADMIN_DIAGNOSTIC         an administrator inspects a named role. Diagnostic only: it can never authorize broker
+//                            readiness, because the connection is not the runtime identity.
+//
+// Execution-critical definitions (trigger semantics, function bodies) are compared with a code-controlled,
+// reviewed manifest (database-security-manifest.ts), never with a baseline read from the database being assessed.
 
-export type SecurityReadinessMode = 'DEVELOPMENT_OBSERVATION' | 'BROKER_ENABLED';
+import { SECURITY_MANIFEST, type ManifestFunction, type ManifestTrigger } from './database-security-manifest.js';
+
+export type SecurityReadinessMode = 'DEVELOPMENT_OBSERVATION' | 'BROKER_ENABLED' | 'ADMIN_DIAGNOSTIC';
 export type SqlRows = <Row = Record<string, unknown>>(sql: string, params?: unknown[]) => Promise<Row[]>;
 export type SecurityFinding = { code: string; message: string; detail?: unknown };
 export type SecurityReadinessReport = {
   mode: SecurityReadinessMode;
   schema: string;
   runtimeRole: string | null;
+  /** Non-secret identity evidence for the connection that was assessed; null when it could not be read. */
+  identity: { sessionUser: string; currentUser: string; database: string; schema: string } | null;
+  manifestVersion: string;
+  /** True only for a clean BROKER_ENABLED assessment over the actual runtime identity. */
+  brokerReadinessAuthorized: boolean;
   /** True when no finding exists. In DEVELOPMENT_OBSERVATION this is informational only. */
   ready: boolean;
   /** Whether this mode permits the process to continue; BROKER_ENABLED requires `ready`. */
@@ -68,11 +82,41 @@ async function gather<T>(label: string, run: () => Promise<T>, findings: Securit
   }
 }
 
-export async function assessDatabaseSecurity(query: SqlRows, options: { mode: SecurityReadinessMode; runtimeRole?: string; now?: Date }): Promise<SecurityReadinessReport> {
+export type AssessmentOptions = {
+  mode: SecurityReadinessMode;
+  /** BROKER_ENABLED: the role, database and schema the backend is configured to use; the connection must match all three. */
+  expected?: { role: string; database: string | null; schema: string };
+  /** ADMIN_DIAGNOSTIC only: the role an administrator inspects. */
+  inspectRole?: string;
+  now?: Date;
+};
+
+export async function assessDatabaseSecurity(query: SqlRows, options: AssessmentOptions): Promise<SecurityReadinessReport> {
   const findings: SecurityFinding[] = [];
-  const identity = await gather('Database identity', async () => (await query<{ schema: string; current_role_name: string }>(`SELECT current_schema() AS schema, current_user::text AS current_role_name`))[0]!, findings);
-  const schema = 'value' in identity ? identity.value.schema : 'public';
-  const roleName = options.runtimeRole ?? ('value' in identity ? identity.value.current_role_name : null);
+  const identityResult = await gather('Database identity', async () => (await query<{ schema: string; session_user_name: string; current_role_name: string; database: string }>(
+    `SELECT current_schema() AS schema, session_user::text AS session_user_name, current_user::text AS current_role_name, current_database()::text AS database`))[0]!, findings);
+  const schema = 'value' in identityResult ? identityResult.value.schema : 'public';
+  const identity = 'value' in identityResult ? { sessionUser: identityResult.value.session_user_name, currentUser: identityResult.value.current_role_name, database: identityResult.value.database, schema } : null;
+
+  if (options.mode === 'BROKER_ENABLED') {
+    // The assessment is only meaningful for the connection that will run broker-capable operations, so the
+    // connection itself must prove it is the configured restricted identity. Any gap fails closed.
+    const expected = options.expected;
+    if (!expected?.role) findings.push({ code: 'RUNTIME_IDENTITY_UNCONFIGURED', message: 'No expected runtime role was supplied, so the connection identity cannot be verified.' });
+    if (identity && expected?.role) {
+      const mismatches: string[] = [];
+      if (identity.sessionUser !== expected.role) mismatches.push(`session_user is ${identity.sessionUser}, expected ${expected.role}`);
+      if (identity.currentUser !== expected.role) mismatches.push(`current_user is ${identity.currentUser}, expected ${expected.role}`);
+      if (identity.sessionUser !== identity.currentUser) mismatches.push('session_user and current_user differ (SET ROLE or SET SESSION AUTHORIZATION is in effect)');
+      if (expected.database === null) mismatches.push('the configured database name is unavailable');
+      else if (identity.database !== expected.database) mismatches.push(`connected database is ${identity.database}, configured ${expected.database}`);
+      if (identity.schema !== expected.schema) mismatches.push(`active schema is ${identity.schema}, configured ${expected.schema}`);
+      if (mismatches.length) findings.push({ code: 'RUNTIME_IDENTITY_MISMATCH', message: `The assessed connection is not the configured runtime identity: ${mismatches.join('; ')}.`, detail: { sessionUser: identity.sessionUser, currentUser: identity.currentUser, database: identity.database, schema: identity.schema } });
+    }
+  }
+  // BROKER_ENABLED and DEVELOPMENT_OBSERVATION assess the connection's own identity. Only the administrator
+  // diagnostic inspects another role, and its report never authorizes broker readiness.
+  const roleName = options.mode === 'ADMIN_DIAGNOSTIC' ? (options.inspectRole ?? null) : (identity?.currentUser ?? null);
 
   // 1. Every application function pins the trusted path; none is SECURITY DEFINER; none has a foreign owner setting drift.
   const functions = await gather('Function audit', () => query<{ fn: string; prosecdef: boolean; pinned: boolean; paths: string[] }>(
@@ -109,8 +153,20 @@ export async function assessDatabaseSecurity(query: SqlRows, options: { mode: Se
     if (problems.length) findings.push({ code: 'CRITICAL_TRIGGER_UNSAFE', message: `${problems.length} critical trigger(s) are missing, rebound or not firing for ordinary sessions.`, detail: problems });
   }
 
-  // 3. The runtime role.
-  if (roleName === null) return finish(options, schema, null, findings);
+  // 3. Execution-critical definitions match the reviewed manifest: trigger timing/events/scope/WHEN/columns/arguments
+  // and the bound function's identity, and every application function's body, language, volatility and result.
+  const catalog = await gather('Security manifest comparison', () => readSecurityCatalog(query), findings);
+  if ('value' in catalog) {
+    const drift = compareWithManifest(catalog.value);
+    if (drift.functionsChanged.length) findings.push({ code: 'PROTECTED_FUNCTION_CHANGED', message: `${drift.functionsChanged.length} application function(s) differ from the reviewed security manifest ${SECURITY_MANIFEST.version}.`, detail: drift.functionsChanged });
+    if (drift.functionsMissing.length) findings.push({ code: 'PROTECTED_FUNCTION_MISSING', message: `${drift.functionsMissing.length} reviewed function(s) are missing from the schema.`, detail: drift.functionsMissing });
+    if (drift.functionsUnreviewed.length) findings.push({ code: 'FUNCTION_NOT_IN_MANIFEST', message: `${drift.functionsUnreviewed.length} application function(s) are not in the reviewed security manifest; review and add them with their migration.`, detail: drift.functionsUnreviewed });
+    if (drift.triggersChanged.length) findings.push({ code: 'TRIGGER_DEFINITION_CHANGED', message: `${drift.triggersChanged.length} trigger(s) differ from the reviewed definition (timing, events, scope, WHEN, columns, arguments or bound function).`, detail: drift.triggersChanged });
+    if (drift.triggersUnreviewed.length) findings.push({ code: 'TRIGGER_NOT_IN_MANIFEST', message: `${drift.triggersUnreviewed.length} trigger(s) are not in the reviewed security manifest.`, detail: drift.triggersUnreviewed });
+  }
+
+  // 4. The runtime role.
+  if (roleName === null) return finish(options, schema, null, identity, findings);
   const role = await gather('Runtime role audit', async () => (await query<{
     exists: boolean; rolsuper: boolean; rolcreaterole: boolean; rolcreatedb: boolean; rolreplication: boolean; rolbypassrls: boolean;
     temporary: boolean; memberships: unknown[]; owned_relations: string[]; owned_functions: string[]; owns_schema: boolean; owns_database: boolean;
@@ -134,6 +190,22 @@ export async function assessDatabaseSecurity(query: SqlRows, options: { mode: Se
        coalesce((SELECT c.relowner=(SELECT oid FROM r) FROM pg_class c WHERE c.oid=to_regclass('"_prisma_migrations"')), false) AS migrations_owner,
        coalesce((SELECT has_table_privilege($1, c.oid, 'SELECT,INSERT,UPDATE,DELETE') FROM pg_class c WHERE c.oid=to_regclass('"_prisma_migrations"')), false) AS migrations_access`,
     [roleName]))[0]!, findings);
+  // Effective privileges (inheritance and PUBLIC included) that bypass or undermine the guards.
+  const privileges = 'value' in role && role.value.exists ? await gather('Dangerous privilege audit', async () => (await query<{ truncate_tables: string[]; trigger_tables: string[]; create_schemas: string[]; database_create: boolean }>(
+    `SELECT ARRAY(SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                  WHERE n.nspname=current_schema() AND c.relkind IN ('r','p','f') AND has_table_privilege($1, c.oid, 'TRUNCATE') ORDER BY 1) AS truncate_tables,
+            ARRAY(SELECT c.relname::text FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace
+                  WHERE n.nspname=current_schema() AND c.relkind IN ('r','p','f','v') AND has_table_privilege($1, c.oid, 'TRIGGER') ORDER BY 1) AS trigger_tables,
+            ARRAY(SELECT n.nspname::text FROM pg_namespace n
+                  WHERE n.nspname !~ '^pg_' AND n.nspname <> 'information_schema' AND has_schema_privilege($1, n.oid, 'CREATE') ORDER BY 1) AS create_schemas,
+            has_database_privilege($1, current_database(), 'CREATE') AS database_create`, [roleName]))[0]!, findings) : null;
+  if (privileges && 'value' in privileges) {
+    const p = privileges.value;
+    if (p.truncate_tables.length) findings.push({ code: 'RUNTIME_ROLE_TRUNCATE_PRIVILEGE', message: `Runtime role ${roleName} may TRUNCATE ${p.truncate_tables.length} table(s); TRUNCATE bypasses row-level delete guards.`, detail: p.truncate_tables });
+    if (p.trigger_tables.length) findings.push({ code: 'RUNTIME_ROLE_TRIGGER_PRIVILEGE', message: `Runtime role ${roleName} holds TRIGGER on ${p.trigger_tables.length} relation(s) and could create triggers on them.`, detail: p.trigger_tables });
+    if (p.create_schemas.length) findings.push({ code: 'RUNTIME_ROLE_SCHEMA_CREATE_PRIVILEGE', message: `Runtime role ${roleName} may CREATE objects in schema(s): ${p.create_schemas.join(', ')}.`, detail: p.create_schemas });
+    if (p.database_create) findings.push({ code: 'RUNTIME_ROLE_DATABASE_CREATE_PRIVILEGE', message: `Runtime role ${roleName} holds CREATE on the database and could create schemas.` });
+  }
   if ('value' in role) {
     const r = role.value;
     if (!r.exists) findings.push({ code: 'RUNTIME_ROLE_MISSING', message: `Runtime role ${roleName} does not exist.` });
@@ -151,15 +223,76 @@ export async function assessDatabaseSecurity(query: SqlRows, options: { mode: Se
       if (r.migrations_owner || r.migrations_access) findings.push({ code: 'RUNTIME_ROLE_MIGRATION_ADMINISTRATOR', message: `Runtime role ${roleName} owns or can access the migration history table.`, detail: { owner: r.migrations_owner, access: r.migrations_access } });
     }
   }
-  return finish(options, schema, roleName, findings);
+  return finish(options, schema, roleName, identity, findings);
 }
 
-function finish(options: { mode: SecurityReadinessMode; now?: Date }, schema: string, runtimeRole: string | null, findings: SecurityFinding[]): SecurityReadinessReport {
+function finish(options: { mode: SecurityReadinessMode; now?: Date }, schema: string, runtimeRole: string | null, identity: SecurityReadinessReport['identity'], findings: SecurityFinding[]): SecurityReadinessReport {
   const ready = findings.length === 0;
   return {
-    mode: options.mode, schema, runtimeRole, ready,
+    mode: options.mode, schema, runtimeRole, identity, manifestVersion: SECURITY_MANIFEST.version, ready,
     // Development observation never blocks startup; broker-enabled readiness fails closed on any finding.
-    startupAllowed: options.mode === 'DEVELOPMENT_OBSERVATION' || ready,
+    // The administrator diagnostic never permits anything: it is not the runtime identity.
+    startupAllowed: options.mode === 'DEVELOPMENT_OBSERVATION' || (options.mode === 'BROKER_ENABLED' && ready),
+    brokerReadinessAuthorized: options.mode === 'BROKER_ENABLED' && ready,
     findings, checkedAt: (options.now ?? new Date()).toISOString(),
+  };
+}
+
+export type SecurityCatalog = { functions: Record<string, ManifestFunction>; triggers: Record<string, ManifestTrigger> };
+
+/**
+ * Reads the definition facts the manifest pins. Bodies are hashed in the database after removing carriage
+ * returns, so a checkout with CRLF line endings produces the same digest as one with LF.
+ */
+export async function readSecurityCatalog(query: SqlRows): Promise<SecurityCatalog> {
+  const functions = await query<{ signature: string } & ManifestFunction>(
+    `SELECT p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS signature,
+            l.lanname::text AS language, p.provolatile::text AS volatility, p.prokind::text AS kind, p.prosecdef AS "securityDefiner",
+            p.proisstrict AS strict, pg_get_function_result(p.oid) AS result,
+            encode(sha256(convert_to(replace(p.prosrc || coalesce(pg_get_function_sqlbody(p.oid), ''), chr(13), ''), 'UTF8')), 'hex') AS "bodySha256"
+     FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang
+     WHERE n.nspname=current_schema() AND p.prokind IN ('f','p') AND l.lanname NOT IN ('c','internal')
+       AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.deptype='e')
+     ORDER BY 1`);
+  const triggers = await query<{ key: string } & ManifestTrigger>(
+    `SELECT c.relname::text || '/' || t.tgname::text AS key,
+            CASE WHEN pn.nspname = current_schema() THEN '' ELSE pn.nspname::text || '.' END || p.proname::text || '(' || pg_get_function_identity_arguments(p.oid) || ')' AS function,
+            t.tgenabled::text AS enabled,
+            CASE WHEN t.tgtype & 64 <> 0 THEN 'INSTEAD OF' WHEN t.tgtype & 2 <> 0 THEN 'BEFORE' ELSE 'AFTER' END AS timing,
+            array_to_string(ARRAY[CASE WHEN t.tgtype & 4 <> 0 THEN 'INSERT' END, CASE WHEN t.tgtype & 8 <> 0 THEN 'DELETE' END,
+                                  CASE WHEN t.tgtype & 16 <> 0 THEN 'UPDATE' END, CASE WHEN t.tgtype & 32 <> 0 THEN 'TRUNCATE' END], ',') AS events,
+            CASE WHEN t.tgtype & 1 <> 0 THEN 'ROW' ELSE 'STATEMENT' END AS scope,
+            CASE WHEN t.tgqual IS NULL THEN '' ELSE coalesce(substring(pg_get_triggerdef(t.oid) from ' WHEN (.*) EXECUTE (?:FUNCTION|PROCEDURE) '), '<unparsed>') END AS "when",
+            array_to_string(ARRAY(SELECT a.attname::text FROM unnest(t.tgattr::int2[]) k JOIN pg_attribute a ON a.attrelid=t.tgrelid AND a.attnum=k ORDER BY 1), ',') AS columns,
+            encode(t.tgargs, 'hex') AS arguments,
+            t.tgdeferrable AS deferrable, t.tginitdeferred AS "initiallyDeferred",
+            coalesce(t.tgoldtable, '') || '/' || coalesce(t.tgnewtable, '') AS "transitionTables"
+     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+     JOIN pg_proc p ON p.oid=t.tgfoid JOIN pg_namespace pn ON pn.oid=p.pronamespace
+     WHERE NOT t.tgisinternal AND n.nspname=current_schema()
+     ORDER BY 1`);
+  return {
+    functions: Object.fromEntries(functions.map(({ signature, ...rest }) => [signature, rest])),
+    triggers: Object.fromEntries(triggers.map(({ key, ...rest }) => [key, rest])),
+  };
+}
+
+const differing = (found: object, reviewed: object) => (Object.keys(reviewed) as Array<keyof typeof reviewed>).filter(key => (found as Record<string, unknown>)[key] !== (reviewed as Record<string, unknown>)[key]);
+
+export function compareWithManifest(catalog: SecurityCatalog, manifest: { functions: Record<string, ManifestFunction>; triggers: Record<string, ManifestTrigger> } = SECURITY_MANIFEST) {
+  const names = <T>(a: Record<string, T>, b: Record<string, T>) => Object.keys(a).filter(key => !(key in b)).sort();
+  return {
+    functionsChanged: Object.keys(manifest.functions).filter(key => key in catalog.functions).flatMap(key => {
+      const fields = differing(catalog.functions[key]!, manifest.functions[key]!);
+      return fields.length ? [{ function: key, fields }] : [];
+    }),
+    functionsMissing: names(manifest.functions, catalog.functions),
+    functionsUnreviewed: names(catalog.functions, manifest.functions),
+    triggersChanged: Object.keys(manifest.triggers).filter(key => key in catalog.triggers).flatMap(key => {
+      const fields = differing(catalog.triggers[key]!, manifest.triggers[key]!);
+      return fields.length ? [{ trigger: key, fields, found: catalog.triggers[key] }] : [];
+    }),
+    // A reviewed trigger that is absent is reported by the critical-trigger audit as "missing".
+    triggersUnreviewed: names(catalog.triggers, manifest.triggers),
   };
 }

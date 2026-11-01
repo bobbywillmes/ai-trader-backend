@@ -45,28 +45,55 @@ docs/database/ai-trader.dbml
 
 ## Database security readiness (Phase 4A.2C3B.1)
 
-`npm run db:security-preflight -- [--mode=development|broker-enabled] [--runtime-role=ai_trader_app]` runs a
-**read-only** catalog assessment (`src/services/database-security-readiness.service.ts`). It reads only
-`pg_proc`, `pg_trigger`, `pg_roles`, `pg_auth_members`, `pg_class` and `pg_database`; it never reads
-`_prisma_migrations` and never writes. Connect as the role to assess, or as an administrator with
-`--runtime-role`. Set `SECURITY_PREFLIGHT_DATABASE_URL` to use a different connection than `DATABASE_URL`.
+```text
+npm run db:security-preflight -- --mode broker-enabled
+npm run db:security-preflight -- --mode development-observation
+npm run db:security-preflight -- --mode admin-diagnostic --runtime-role ai_trader_app
+```
 
-Checks: every application function pins `search_path=pg_catalog, <schema>, pg_temp` and none is `SECURITY
-DEFINER` (a `CREATE OR REPLACE` that drops the pin is therefore detected); every critical TradingView/exposure
-trigger exists, binds its function and fires for ordinary sessions; the runtime role is not a superuser,
-owns no schema objects, has no `CREATEROLE`/`CREATEDB`/`REPLICATION`/`BYPASSRLS`, cannot `SET
-session_replication_role`, has no `TEMPORARY` privilege, holds **no role membership of any kind**, and has no
-access to or ownership of the migration history table.
+An explicit `--mode` is **required**; `--mode=value` and `--mode value` are equivalent. An unknown or misspelled
+mode, an unrecognized or malformed option, a missing value, a duplicate option or an unexpected positional
+argument exits **64**, prints `Invalid arguments: ...` to stderr and prints no report, so a typo can never
+downgrade a broker-enabled request to observation. The assessment is **read-only**
+(`src/services/database-security-readiness.service.ts`): it reads only catalogs and never writes. Credentials and
+connection strings are never printed.
 
-* `development` (default): findings are reported as outstanding hardening; exit code 0. The backend logs the
-  same report at startup and is never blocked by it.
-* `broker-enabled`: any finding, including a check that could not run, fails closed with exit code 1.
+| Mode | Connection | Meaning |
+|---|---|---|
+| `broker-enabled` | `DATABASE_URL`, the backend's own connection. No alternate URL is accepted: `SECURITY_PREFLIGHT_DATABASE_URL` set with this mode is an error. | Fail closed. The connection must **be** the restricted runtime identity: `session_user = current_user =` the expected role (`ai_trader_app`, or `--runtime-role`), the connected database equals the one named in `DATABASE_URL`, and the active schema matches. Any mismatch or unreadable evidence is a finding. |
+| `development-observation` | `DATABASE_URL` | Reports outstanding hardening; exit 0 when it ran. The backend runs this at startup and is never blocked by it. |
+| `admin-diagnostic` | `SECURITY_PREFLIGHT_DATABASE_URL`, falling back to `DATABASE_URL` | An administrator inspects `--runtime-role`. Labeled `DIAGNOSTIC ONLY` on stderr; the report always has `startupAllowed: false` and `brokerReadinessAuthorized: false`. It can never authorize broker readiness. |
 
-Exit code 2 means the preflight itself could not connect.
+Exit codes: `0` allowed in the chosen mode, `1` findings forbid it, `2` the check could not run (for example it
+could not connect), `64` invalid arguments.
 
-`least-privilege-temporary-revocation.sql` now rejects, before changing anything, a runtime role that holds any
+Checks, all through effective privileges and the catalogs:
+
+* **Identity**: `session_user`, `current_user`, database and active schema against the configured runtime identity.
+* **Runtime role**: not a superuser, no `CREATEROLE`/`CREATEDB`/`REPLICATION`/`BYPASSRLS`, owns no schema object,
+  cannot `SET session_replication_role`, holds **no role membership of any kind**, no `TEMPORARY`, and no access to
+  or ownership of `_prisma_migrations`.
+* **Dangerous privileges** (also reached through PUBLIC or inheritance): `TRUNCATE` on any application table
+  (it bypasses row-level delete guards), `TRIGGER` on any relation, `CREATE` on any non-system schema, and
+  database-level `CREATE`. Normal `SELECT`/`INSERT`/`UPDATE`/`DELETE` and sequence use are unaffected.
+* **Pinned functions**: every application function pins `search_path=pg_catalog, <schema>, pg_temp` and none is
+  `SECURITY DEFINER`.
+* **Critical triggers** exist, bind their function and fire for ordinary sessions.
+* **Integrity against the reviewed manifest** (`src/services/database-security-manifest.ts`): every trigger's
+  timing, events, row/statement scope, `WHEN` expression, columns, arguments, enabled state and bound function;
+  and every application function's language, volatility, result and **body digest**. A function or trigger that is
+  new, changed or missing relative to the manifest is a finding. The manifest is code-controlled and reviewed; it
+  is never derived from the database being assessed. After a migration adds or replaces a function or trigger,
+  regenerate it from a freshly migrated **disposable** database and commit the diff with the migration:
+  `npx tsx scripts/generate-database-security-manifest.ts --from <disposable database url>`. An integration test
+  fails when the manifest and a fresh migration disagree.
+
+`least-privilege-temporary-revocation.sql` rejects, before changing anything, a runtime role that holds any
 `pg_auth_members` row (including `INHERIT FALSE`/`SET TRUE`, which still permits `SET ROLE` and temporary
-objects) or a privileged role attribute. It is safe to rerun and is **not** applied by any migration.
+objects) or a privileged role attribute. It is safe to rerun and is **not** applied by any migration. Role cutover
+order, including draining existing sessions before reconnecting as the final identity and running the
+broker-enabled preflight before restoring broker-capable operations, is in
+`docs/architecture/tradingview-paper-execution-authority.md` ("Database least-privilege design").
 
 Migrations that replace a function must restate the trusted `search_path` (repeat the audit block from
 `20261031120000_tradingview_dispatch_safety_hardening`); a static test enforces it for every migration from that

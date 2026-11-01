@@ -394,22 +394,32 @@ Cutover, for a future maintenance window, not performed in C3A. Each script name
 
 1. Back up the database and confirm no broker-enabled execution is active.
 2. As a **superuser**, create both roles with separately generated secrets.
-3. Stop the backend. Close or drain every application connection, including pooled and scheduled
-   clients.
+3. **Stop or drain every application writer** (backend, workers, scheduled and pooled clients, ad-hoc `psql`
+   sessions of the old identity). A session that survives keeps whatever it created before the change.
 4. As a **superuser** (the ownership transfer reassigns objects the migrator does not own, so it cannot
    run as the migrator), run `least-privilege-cutover.sql`.
 5. As `ai_trader_migrator`, run `least-privilege-grants.sql`.
 6. As a **superuser or the database owner**, connected to the target database taken from the deployment
-   environment, run `least-privilege-temporary-revocation.sql`. It revokes TEMPORARY from PUBLIC and from
-   `ai_trader_app`, keeps it for `ai_trader_migrator`, and fails if any direct grant or role membership
-   still gives `ai_trader_app` TEMPORARY. Grant TEMPORARY by name to any other identity that needs it;
-   none is assumed. Then end any leftover `ai_trader_app` sessions (`pg_terminate_backend`, shown in the
-   script header). PostgreSQL checks TEMPORARY on every creation, so even an old session cannot create
-   new temporary tables, but a temporary table it already created persists in that session until it ends.
-7. Point `prisma migrate deploy` at the migrator URL and confirm that no migration is pending.
-8. Set the backend's `DATABASE_URL` to the application role, start it, and confirm that workers run, a
-   hostile `DISABLE TRIGGER` and `CREATE TEMP TABLE` are denied, the catalog audit above returns no rows,
-   and no permission errors appear.
+   environment, apply the **membership and TEMPORARY corrections**: revoke every role membership of
+   `ai_trader_app`, then run `least-privilege-temporary-revocation.sql`. It revokes TEMPORARY from PUBLIC and
+   from `ai_trader_app`, keeps it for `ai_trader_migrator`, and fails (changing nothing) if any role membership
+   remains or any direct grant still gives `ai_trader_app` TEMPORARY. Grant TEMPORARY by name to any other
+   identity that needs it; none is assumed. Also confirm no TRUNCATE, TRIGGER or CREATE privilege reaches
+   `ai_trader_app` (the broker-enabled preflight checks all three, including through PUBLIC and ownership).
+7. **Terminate all existing application sessions**, even though the backend is stopped (`pg_terminate_backend`,
+   shown in the script header). A revocation does not drop objects already created: a temporary table that
+   shadows an application relation, or a role that was `SET` before a membership was removed, lives in that
+   session until it ends. PostgreSQL checks TEMPORARY on every new creation, so an old session cannot create more,
+   but it keeps what it made.
+8. Point `prisma migrate deploy` at the migrator URL and confirm that no migration is pending.
+9. **Reconnect using the final restricted runtime identity.** Set the backend's `DATABASE_URL` to the
+   `ai_trader_app` login (the only connection configuration the broker-enabled preflight accepts), with
+   broker-capable operations still **off**.
+10. **Run broker-enabled readiness against that identity before restoring broker-capable operations:**
+    `npm run db:security-preflight -- --mode broker-enabled`. It must exit 0 and report
+    `brokerReadinessAuthorized: true` with `sessionUser = currentUser = ai_trader_app`. Only then start the
+    workers, and confirm they run, a hostile `DISABLE TRIGGER`, `TRUNCATE` and `CREATE TEMP TABLE` are denied,
+    the catalog audit above returns no rows, and no permission errors appear.
 
 Rollback of step 6 needs a superuser or the owner: `GRANT TEMPORARY ON DATABASE <name> TO PUBLIC`.
 
@@ -497,8 +507,9 @@ bypass setting. The applied C3A migration is unchanged.
 
 Other C3B.1 changes: the TEMPORARY-revocation script rejects every role membership of the runtime role
 (including `INHERIT FALSE, SET TRUE`); a read-only database security preflight
-(`npm run db:security-preflight`, `docs/database/README.md`) with development-observation and broker-enabled
-levels; delivery-uncertainty attention is observed for accounts with unusable credentials (no broker request,
+(`npm run db:security-preflight -- --mode <mode>`, `docs/database/README.md`) with development-observation and
+broker-enabled levels, corrected after audit: strict argument parsing, runtime-connection identity binding,
+TRUNCATE/TRIGGER/CREATE privilege audit, and trigger/function integrity against a reviewed manifest; delivery-uncertainty attention is observed for accounts with unusable credentials (no broker request,
 ownership retained, never auto-resolved); and the retry classifier recognizes only genuine Prisma
 `PrismaClientKnownRequestError` (P2034, P2010 wrapping 40001/40P01), `DriverAdapterError` and node-postgres
 `DatabaseError` instances by class identity, so a constructed lookalike is refused. Class identity holds only

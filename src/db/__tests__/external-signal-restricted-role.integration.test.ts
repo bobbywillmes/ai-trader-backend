@@ -348,7 +348,8 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     let sec: Client, runtime: Client, versionNum = 0;
     const secUrl = (role?: string) => { const url = new URL(sourceUrl); if (role) { url.username = role; url.password = password; } url.pathname = `/${secDatabase}`; url.searchParams.delete('schema'); return url.toString(); };
     const rowsOf = (client: Client) => async (sql: string, params?: unknown[]) => (await client.query(sql, params)).rows;
-    const preflight = (mode: SecurityReadinessMode, client = runtime) => assessDatabaseSecurity(rowsOf(client) as never, { mode, runtimeRole: 'ai_trader_app' });
+    const expectedIdentity = (databaseName = secDatabase) => ({ role: 'ai_trader_app', database: databaseName, schema: 'public' });
+    const preflight = (mode: SecurityReadinessMode, client = runtime) => assessDatabaseSecurity(rowsOf(client) as never, mode === 'BROKER_ENABLED' ? { mode, expected: expectedIdentity() } : { mode });
     const codes = async (client = runtime) => (await preflight('BROKER_ENABLED', client)).findings.map(finding => finding.code);
     const script = () => readFile('docs/database/least-privilege-temporary-revocation.sql', 'utf8');
     const resetTemporary = async () => { await sec.query(`GRANT TEMPORARY ON DATABASE "${secDatabase}" TO PUBLIC`); await sec.query(`REVOKE TEMPORARY ON DATABASE "${secDatabase}" FROM ai_trader_app`); };
@@ -482,7 +483,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
       ['a replica-only critical trigger', [`ALTER TABLE "EntryExposureClaim" ENABLE REPLICA TRIGGER "EntryExposureClaim_external_signal_c2_guard"`], [`ALTER TABLE "EntryExposureClaim" ENABLE TRIGGER "EntryExposureClaim_external_signal_c2_guard"`], 'CRITICAL_TRIGGER_UNSAFE'],
       ['a dropped critical trigger', [`DROP TRIGGER "EntryExposureClaim_external_signal_delete_guard" ON "EntryExposureClaim"`], [`CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" BEFORE DELETE ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`], 'CRITICAL_TRIGGER_UNSAFE'],
       ['a function that lost its search_path pin', [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() RESET search_path`], [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
-      ['a function replaced by a migration without restating its pin', [`CREATE OR REPLACE FUNCTION external_signal_stale_admission_elapsed(observed_utc timestamp, at_instant timestamptz) RETURNS boolean LANGUAGE sql STABLE AS $$ SELECT (observed_utc AT TIME ZONE 'UTC') <= at_instant - interval '15 minutes' $$`], [`ALTER FUNCTION external_signal_stale_admission_elapsed(timestamp, timestamptz) SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
+      ['a function replaced by a migration without restating its pin', [`DO $$ DECLARE src text; BEGIN SELECT prosrc INTO src FROM pg_proc WHERE proname='external_signal_stale_admission_elapsed'; EXECUTE format('CREATE OR REPLACE FUNCTION external_signal_stale_admission_elapsed(observed_utc timestamp, at_instant timestamptz) RETURNS boolean LANGUAGE sql STABLE AS %L', src); END $$`], [`ALTER FUNCTION external_signal_stale_admission_elapsed(timestamp, timestamptz) SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
       ['a function with a different pinned path', [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SET search_path = public, pg_catalog`], [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SET search_path = pg_catalog, public, pg_temp`], 'FUNCTION_SEARCH_PATH_UNPINNED'],
       ['a protected function that became SECURITY DEFINER', [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SECURITY DEFINER`], [`ALTER FUNCTION external_signal_exposure_claim_c2_guard() SECURITY INVOKER`], 'FUNCTION_SECURITY_DEFINER'],
     ] as const)('detects %s', async (_label, setup, restore, expected) => {
@@ -493,7 +494,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     });
 
     it('treats an unevaluable check as a finding, so broker-enabled readiness fails closed and development still starts', async () => {
-      const broken = await assessDatabaseSecurity(async () => { throw new Error('catalog unavailable'); }, { mode: 'BROKER_ENABLED', runtimeRole: 'ai_trader_app' });
+      const broken = await assessDatabaseSecurity(async () => { throw new Error('catalog unavailable'); }, { mode: 'BROKER_ENABLED', expected: expectedIdentity() });
       expect(broken.ready).toBe(false); expect(broken.startupAllowed).toBe(false);
       expect(broken.findings.map(finding => finding.code)).toContain('CHECK_UNAVAILABLE');
       expect((await assessDatabaseSecurity(async () => { throw new Error('catalog unavailable'); }, { mode: 'DEVELOPMENT_OBSERVATION' })).startupAllowed).toBe(true);
@@ -508,6 +509,240 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
       const snapshot = async () => (await sec.query(`SELECT (SELECT count(*) FROM pg_auth_members) AS members, (SELECT count(*) FROM pg_trigger) AS triggers, (SELECT md5(string_agg(proconfig::text || prosecdef::text, ',' ORDER BY oid)) FROM pg_proc WHERE pronamespace='public'::regnamespace) AS functions, (SELECT datacl::text FROM pg_database WHERE datname=current_database()) AS acl`)).rows[0];
       const before = await snapshot(); await preflight('BROKER_ENABLED'); await preflight('DEVELOPMENT_OBSERVATION');
       expect(await snapshot()).toEqual(before);
+    });
+
+    // -------------------------------------------------------------------------------------------
+    // Phase 4A.2C3B.1 final corrections: every Hermes finding reproduced as a broker-enabled negative control.
+    // -------------------------------------------------------------------------------------------
+    describe('final corrections: negative controls for the broker-enabled preflight', () => {
+      const unsafeDatabase = `restricted_unsafe_${randomUUID().replaceAll('-', '')}`;
+      let unsafeAdmin: Client;
+      const urlOf = (databaseName: string, role?: string) => { const url = new URL(sourceUrl); if (role) { url.username = role; url.password = password; } url.pathname = `/${databaseName}`; url.searchParams.delete('schema'); return url.toString(); };
+      type Cli = { status: number | null; stdout: string; stderr: string; report?: { ready: boolean; startupAllowed: boolean; brokerReadinessAuthorized: boolean; findings: Array<{ code: string }>; identity: Record<string, string> | null } };
+      /** Runs the real command-line script as a child process with an explicit environment. */
+      const cli = (args: string[], databaseUrl: string | undefined, extraEnv: Record<string, string> = {}): Cli => {
+        const env: NodeJS.ProcessEnv = { ...process.env, ...extraEnv };
+        delete env.SECURITY_PREFLIGHT_DATABASE_URL; if (extraEnv.SECURITY_PREFLIGHT_DATABASE_URL) env.SECURITY_PREFLIGHT_DATABASE_URL = extraEnv.SECURITY_PREFLIGHT_DATABASE_URL;
+        if (databaseUrl) env.DATABASE_URL = databaseUrl; else delete env.DATABASE_URL;
+        const run = spawnSync(process.execPath, ['node_modules/tsx/dist/cli.mjs', 'scripts/check-database-security.ts', ...args], { env, encoding: 'utf8', timeout: 90_000, cwd: process.cwd() });
+        let report: Cli['report']; try { report = JSON.parse(run.stdout); } catch { report = undefined; }
+        return { status: run.status, stdout: run.stdout, stderr: run.stderr, ...(report ? { report } : {}) };
+      };
+      const brokerCli = (databaseUrl = secUrl('ai_trader_app')) => cli(['--mode', 'broker-enabled'], databaseUrl);
+      const expectRefused = (result: Cli, code?: string) => {
+        expect(result.status, `${result.stdout}\n${result.stderr}`).not.toBe(0);
+        if (code) expect(result.report?.findings.map(finding => finding.code)).toContain(code);
+        expect(result.report?.brokerReadinessAuthorized ?? false).toBe(false);
+      };
+      const secClean = async () => expect((await preflight('BROKER_ENABLED')).findings, 'the database was restored').toEqual([]);
+
+      beforeAll(async () => {
+        unsafeAdmin = new Client({ connectionString: sourceUrl }); await unsafeAdmin.connect();
+        await unsafeAdmin.query(`CREATE DATABASE "${unsafeDatabase}" OWNER ai_trader_migrator`);
+        const migrated = spawnSync(process.execPath, ['node_modules/prisma/build/index.js', 'migrate', 'deploy'], { env: { ...process.env, DATABASE_URL: urlOf(unsafeDatabase, 'ai_trader_migrator') }, encoding: 'utf8', timeout: 180_000 });
+        expect(migrated.status, `${migrated.stderr}\n${migrated.stdout}`).toBe(0);
+        const migrator = new Client({ connectionString: urlOf(unsafeDatabase, 'ai_trader_migrator') }); await migrator.connect();
+        // Deliberately unsafe: the application role may TRUNCATE, and TEMPORARY was never revoked.
+        await migrator.query(await readFile('docs/database/least-privilege-grants.sql', 'utf8'));
+        await migrator.query(`GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO ai_trader_app`);
+        await migrator.end();
+        await sec.query(await script());
+        await secClean();
+      }, 300_000);
+      afterAll(async () => { await unsafeAdmin?.query(`DROP DATABASE IF EXISTS "${unsafeDatabase}" WITH (FORCE)`); await unsafeAdmin?.end().catch(() => undefined); });
+
+      it('accepts the valid restricted runtime identity, in every accepted argument syntax (positive control)', async () => {
+        for (const args of [['--mode=broker-enabled'], ['--mode', 'broker-enabled'], ['--mode', 'broker-enabled', '--runtime-role', 'ai_trader_app'], ['--mode=broker-enabled', '--runtime-role=ai_trader_app']]) {
+          const result = cli(args, secUrl('ai_trader_app'));
+          expect(result.status, `${args.join(' ')}\n${result.stdout}${result.stderr}`).toBe(0);
+          expect(result.report).toMatchObject({ mode: 'BROKER_ENABLED', ready: true, startupAllowed: true, brokerReadinessAuthorized: true, findings: [], identity: { sessionUser: 'ai_trader_app', currentUser: 'ai_trader_app', database: secDatabase, schema: 'public' } });
+        }
+        // Normal runtime operation survives the stricter audit.
+        expect((await runtime.query(`SELECT has_table_privilege(current_user,'"OrderIntent"','SELECT,INSERT,UPDATE,DELETE') AS dml, has_sequence_privilege(current_user,'"OrderIntent_id_seq"','USAGE') AS seq, has_table_privilege(current_user,'"OrderIntent"','TRUNCATE') AS trunc`)).rows[0]).toEqual({ dml: true, seq: true, trunc: false });
+        expect(JSON.stringify(brokerCli())).not.toContain(password);
+      });
+
+      it('control 1: an invalid mode or malformed invocation exits nonzero and never prints a ready report', () => {
+        const url = secUrl('ai_trader_app');
+        for (const args of [['--mode=broker_enabled'], ['--mode=Broker-Enabled'], ['--mode=broker-enable'], ['--mode'], ['--mode='], ['--mode', '--runtime-role', 'ai_trader_app'], ['--mod=broker-enabled'], ['--broker-enabled'], ['broker-enabled'], ['--mode=broker-enabled', '--bogus'], ['--mode=broker-enabled', '--mode=development-observation'], ['--mode=broker-enabled', '--mode', 'broker-enabled'], ['--mode=broker-enabled', '--runtime-role'], [], ['--mode=development']]) {
+          const result = cli(args, url);
+          expect(result.status, `${JSON.stringify(args)} must fail`).toBe(64);
+          expect(result.stdout, JSON.stringify(args)).toBe('');
+          expect(result.stderr).toMatch(/Invalid arguments/);
+        }
+        expect(cli(['--mode=development-observation'], url).status).toBe(0);
+        expect(cli(['--mode', 'development-observation'], url).report).toMatchObject({ mode: 'DEVELOPMENT_OBSERVATION', startupAllowed: true });
+      });
+
+      it('control 2: a hardened database cannot authorize an application configured for an unsafe one', async () => {
+        const unsafeApp = urlOf(unsafeDatabase, 'ai_trader_app');
+        // The override variable is refused outright for broker-enabled readiness...
+        const overridden = cli(['--mode', 'broker-enabled'], unsafeApp, { SECURITY_PREFLIGHT_DATABASE_URL: secUrl('ai_trader_app') });
+        expect(overridden.status).toBe(64); expect(overridden.stdout).toBe(''); expect(overridden.stderr).toMatch(/SECURITY_PREFLIGHT_DATABASE_URL/);
+        // ...and without it the check runs over the application's actual (unsafe) database and fails.
+        const actual = cli(['--mode', 'broker-enabled'], unsafeApp);
+        expectRefused(actual, 'RUNTIME_ROLE_TRUNCATE_PRIVILEGE');
+        expect(actual.report?.findings.map(finding => finding.code)).toContain('RUNTIME_ROLE_TEMPORARY_PRIVILEGE');
+        // A connection to the hardened database is rejected when the application is configured for the unsafe one.
+        const crossed = await assessDatabaseSecurity(rowsOf(runtime) as never, { mode: 'BROKER_ENABLED', expected: expectedIdentity(unsafeDatabase) });
+        expect(crossed.ready).toBe(false); expect(crossed.findings.map(finding => finding.code)).toContain('RUNTIME_IDENTITY_MISMATCH');
+        expect(crossed.brokerReadinessAuthorized).toBe(false);
+        // The hardened database on its own remains ready.
+        expect(brokerCli().status).toBe(0);
+      });
+
+      it('control 3: an administrator connection claiming to assess ai_trader_app never produces a broker-ready result', async () => {
+        const viaCli = cli(['--mode', 'broker-enabled', '--runtime-role', 'ai_trader_app'], secUrl());
+        expectRefused(viaCli, 'RUNTIME_IDENTITY_MISMATCH');
+        expect(viaCli.report?.identity).toMatchObject({ sessionUser: expect.not.stringMatching(/^ai_trader_app$/) });
+        // SET ROLE keeps session_user as the administrator; SET SESSION AUTHORIZATION changes both, so only the first is hidden by role alone.
+        const impersonator = new Client({ connectionString: secUrl() }); await impersonator.connect();
+        try {
+          await impersonator.query(`SET ROLE ai_trader_app`);
+          const report = await assessDatabaseSecurity(rowsOf(impersonator) as never, { mode: 'BROKER_ENABLED', expected: expectedIdentity() });
+          expect(report.brokerReadinessAuthorized).toBe(false);
+          expect(report.findings.map(finding => finding.code)).toContain('RUNTIME_IDENTITY_MISMATCH');
+          expect(JSON.stringify(report.findings)).toMatch(/session_user is/);
+          // Without an expected identity at all, broker-enabled fails closed too.
+          expect((await assessDatabaseSecurity(rowsOf(runtime) as never, { mode: 'BROKER_ENABLED' })).findings.map(finding => finding.code)).toContain('RUNTIME_IDENTITY_UNCONFIGURED');
+        } finally { await impersonator.end(); }
+        // The labeled diagnostic can inspect the role as an administrator but is never an authorization.
+        const diagnostic = cli(['--mode', 'admin-diagnostic', '--runtime-role', 'ai_trader_app'], secUrl());
+        expect(diagnostic.stderr).toMatch(/DIAGNOSTIC ONLY/);
+        expect(diagnostic.report).toMatchObject({ mode: 'ADMIN_DIAGNOSTIC', startupAllowed: false, brokerReadinessAuthorized: false, runtimeRole: 'ai_trader_app' });
+        expect(cli(['--mode', 'admin-diagnostic'], secUrl()).status).toBe(64);
+      });
+
+      it('control 4: a runtime TRUNCATE privilege on an otherwise healthy database is the only finding, and the truncate really bypasses the guard', async () => {
+        await sec.query(`GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO ai_trader_app`);
+        try {
+          expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toEqual(['RUNTIME_ROLE_TRUNCATE_PRIVILEGE']);
+          expectRefused(brokerCli(), 'RUNTIME_ROLE_TRUNCATE_PRIVILEGE');
+          // Rolled back: proves the grant defeats the row-level delete guard without changing the disposable database.
+          await runtime.query('BEGIN');
+          try { await runtime.query(`TRUNCATE "EntryExposureClaim" CASCADE`); } finally { await runtime.query('ROLLBACK'); }
+        } finally { await sec.query(`REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM ai_trader_app`); }
+        for (const grant of [`GRANT TRUNCATE ON "EntryExposureClaim" TO ai_trader_app`, `GRANT TRUNCATE ON "Signal" TO PUBLIC`]) {
+          try {
+            await sec.query(grant);
+            expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code), grant).toEqual(['RUNTIME_ROLE_TRUNCATE_PRIVILEGE']);
+            expectRefused(brokerCli());
+          } finally { await sec.query(grant.replace('GRANT', 'REVOKE').replace(' TO ', ' FROM ')); }
+        }
+        await secClean();
+      });
+
+      it('control 5: a TRIGGER privilege on a protected table is refused', async () => {
+        for (const [grant, table] of [[`GRANT TRIGGER ON "EntryExposureClaim" TO ai_trader_app`, 'EntryExposureClaim'], [`GRANT TRIGGER ON "OrderIntent" TO PUBLIC`, 'OrderIntent']] as const) {
+          try {
+            await sec.query(grant);
+            const report = await preflight('BROKER_ENABLED');
+            expect(report.findings.map(finding => finding.code), grant).toEqual(['RUNTIME_ROLE_TRIGGER_PRIVILEGE']);
+            expect(report.findings[0]!.detail).toContain(table);
+            expectRefused(brokerCli());
+          } finally { await sec.query(grant.replace('GRANT', 'REVOKE').replace(' TO ', ' FROM ')); }
+        }
+        await secClean();
+      });
+
+      it('control 6: CREATE on the application schema is refused, directly or through PUBLIC', async () => {
+        for (const [grant, undo] of [[`GRANT CREATE ON SCHEMA public TO ai_trader_app`, `REVOKE CREATE ON SCHEMA public FROM ai_trader_app`], [`GRANT CREATE ON SCHEMA public TO PUBLIC`, `REVOKE CREATE ON SCHEMA public FROM PUBLIC`]] as const) {
+          try {
+            await sec.query(grant);
+            expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code), grant).toEqual(['RUNTIME_ROLE_SCHEMA_CREATE_PRIVILEGE']);
+            expectRefused(brokerCli());
+          } finally { await sec.query(undo); }
+        }
+        await secClean();
+      });
+
+      it('control 7: the database-level CREATE privilege is refused', async () => {
+        try {
+          await sec.query(`GRANT CREATE ON DATABASE "${secDatabase}" TO ai_trader_app`);
+          expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toEqual(['RUNTIME_ROLE_DATABASE_CREATE_PRIVILEGE']);
+          expectRefused(brokerCli());
+        } finally { await sec.query(`REVOKE CREATE ON DATABASE "${secDatabase}" FROM ai_trader_app`); }
+        await secClean();
+      });
+
+      it('privileges gained through a role membership or object ownership are refused as well', async () => {
+        if (versionNum < 160000) return;
+        await sec.query(`CREATE ROLE sec_priv_group NOLOGIN`);
+        try {
+          await sec.query(`GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO sec_priv_group`);
+          await sec.query(`GRANT sec_priv_group TO ai_trader_app WITH INHERIT TRUE, SET FALSE`);
+          const inherited = (await preflight('BROKER_ENABLED')).findings.map(finding => finding.code);
+          expect(inherited).toEqual(expect.arrayContaining(['RUNTIME_ROLE_TRUNCATE_PRIVILEGE', 'RUNTIME_ROLE_MEMBERSHIP']));
+          await sec.query(`REVOKE sec_priv_group FROM ai_trader_app`);
+          await sec.query(`GRANT sec_priv_group TO ai_trader_app WITH INHERIT FALSE, SET TRUE`);
+          expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toContain('RUNTIME_ROLE_MEMBERSHIP');
+        } finally {
+          await sec.query(`REVOKE sec_priv_group FROM ai_trader_app`).catch(() => undefined);
+          await sec.query(`DROP OWNED BY sec_priv_group`); await sec.query(`DROP ROLE sec_priv_group`);
+        }
+        try {
+          await sec.query(`ALTER TABLE "EntryExposureClaim" OWNER TO ai_trader_app`);
+          expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toContain('RUNTIME_ROLE_OWNS_OBJECTS');
+        } finally { await sec.query(`ALTER TABLE "EntryExposureClaim" OWNER TO ai_trader_migrator`); }
+        await secClean();
+      });
+
+      const guardTrigger = `"EntryExposureClaim_external_signal_delete_guard" ON "EntryExposureClaim"`;
+      const originalGuard = `CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" BEFORE DELETE ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`;
+      const withReplacedGuard = async (replacement: string, expectedFields: string[]) => {
+        try {
+          await sec.query(`DROP TRIGGER ${guardTrigger}`); await sec.query(replacement);
+          const report = await preflight('BROKER_ENABLED');
+          expect(report.findings.map(finding => finding.code), JSON.stringify(report.findings)).toEqual(['TRIGGER_DEFINITION_CHANGED']);
+          expect((report.findings[0]!.detail as Array<{ fields: string[] }>)[0]!.fields).toEqual(expect.arrayContaining(expectedFields));
+          expectRefused(brokerCli(), 'TRIGGER_DEFINITION_CHANGED');
+        } finally { await sec.query(`DROP TRIGGER IF EXISTS ${guardTrigger}`); await sec.query(originalGuard); }
+        await secClean();
+      };
+
+      it('control 8: a delete guard changed to AFTER INSERT is refused, though present, enabled and bound to the same function', () =>
+        withReplacedGuard(`CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" AFTER INSERT ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`, ['timing', 'events']));
+
+      it('control 9: a delete guard neutralized by WHEN (false) is refused; so are statement scope and a different event set', async () => {
+        await withReplacedGuard(`CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" BEFORE DELETE ON "EntryExposureClaim" FOR EACH ROW WHEN (false) EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`, ['when']);
+        await withReplacedGuard(`CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" BEFORE DELETE ON "EntryExposureClaim" FOR EACH STATEMENT EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`, ['scope']);
+        await withReplacedGuard(`CREATE TRIGGER "EntryExposureClaim_external_signal_delete_guard" BEFORE UPDATE ON "EntryExposureClaim" FOR EACH ROW EXECUTE FUNCTION external_signal_exposure_claim_delete_guard()`, ['events']);
+      });
+
+      it('control 10: a protected function body replaced with a no-op that keeps its trusted search_path is refused', async () => {
+        const original = (await sec.query(`SELECT pg_get_functiondef('external_signal_exposure_claim_delete_guard()'::regprocedure) AS def`)).rows[0].def as string;
+        try {
+          await sec.query(`CREATE OR REPLACE FUNCTION external_signal_exposure_claim_delete_guard() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN OLD; END $$`);
+          const report = await preflight('BROKER_ENABLED');
+          // The earlier pin-only audit is blind to this; the reviewed body digest is not.
+          expect(report.findings.map(finding => finding.code)).toEqual(['PROTECTED_FUNCTION_CHANGED']);
+          expect(JSON.stringify(report.findings[0]!.detail)).toContain('bodySha256');
+          expectRefused(brokerCli(), 'PROTECTED_FUNCTION_CHANGED');
+        } finally { await sec.query(original); }
+        await secClean();
+      });
+
+      it('refuses unreviewed new functions and triggers', async () => {
+        try {
+          await sec.query(`CREATE FUNCTION sec_unreviewed_probe() RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, public, pg_temp AS $$ BEGIN RETURN NEW; END $$`);
+          expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toEqual(['FUNCTION_NOT_IN_MANIFEST']);
+          await sec.query(`CREATE TRIGGER sec_unreviewed_trigger BEFORE INSERT ON "Signal" FOR EACH ROW EXECUTE FUNCTION sec_unreviewed_probe()`);
+          expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toEqual(['FUNCTION_NOT_IN_MANIFEST', 'TRIGGER_NOT_IN_MANIFEST']);
+          expectRefused(brokerCli());
+        } finally { await sec.query(`DROP TRIGGER IF EXISTS sec_unreviewed_trigger ON "Signal"`); await sec.query(`DROP FUNCTION IF EXISTS sec_unreviewed_probe()`); }
+        await secClean();
+      });
+
+      it('keeps the reviewed manifest equal to what a fresh migration installs, and consistent with the critical-trigger list', async () => {
+        const { readSecurityCatalog, compareWithManifest } = await import('../../services/database-security-readiness.service.js');
+        const { SECURITY_MANIFEST } = await import('../../services/database-security-manifest.js');
+        const catalog = await readSecurityCatalog(rowsOf(sec) as never);
+        const drift = compareWithManifest(catalog);
+        expect(drift, 'regenerate with scripts/generate-database-security-manifest.ts after a migration changes a function or trigger').toEqual({ functionsChanged: [], functionsMissing: [], functionsUnreviewed: [], triggersChanged: [], triggersUnreviewed: [] });
+        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(117);
+        for (const [table, trigger, fn] of CRITICAL_TRIGGERS) expect(SECURITY_MANIFEST.triggers[`${table}/${trigger}`], `${table}/${trigger}`).toMatchObject({ function: `${fn}()`, enabled: 'O', timing: expect.stringMatching(/^(BEFORE|AFTER)$/), scope: expect.stringMatching(/^(ROW|STATEMENT)$/) });
+        expect(SECURITY_MANIFEST.migration).toBe((await sec.query(`SELECT migration_name FROM _prisma_migrations ORDER BY migration_name DESC LIMIT 1`)).rows[0].migration_name);
+      });
     });
   });
 });
