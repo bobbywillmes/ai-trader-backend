@@ -612,6 +612,14 @@ const matrix = (pairs: Array<[Isolation, Isolation]>) => pairs.flatMap(([eventIs
   });
 
   describe('migration discipline', () => {
+    const unpinned = `SELECT p.oid::regprocedure::text AS fn FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace JOIN pg_language l ON l.oid=p.prolang
+      WHERE n.nspname='public' AND p.prokind IN ('f','p') AND l.lanname NOT IN ('c','internal')
+        AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.deptype='e')
+        AND NOT ('search_path=pg_catalog, public, pg_temp' = ANY (coalesce(p.proconfig, ARRAY[]::text[]))) ORDER BY 1`;
+
+    it('pins the trusted search_path on every application function of a freshly migrated database', async () => {
+      expect((await db.query(unpinned)).rows).toEqual([]);
+    });
     it('leaves the applied C2 migration byte-identical', async () => {
       // Line endings are normalized so a CRLF checkout does not read as an edited migration.
       const body = (await readFile(`prisma/migrations/${C2_MIGRATION}/migration.sql`, 'utf8')).replaceAll('\r\n', '\n');
@@ -623,7 +631,10 @@ const matrix = (pairs: Array<[Isolation, Isolation]>) => pairs.flatMap(([eventIs
       await c2.query(insertEventSql, [claimed.claimId, 'BROKER_DELIVERY_UNCERTAIN']);
       const snapshot = async () => (await c2.query(`SELECT (SELECT count(*)::int FROM "EntryExposureClaim") AS claims,(SELECT count(*)::int FROM "EntryExposureClaimEvent") AS events,(SELECT count(*)::int FROM "OrderIntent") AS intents,(SELECT "activeRolloutGenerationId" FROM "ExternalSignalBrokerDispatchState" WHERE id=1) AS dispatch,(SELECT "acquiredAt"::text FROM "EntryExposureClaim" WHERE id=$1) AS acquired`, [claimed.claimId])).rows[0];
       const before = await snapshot();
+      // The accepted C2 database pins nothing: its 114 functions are all exposed until the upgrade.
+      expect((await c2.query(unpinned)).rows.length).toBe(114);
       await applyMigrations(c2, [C3A_MIGRATION]);
+      expect((await c2.query(unpinned)).rows).toEqual([]);
       expect(await snapshot()).toEqual(before);
       expect(before.dispatch).toBeNull();
       await expect(c2.query(releaseSql, [claimed.claimId])).rejects.toThrow(/possible-delivery|current uncontradicted/);

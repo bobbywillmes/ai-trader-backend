@@ -326,9 +326,12 @@ both facts have passed `STALE_ADMISSION_THRESHOLD_MS` (15 minutes) by the Postgr
 - `EntryExposureClaim.acquiredAt`: how long the claim has been held.
 - `OrderIntent.updatedAt`: when the admission last showed activity.
 
-`external_signal_stale_admission_elapsed` is the one age rule. It interprets the Prisma-managed
+`external_signal_stale_admission_elapsed` is the one age rule. It interprets the
 timestamp-without-time-zone value as UTC, so the result does not depend on the session zone or its DST
-rules. Application selection is advisory and also filters on both facts. If the recovery transaction
+rules. `OrderIntent.updatedAt` is `@updatedAt`: the Prisma Client fills it from the application's clock
+(UTC wall time) on each write it issues. It is not a PostgreSQL-clock value, and a raw SQL write leaves it
+unchanged unless the statement sets it. That is why an application clock that runs ahead defers recovery
+below instead of being trusted. `EntryExposureClaim.acquiredAt` is the database-stamped fact. Application selection is advisory and also filters on both facts. If the recovery transaction
 finds either fact younger, including because an application clock runs ahead, it defers to a later tick
 with no diagnostic or error. Unmarked claims keep their existing intent-age behavior.
 
@@ -369,29 +372,82 @@ until cutover is complete. This must be closed before any broker-enabled canary.
 
 | Identity | Used by | Authority |
 | --- | --- | --- |
-| Bootstrap superuser | Break-glass administration only | Everything; no application or deployment credential |
-| `ai_trader_migrator` | `prisma migrate deploy` only | Owns the schema, may create trusted extensions; no superuser attribute |
-| `ai_trader_app` | Backend and workers | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, sequence use, PUBLIC function execution; owns nothing and cannot read `_prisma_migrations` |
+| Bootstrap superuser | Break-glass administration; runs the ownership transfer and TEMPORARY revocation | Everything; no application or deployment credential |
+| `ai_trader_migrator` | `prisma migrate deploy` only; runs the grants script | Owns the schema, may create trusted extensions; holds TEMPORARY explicitly; no superuser attribute |
+| `ai_trader_app` | Backend and workers | `SELECT`, `INSERT`, `UPDATE`, `DELETE`, sequence use, PUBLIC function execution; owns nothing, cannot read `_prisma_migrations`, **holds no TEMPORARY privilege** |
 
-`docs/database/least-privilege-grants.sql` and `docs/database/least-privilege-cutover.sql` hold the
-grants and the ownership transfer. Trigger functions run as the invoker, so the application needs read
+`docs/database/least-privilege-cutover.sql` (ownership transfer), `docs/database/least-privilege-grants.sql`
+(application grants) and `docs/database/least-privilege-temporary-revocation.sql` (database-level TEMPORARY
+revocation) hold the three steps, each with a different required identity (below). Trigger functions run as the invoker, so the application needs read
 access to every table they consult. `DELETE` stays because services use it today; narrowing it per table
 is possible later but is not needed for trigger integrity, because the evidence tables refuse it in
 triggers. Runtime source issues no DDL. `src/dev` and `scripts` tools and `src/db/seed.ts` are not runtime
 and should use the migrator or a dedicated role.
 
-Cutover, for a future maintenance window, not performed in C3A:
+PostgreSQL grants TEMPORARY on every database to PUBLIC, so the application role can create temporary
+tables unless that is revoked at the database level. Runtime source issues no temporary-table DDL (the
+workers use Prisma and `pg` queries only; sorts and hashes spill to temporary files, which need no
+privilege), so the runtime does not need the privilege. `REVOKE ... ON DATABASE` is not schema DML: it
+needs a superuser or the database owner, and the schema migrator can run it only if it owns the database.
+
+Cutover, for a future maintenance window, not performed in C3A. Each script names the identity it needs:
 
 1. Back up the database and confirm no broker-enabled execution is active.
-2. As superuser, create both roles with separately generated secrets.
-3. Stop the backend, then run the cutover script followed by the grants script as the migrator.
-4. Point `prisma migrate deploy` at the migrator URL and confirm that no migration is pending.
-5. Set the backend's `DATABASE_URL` to the application role, start it, and confirm that workers run, a
-   hostile `DISABLE TRIGGER` is denied, and no permission errors appear.
+2. As a **superuser**, create both roles with separately generated secrets.
+3. Stop the backend. Close or drain every application connection, including pooled and scheduled
+   clients.
+4. As a **superuser** (the ownership transfer reassigns objects the migrator does not own, so it cannot
+   run as the migrator), run `least-privilege-cutover.sql`.
+5. As `ai_trader_migrator`, run `least-privilege-grants.sql`.
+6. As a **superuser or the database owner**, connected to the target database taken from the deployment
+   environment, run `least-privilege-temporary-revocation.sql`. It revokes TEMPORARY from PUBLIC and from
+   `ai_trader_app`, keeps it for `ai_trader_migrator`, and fails if any direct grant or role membership
+   still gives `ai_trader_app` TEMPORARY. Grant TEMPORARY by name to any other identity that needs it;
+   none is assumed. Then end any leftover `ai_trader_app` sessions (`pg_terminate_backend`, shown in the
+   script header). PostgreSQL checks TEMPORARY on every creation, so even an old session cannot create
+   new temporary tables, but a temporary table it already created persists in that session until it ends.
+7. Point `prisma migrate deploy` at the migrator URL and confirm that no migration is pending.
+8. Set the backend's `DATABASE_URL` to the application role, start it, and confirm that workers run, a
+   hostile `DISABLE TRIGGER` and `CREATE TEMP TABLE` are denied, the catalog audit above returns no rows,
+   and no permission errors appear.
 
-Rollback: stop the backend, restore the previous `DATABASE_URL`, and start it. Superuser access still
+Rollback of step 6 needs a superuser or the owner: `GRANT TEMPORARY ON DATABASE <name> TO PUBLIC`.
+
+Rollback of the credential: stop the backend, restore the previous `DATABASE_URL`, and start it. Superuser access still
 works against migrator-owned objects, and the roles and ownership can stay in place, so rollback needs no
 schema change. Retire the broad credential only after a soak period.
+
+### Trusted name resolution (temporary-table shadowing)
+
+The application role may create temporary tables by default, and the temporary schema is searched before
+every other schema unless a path says otherwise. Without a pinned path, an empty temporary table named
+`OrderIntent`, `EntryExposureClaimEvent` or `ExternalSignalBrokerWorkerClaim` is read in place of the real
+relation inside a trigger. This was reproduced against the first C3A commit with the restricted role: a
+claim with `BROKER_DELIVERY_UNCERTAIN` was released (shadow `OrderIntent`), and a worker-owned
+`submitting` intent was reset to `pending` (shadow event and worker-claim tables).
+
+Two independent layers close it:
+
+1. **Function-level path (the migration).** Every application function and procedure, SQL as well as
+   PL/pgSQL, is altered with `SET search_path = pg_catalog, <its schema>, pg_temp`, which is
+   `pg_catalog, public, pg_temp` in every deployed database. A function-level setting applies to the whole
+   call, including nested calls, and overrides any session `SET search_path`, so safety does not depend
+   on the caller. `pg_temp` is listed explicitly and last. The migration pins 116 functions (112
+   PL/pgSQL, 4 SQL) and keeps ownership, arguments, privileges and trigger bindings. It adds no SECURITY
+   DEFINER. Before changing a function it inspects any existing `search_path`; none exist today, and a
+   different one stops the migration for review. It finishes by failing if any function in the schema
+   remains unpinned. Extension members and C routines are outside the audit.
+2. **No TEMPORARY privilege for the runtime (the cutover).**
+   `docs/database/least-privilege-temporary-revocation.sql`. See the cutover below.
+
+`CREATE OR REPLACE FUNCTION` discards function settings, so a later migration that replaces a function must
+include the `SET search_path` clause (or repeat the audit block), and an unpinned function is a test
+failure: the restricted-role suite runs the catalog audit (every application function in `pg_proc` must
+carry exactly the trusted setting in `proconfig`) and requires zero rows. The same suite proves, with the
+actual `ai_trader_app` role, that both attacks fail with TEMPORARY available (default, `pg_temp`-first and
+`pg_temp`-only session paths, and with every application relation shadowed), that unpinning the two guards
+makes both attacks succeed (negative control), and that with TEMPORARY revoked and the guards unpinned the
+release is still rejected because no shadow can be created.
 
 ### Checkpoint boundary
 
@@ -404,10 +460,28 @@ schema change. Retire the broad credential only after a soak period.
   handling, post-release discovery, the only release path for possible-delivery claims, and resolving
   Operational Attention from that authoritative outcome.
 
+### C3A carry-forward items (LOW, still open)
+
+None of these is resolved by the security correction, and none needs broker dispatch to be implemented now.
+
+- **Before C3B:** an account that lost usable credentials while holding uncertain exposure reports
+  `credentials_unavailable_with_exposure` but opens no Operational Attention, because the account is not
+  processed without credentials. Attention must not depend on broker credentials.
+- **Before C3B:** retry classification must not trust a lookalike error object. It should accept only a
+  genuine PostgreSQL error (class, SQLSTATE and driver shape together) before C3B relies on it.
+- **Before any broker-enabled execution:** the application role can `DELETE` an unclaimed TradingView
+  exposure claim, which would erase a held exposure. A deletion guard for marked claims is required.
+- **Review:** decide whether more than one attention for the same underlying uncertainty episode should
+  be merged.
+- **C3B lock-order constraints (explicit):** execution, then identity, then exposure; the intent row before
+  its claim row; every new evidence writer follows the claim-row protocol; and every new or replaced
+  function carries the trusted `search_path`.
+
 ### Remaining pre-canary conditions
 
 The carry-forward register above stays open apart from the C3A items described in this section, and the
-least-privilege entry remains open until the production cutover is done. In addition:
+least-privilege entry remains open until the production cutover is done (including TEMPORARY revocation
+and the drain). In addition:
 
 - Complete the least-privilege cutover and confirm the live production role.
 - Confirm a single writer for each PAPER broker account before any broker-enabled canary.

@@ -171,3 +171,54 @@ BEGIN
   END IF;
   RETURN NEW;
 END $$;
+
+-- Trusted function-level name resolution. These triggers and helpers run as the invoking application
+-- role, which may be able to create temporary tables. Unless a function pins its own search_path, a
+-- temporary table named like an application relation ("OrderIntent", the claim-event or worker-claim
+-- table) is found first and silently replaces the real relation inside the safety rules. A function-level
+-- setting applies to the whole call, including nested function calls, and overrides any session
+-- SET search_path. pg_temp is listed explicitly and last, because an unlisted pg_temp is searched first.
+--
+-- The path is the migrated schema (public in every deployed database), not a hard-coded name, so the
+-- migration also replays inside the disposable per-test schemas Prisma creates. Only functions owned by
+-- the application schema are changed: extension members are skipped, and SECURITY DEFINER status,
+-- ownership, arguments, privileges and trigger bindings are untouched. A function that already carries
+-- a different search_path stops the migration, so no existing setting is overridden unreviewed. This
+-- runs last, after every CREATE OR REPLACE above, because replacing a function discards its settings.
+-- The same predicate is the catalog audit used by the tests; later migrations that replace a function
+-- must restate the setting or repeat this block.
+DO $$
+DECLARE
+  item record;
+  trusted text := format('search_path=pg_catalog, %I, pg_temp', current_schema());
+  pinned integer := 0;
+  unpinned integer;
+BEGIN
+  FOR item IN
+    SELECT p.oid::regprocedure AS signature, p.prokind,
+           (SELECT c FROM unnest(coalesce(p.proconfig, ARRAY[]::text[])) c WHERE c LIKE 'search_path=%') AS existing_path
+    FROM pg_proc p
+    JOIN pg_namespace n ON n.oid=p.pronamespace
+    JOIN pg_language l ON l.oid=p.prolang
+    WHERE n.nspname=current_schema() AND p.prokind IN ('f','p') AND l.lanname NOT IN ('c','internal')
+      AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.deptype='e')
+    ORDER BY p.oid
+  LOOP
+    IF item.existing_path IS NOT NULL AND item.existing_path IS DISTINCT FROM trusted THEN
+      RAISE EXCEPTION 'function % already pins %; review it before overriding with %', item.signature, item.existing_path, trusted;
+    END IF;
+    EXECUTE format('ALTER %s %s SET search_path = pg_catalog, %I, pg_temp',
+      CASE item.prokind WHEN 'p' THEN 'PROCEDURE' ELSE 'FUNCTION' END, item.signature, current_schema());
+    pinned := pinned + 1;
+  END LOOP;
+
+  SELECT count(*) INTO unpinned
+  FROM pg_proc p
+  JOIN pg_namespace n ON n.oid=p.pronamespace
+  JOIN pg_language l ON l.oid=p.prolang
+  WHERE n.nspname=current_schema() AND p.prokind IN ('f','p') AND l.lanname NOT IN ('c','internal')
+    AND NOT EXISTS (SELECT 1 FROM pg_depend d WHERE d.classid='pg_proc'::regclass AND d.objid=p.oid AND d.deptype='e')
+    AND NOT (trusted = ANY (coalesce(p.proconfig, ARRAY[]::text[])));
+  IF unpinned <> 0 THEN RAISE EXCEPTION '% application functions still lack the trusted search_path', unpinned; END IF;
+  RAISE NOTICE 'pinned trusted search_path on % application functions', pinned;
+END $$;
