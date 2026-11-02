@@ -423,6 +423,52 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
   });
 
   // =============================================================================================================
+  describe('the authorization clock is read after the locks of the guard (Hermes LOW)', () => {
+    // A concurrent holder blocks the guard at a protected row (the worker claim, row 25) AFTER the guard was entered. The receipt is set so the
+    // signal is still valid when the trigger starts and has less than the five-second margin left when the lock is finally granted.
+    async function waitedPair(label: string, receiptAgeSeconds: number | null, holdMs: number) {
+      const g = await ready(label);
+      if (receiptAgeSeconds !== null) {
+        await db.query('BEGIN');
+        await db.query(`SET LOCAL session_replication_role='replica'`); // history: the receipt is aged deliberately, as the table owner
+        await db.query(`SET LOCAL TIME ZONE 'UTC'`);
+        await db.query(`UPDATE "Signal" SET "receivedAt" = clock_timestamp() - make_interval(secs => $2) WHERE id=$1`, [g.signalId, receiptAgeSeconds]);
+        // The activation epochs must still precede the (now older) receipt, so that only the freshness window can refuse the pair.
+        await db.query(`UPDATE "ExternalSignalBrokerDispatchState" SET "activatedAt" = least("activatedAt", clock_timestamp() - interval '600 seconds') WHERE id=1`);
+        await db.query(`UPDATE "ExternalSignalEntryExecutionAuthorization" SET "authorizedAt" = least("authorizedAt", clock_timestamp() - interval '600 seconds') WHERE id=(SELECT "authorizationId" FROM "ExternalSignalEntryExecutionObligation" WHERE id=$1)`, [g.obligationId]);
+        await db.query(`UPDATE "ExternalSignalTradeCycleAccount" SET "createdAt" = least("createdAt", clock_timestamp() - interval '600 seconds') WHERE id=$1`, [g.accountCycleId]);
+        await db.query('COMMIT');
+      }
+      const holder = await connect();
+      await holder.query('BEGIN');
+      await holder.query(`SELECT id FROM "ExternalSignalBrokerWorkerClaim" WHERE id=$1 FOR NO KEY UPDATE`, [g.workerClaimId]);
+      const finalizer = await connect();
+      const before = await waiters();
+      const entered = (await observer.query(`SELECT clock_timestamp() AS now`)).rows[0].now as Date;
+      const pair = attemptPair(g, { client: finalizer });
+      await untilWaiters(before + 1, 'the guard waits for the worker claim row');
+      await sleep(holdMs);
+      const released = (await observer.query(`SELECT clock_timestamp() AS now`)).rows[0].now as Date;
+      await holder.query('ROLLBACK');
+      return { g, result: await pair, entered, released };
+    }
+
+    it('refuses a signal that expired while the guard waited for a lock, although it was valid when the trigger started', async () => {
+      // 112 s old on entry: 8 s remain (> 5 s margin). After a 4.5 s wait 3.5 s remain, inside the margin.
+      const { g, result } = await waitedPair('clock-expired-in-wait', 112, 4500);
+      await refused(g, result, /TRADINGVIEW_ENTRY_SIGNAL_EXPIRED/);
+    }, 120_000);
+
+    it('stamps authorizedAt after the wait and keeps the accepted deadline contract for a signal that is still fresh', async () => {
+      const { g, result, entered, released } = await waitedPair('clock-fresh-after-wait', null, 1500);
+      expect(result.ok, result.ok ? '' : message(result.error)).toBe(true);
+      const row = (await db.query(`SELECT c."authorizedAt", c."authorizationDeadlineAt", s."receivedAt" FROM "ExternalSignalBrokerDispatchConsumption" c JOIN "ExternalSignalEntryExecutionObligation" o ON o.id=c."executionObligationId" JOIN "Signal" s ON s.id=o."entrySignalId" WHERE c."orderIntentId"=$1`, [g.intentId])).rows[0];
+      expect(row.authorizedAt.getTime()).toBeGreaterThanOrEqual(released.getTime()); // later than the lock grant, not the trigger entry
+      expect(row.authorizedAt.getTime()).toBeGreaterThan(entered.getTime() + 1000);
+      expect(row.authorizationDeadlineAt.getTime()).toBe(Math.min(row.receivedAt.getTime() + 120_000, row.authorizedAt.getTime() + 30_000));
+    }, 120_000);
+  });
+
   describe('the database lock prelude versus the real Market Intelligence revoke', () => {
     async function revokeRace(options: { preludeInstalled: boolean }) {
       const g = await ready(`prelude-${options.preludeInstalled}`);

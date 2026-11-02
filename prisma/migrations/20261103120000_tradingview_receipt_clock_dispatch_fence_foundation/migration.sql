@@ -197,10 +197,15 @@ BEGIN
   END LOOP;
 END $$;
 
--- OrderIntent UPDATE.
+-- OrderIntent UPDATE. Lock order is claim THEN fence everywhere (a claim mutation already holds the claim row when its own bump reaches the
+-- fence): a marked intent therefore takes its EntryExposureClaim FOR NO KEY UPDATE before the fence advance. Nothing is created here; a
+-- missing claim locks nothing and a missing fence still fails closed in the advance.
 CREATE FUNCTION external_signal_dispatch_fence_bump_intent() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp AS $$
 BEGIN
+  IF NEW."externalSignalAccountCycleId" IS NOT NULL OR OLD."externalSignalAccountCycleId" IS NOT NULL THEN
+    PERFORM 1 FROM "EntryExposureClaim" c WHERE c."orderIntentId" = NEW.id FOR NO KEY UPDATE;
+  END IF;
   PERFORM external_signal_dispatch_fence_advance(ARRAY[NEW.id]);
   RETURN NULL;
 END $$;
@@ -225,11 +230,14 @@ BEGIN
   RETURN NULL;
 END $$;
 
--- EntryExposureClaimEvent INSERT (every type).
+-- EntryExposureClaimEvent INSERT (every type). The claim of a marked intent is locked FOR NO KEY UPDATE before the fence (claim, then fence).
 CREATE FUNCTION external_signal_dispatch_fence_bump_claim_event() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE marked_intent integer;
 BEGIN
-  PERFORM external_signal_dispatch_fence_advance(ARRAY(SELECT c."orderIntentId" FROM "EntryExposureClaim" c WHERE c.id = NEW."claimId"));
+  SELECT c."orderIntentId" INTO marked_intent FROM "EntryExposureClaim" c JOIN "OrderIntent" i ON i.id = c."orderIntentId"
+    WHERE c.id = NEW."claimId" AND i."externalSignalAccountCycleId" IS NOT NULL FOR NO KEY UPDATE OF c;
+  PERFORM external_signal_dispatch_fence_advance(ARRAY[marked_intent]);
   RETURN NULL;
 END $$;
 
@@ -507,7 +515,7 @@ DECLARE
   auth "ExternalSignalEntryExecutionAuthorization"%ROWTYPE; ds "ExternalSignalBrokerDispatchState"%ROWTYPE; i "OrderIntent"%ROWTYPE;
   claim "EntryExposureClaim"%ROWTYPE; d "MarketPolicyBrokerDispatchDecision"%ROWTYPE; mo "OrderIntentMarketPolicyEnforcementObligation"%ROWTYPE;
   sig "Signal"%ROWTYPE; ac "ExternalSignalTradeCycleAccount"%ROWTYPE; ta "TradingAccount"%ROWTYPE; tas "TradingAccountSubscription"%ROWTYPE;
-  sub "Subscription"%ROWTYPE; fence_v bigint; flag boolean; stamp timestamptz := clock_timestamp(); receipt timestamptz;
+  sub "Subscription"%ROWTYPE; fence_v bigint; flag boolean; stamp timestamptz; receipt timestamptz;
 BEGIN
   IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'TradingView broker dispatch consumption is immutable'; END IF;
   IF NEW."authorizedAt" IS NOT NULL OR NEW."authorizationDeadlineAt" IS NOT NULL THEN
@@ -523,6 +531,8 @@ BEGIN
   SELECT * INTO c FROM "ExternalSignalBrokerWorkerClaim" WHERE id = NEW."workerClaimId" FOR SHARE;                           -- 25
   SELECT * INTO o FROM "ExternalSignalEntryExecutionObligation" WHERE id = NEW."executionObligationId" FOR SHARE;            -- 26
   SELECT * INTO mo FROM "OrderIntentMarketPolicyEnforcementObligation" WHERE "orderIntentId" = NEW."orderIntentId" FOR SHARE; -- 27
+  -- The authorization clock is read only now: a wait on any lock above must not let an instant taken before the wait authorize.
+  stamp := clock_timestamp();
 
   SELECT * INTO ds FROM "ExternalSignalBrokerDispatchState" WHERE id = 1;
   SELECT * INTO i FROM "OrderIntent" WHERE id = NEW."orderIntentId";

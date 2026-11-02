@@ -184,10 +184,9 @@ Classification: **fixture incompatibility**. Change: The paired-consumption fixt
 
 ## src/db/__tests__/external-signal-restricted-role.integration.test.ts (2)
 
-Classification: **expectation update**. Change: The reviewed function inventory grew from 117 to 138 functions (113 to 128 PL/pgSQL) with the new database objects.
+Classification: **expectation update**. Change: The reviewed function inventory grew from 117 to 138 functions (113 to 130 PL/pgSQL) with the new database objects.
 
 | # | test (full name) | before (migration, no fixture change) | baseline | final |
 |---|---|---|---|---|
-| 1 | least-privilege runtime role (disposable cluster only) temporary-table shadowing (Phase 4A.2C3A security correction) audits the catalog: every application function pins exactly the trusted path, none is SECURITY DEFINER, ownership is unchanged | AssertionError: expected { total: 138, plpgsql: 128, …(3) } to deeply equal { total: 117, plpgsql: 113, …(3) } | passed | passed |
+| 1 | least-privilege runtime role (disposable cluster only) temporary-table shadowing (Phase 4A.2C3A security correction) audits the catalog: every application function pins exactly the trusted path, none is SECURITY DEFINER, ownership is unchanged | AssertionError: expected { total: 138, plpgsql: 130, …(3) } to deeply equal { total: 117, plpgsql: 113, …(3) } | passed | passed |
 | 2 | least-privilege runtime role (disposable cluster only) role-membership security and database security readiness final corrections: negative controls for the broker-enabled preflight keeps the reviewed manifest equal to what a fresh migration installs, and consistent with the critical-trigger list | AssertionError: expected [ …(138) ] to have a length of 117 but got 138 | passed | passed |
-

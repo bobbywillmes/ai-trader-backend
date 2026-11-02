@@ -717,7 +717,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     await readCommitted.connect();
     try {
       // The complete guard (C3B.2-1) checks the consumed pair before the authorization, so this already-paired intent is now refused for the
-      // earlier consumption; the revoked-authorization refusal on an unpaired intent is proved in the C3B.2-1 foundation suite.
+      // earlier consumption; the revoked-authorization refusal on an unpaired intent is proved in the C3B.2-1 consumption-guard regression suite (external-signal-c3b2-1-consumption-guard.integration.test.ts, "the TradingView authorization was revoked").
       await expect(readCommitted.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","fenceVersion","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,(SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1),'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/TRADINGVIEW_CONTRADICTORY_EVIDENCE|TRADINGVIEW_AUTHORIZATION_NOT_EFFECTIVE|final dispatch evidence graph is inconsistent/);
     } finally { await readCommitted.end(); }
   });

@@ -26,6 +26,12 @@ one (a nested wrapper would end the transaction early or hide a failure from the
    verification triggers.
 8. Restates the trusted `search_path` audit and asserts no application function is unpinned.
 
+Row-lock order at run time (acceptance correction): every fence bump takes the `EntryExposureClaim` of a marked intent `FOR NO KEY UPDATE`
+**before** the fence row (claim, then fence), because a claim mutation already holds the claim when its own bump reaches the fence. The
+OrderIntent-update and claim-event bumps do this explicitly; neither creates a claim or a fence, and a missing fence still raises. Unmarked
+PAPER and LIVE records lock nothing extra. `external_signal_broker_consumption_guard` reads its authorization clock (`clock_timestamp()`)
+only after its last protected-row lock, so a wait for a lock can never authorize a signal that expired during the wait.
+
 A session that holds any conflicting lock makes step 2 or 3 wait up to 15 s and then **fail cleanly** with `55P03`. The lock turns a missed drain
 into a bounded wait or a clean failure, never into a missing fence.
 
