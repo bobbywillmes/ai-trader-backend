@@ -19,6 +19,7 @@ function candidate(id: number, createdAt = new Date('2026-10-29T12:00:00Z')) {
 
 function database(rows: ReturnType<typeof candidate>[]) {
   const tx = {
+    $queryRaw: vi.fn().mockResolvedValue([{ id: 1 }]),
     externalSignalTradeCycleAccount: { updateMany: vi.fn().mockResolvedValue({ count: 1 }) },
     systemEvent: { create: vi.fn().mockResolvedValue({}) },
   };

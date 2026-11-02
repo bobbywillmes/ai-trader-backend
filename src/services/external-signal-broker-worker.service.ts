@@ -9,6 +9,7 @@ import { recordOrderIntentRiskEvaluation } from './order-audit.service.js';
 import { appendNotSentEvidence, ADAPTER_MARKER_PROTOCOL, type NotSentProducer } from './entry-delivery-evidence.service.js';
 import { releaseUnsubmittedOrRouteToRecovery } from './entry-dispatch-recovery.service.js';
 import { observeTradingViewDeliveryUncertaintyForIntent } from './external-signal-delivery-attention.service.js';
+import { lockRowsInOrder } from './external-signal-lock-order.js';
 
 type Db = PrismaClient;
 const C2_REFUSAL = 'TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE';
@@ -91,16 +92,39 @@ export async function processTradingViewOrderIntentForC2(orderIntentId: number, 
     try {
       claimed = await db.$transaction(async tx => {
         await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
+        // Canonical order (design section 6.5): one single-table statement per row, each in the mode the claim
+        // guard will request, so the guard's own multi-table statement finds every row already held.
+        // Rows 2-3: rollout and dispatch state; the dispatch version is read only after its row is locked.
+        await lockRowsInOrder(tx, [['rolloutState', 1, 'UPDATE'], ['dispatchState', 1, 'UPDATE']]);
         const dispatch = await tx.externalSignalBrokerDispatchState.findUnique({ where: { id: 1 } });
         if (!dispatch?.activeRolloutGenerationId || dispatch.activatedAt == null) return null;
+        // Rows 4-9: source, binding, revision, generation, then the source cycle before its account cycle (H3).
+        // Rows 10-15: identity rows FOR SHARE. A pause, kill switch or disablement is a non-key UPDATE and still
+        // blocks; Market Intelligence's FOR SHARE requests on the same rows no longer conflict (H1). Row 17: authorization.
+        // The ids come from immutable evidence. A row that is missing or stale is refused by the claim guard.
+        const [authority] = await tx.$queryRaw<Array<{ source: number; binding: number; revision: number }>>`
+          SELECT "signalSourceId" AS source, "strategySignalBindingId" AS binding, "strategySignalRevisionId" AS revision
+          FROM "ExternalSignalEntryExecutionAuthorization" WHERE id = ${obligation.authorizationId}`;
+        if (authority) {
+          await lockRowsInOrder(tx, [
+            ['source', authority.source, 'UPDATE'], ['binding', authority.binding, 'UPDATE'], ['revision', authority.revision, 'UPDATE'],
+            ['generation', obligation.rolloutGenerationId, 'UPDATE'], ['cycle', obligation.sourceCycleId, 'UPDATE'],
+            ['accountCycle', candidate.externalSignalAccountCycleId!, 'UPDATE'],
+            ['account', candidate.tradingAccountId!, 'SHARE'], ['assignment', candidate.tradingAccountSubscriptionId!, 'SHARE'],
+            ['subscription', cycle.subscriptionId, 'SHARE'], ['security', cycle.securityId, 'SHARE'],
+            ['authorization', obligation.authorizationId, 'UPDATE'],
+          ]);
+        }
+        // Row 21: the exposure advisory lock follows every identity row (admission's order) and precedes the intent,
+        // matching stale recovery, which takes it before `FOR UPDATE OF i`. Rows 22-23: intent, then its claim.
+        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${candidate.tradingAccountId}:${cycle.securityId}`}, 0))`;
+        await lockRowsInOrder(tx, [['intent', candidate.id, 'UPDATE']]);
+        await tx.$queryRaw`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId" = ${candidate.id} FOR UPDATE`;
         const workerClaim = await tx.externalSignalBrokerWorkerClaim.create({ data: {
           orderIntentId: candidate.id, executionObligationId: obligation.id, accountCycleId: candidate.externalSignalAccountCycleId!,
           rolloutGenerationId: obligation.rolloutGenerationId, dispatchStateVersion: dispatch.version,
           clientOrderId: candidate.clientOrderId!, claimFingerprint: '0'.repeat(64),
         } });
-        // The claim trigger locks mutable identities first. This shared advisory lock therefore
-        // follows ordinary Market Intelligence admission's identity-before-exposure order.
-        await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${candidate.tradingAccountId}:${cycle.securityId}`}, 0))`;
         const exposure = await tx.entryExposureClaim.updateMany({ where: { orderIntentId: candidate.id, status: 'ENTRY_PENDING', releasedAt: null }, data: { status: 'ENTRY_SUBMITTING' } });
         if (exposure.count !== 1) throw new Error('TRADINGVIEW_EXPOSURE_CLAIM_LOST');
         const claim = await tx.entryExposureClaim.findUniqueOrThrow({ where: { orderIntentId: candidate.id } });

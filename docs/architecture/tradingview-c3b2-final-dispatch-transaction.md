@@ -1,6 +1,6 @@
 # TradingView Phase 4A.2C3B.2: final-dispatch transaction contract
 
-Status: **design, revision 5, for review. Nothing in this document is implemented.** C3B.1 is independently accepted and its migration is applied to persistent development (107 migrations current);
+Status: **design, revision 5, for review. Only C3B.2-0 (lock-order corrections, section 12) is implemented; nothing else in this document is.** C3B.1 is independently accepted and its migration is applied to persistent development (107 migrations current);
 it is broker-inert and adds no consumption writer, scheduler entry, broker adapter call or POST. Implementation of C3B.2 waits for review of this contract. No broker call is authorized in any checkpoint covered by this document.
 
 Revision 2 corrected the first draft after an independent PostgreSQL 16/17 audit. Revision 3 removed the false claim that a deferred constraint trigger is a commit-time guarantee and introduced the dispatch fence.
@@ -1448,7 +1448,7 @@ never grants another send; reconcile instead.
 
 **Prerequisites to C3B.2 acceptance.**
 
-* The section 6.7 lock corrections (claim guard, authorization guard and grant, admission statement, account-cycle writers)
+* **[C3B.2-0 implemented, pending acceptance — section 12]** The section 6.7 lock corrections (claim guard, authorization guard and grant, admission statement, account-cycle writers)
   with their probes re-run against the real services.
 * The section 6.6 worker-claim path correction (explicit pre-locks, exposure advisory before the insert) and its probes.
 * The C3B.1 migration applied to development by the product owner and the preflight green on the real runtime identity (**applied; 107 migrations current**).
@@ -1753,3 +1753,62 @@ Rationale: these are the only findings that change **already-accepted C1 and C2 
 The migration sequence and its locking argument (3.4.8), including the choice to backfill before any fence trigger exists and the `pg_trigger_depth() >= 2` creation context; the complete guard and the claim that the guard (READ COMMITTED) and the fence (stale SERIALIZABLE) are both required (3.4.9);
 the account-scoped key and the two additional quarantine refusals (3.4.6); the finding that the epoch columns are already database-stamped and only the candidate side needs a stamp (3.5.5); the lock prelude as a database function and its MI-consumption trigger (6.9.2); the retry classes and the locked re-read (3.8);
 the trigger-order decision (catalog regression adopted, the one-statement alternative documented) (6.9.3); and the split of the first implementation checkpoint (11.5.3).
+
+## 12. C3B.2-0 implementation record (lock-order corrections) and C3B.2-1 prerequisites
+
+### 12.1 What C3B.2-0 changed
+
+C3B.2-0 corrects already-accepted C1/C2 behavior so that every TradingView path takes its rows in the section 6.5 order, in the mode
+its guard will request. It adds no table, column, trigger, privilege, dispatch or broker capability, and it is not a design of the fence,
+the receipt clock or the paired consumption (those remain C3B.2-1).
+
+**Service transactions changed (four):**
+
+| Transaction | Change |
+|---|---|
+| Worker claim (`processTradingViewOrderIntentForC2`, SERIALIZABLE) | Rollout advisory → rollout state U → dispatch state U → source U → binding U → revision U → generation U → source cycle U → account cycle U → `TradingAccount`, assignment, `Subscription`, `Security` **FOR SHARE** → authorization U → **exposure advisory** → intent U → exposure claim U → *then* the worker-claim insert. The guard now finds every row held and cannot wait. |
+| TradingView grant (`grantExternalSignalEntryExecutionAuthorization`, SERIALIZABLE) | `User` **FOR SHARE first** (the owner stays effective until commit), advisory, rollout state, source, binding, revision, generation, then the four identity rows FOR SHARE. |
+| Marked admission (`lockAndValidateTradingViewExecution`, READ COMMITTED) | The single planner-ordered `FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec` is replaced by single-table statements: rollout state, source, binding, revision, generation, cycle, account cycle, then signal, route, run and work, then the identity rows FOR SHARE, then authorization; the validation query that follows holds no lock of its own. Unmarked PAPER/LIVE admission is untouched. |
+| `refuseCandidate` (READ COMMITTED) | Locks the parent source cycle, then the account cycle, before the guarded `BLOCKED` transition. No terminalization or claim release was added. |
+
+The primitive is [`external-signal-lock-order.ts`](../../src/services/external-signal-lock-order.ts): one statement per relation, a whitelist of relation names, `FOR UPDATE` or `FOR SHARE`.
+
+**PostgreSQL functions replaced (three), by migration `20261102120000_tradingview_lock_order_corrections`** (rewritten from the installed definition with an asserted `replace`, `search_path = pg_catalog, public, pg_temp` retained, the trusted search-path audit restated):
+
+| Function | Clause |
+|---|---|
+| `external_signal_broker_worker_claim_guard` | `FOR UPDATE OF i,ac,c,auth,gen,ta,tas,sub,sec,src,b,rev,ec` → `FOR UPDATE OF i,ac,c,auth,gen,src,b,rev,ec FOR SHARE OF ta,tas,sub,sec` |
+| `external_signal_entry_authorization_guard` | `FOR UPDATE OF tas,ta,s,src,b,r,u` → `FOR UPDATE OF src,b,r FOR SHARE OF tas,ta,s,u` |
+| `external_signal_entry_obligation_guard` | `FOR UPDATE OF oi,ac,c,sig,sr,rr,auth,gen,ta,tas,sub,sec,src,b,rev` → `… ,src,b,rev FOR SHARE OF ta,tas,sub,sec` |
+
+The third function was **not** in the revision-5 list (6.7). It runs inside admission, after the identity rows are held FOR SHARE; left at `FOR UPDATE` it would *upgrade* them in the guard, so two admissions for different assignments of one account could
+deadlock on `TradingAccount`. It is the same hidden-upgrade defect as the claim guard and is corrected the same way. Trigger names, bindings, privileges and signatures are unchanged; three `bodySha256` values changed in the reviewed manifest and nothing else.
+
+### 12.2 Corrected sequence (rows of section 6.5 as implemented)
+
+0 `User` (grant) S → 1 rollout advisory → 2 rollout state U → 3 dispatch state U (claim) → 4 source U → 5 binding U → 6 revision U → 7 generation U → 8 source cycle U → 9 account cycle U → 10 `TradingAccount` S → 11 assignment S → 12 `Subscription` S → 15 `Security` S →
+17 authorization U → 21 exposure advisory (claim; admission takes it after the Market Intelligence resolver, as before) → 22 intent U → 23 exposure claim U. Immutable evidence rows (signal, route, run, work) are locked U by admission after row 9.
+
+### 12.3 Evidence
+
+Results are recorded in the C3B.2-0 delivery report (concurrent interleavings on PostgreSQL 16.13 and 17.11 through the real services; control run against the pre-correction code; migration replay and upgrade from the 107-migration baseline; regression suites). The suite is
+[`external-signal-lock-order.integration.test.ts`](../../src/db/__tests__/external-signal-lock-order.integration.test.ts). Each scenario parks one side behind a gate lock on a raw connection, starts the other side, confirms the intended lock wait from `pg_stat_activity`, releases the gate, and asserts both durable outcomes and that
+`pg_stat_database.deadlocks` did not move (a retrying service would otherwise hide a `40P01`).
+
+Findings that remain after C3B.2-0:
+
+* **Stale recovery versus claim has one reachable order.** Stale-admission recovery selects only `received` intents; the claim requires `pending`. The race is therefore recovery (selected while `received`) queued first, claim second. The opposite order cannot occur for the same intent; post-claim recovery and `refuseAndRelease` are unchanged and were not part of the inversion.
+* **The static every-account-cycle-writer test of 6.9.1 is not written.** `refuseCandidate` is fixed and exercised through the real service; the repository-wide static scan remains a C3B.2-1 task.
+* **TradingView rollout state and dispatch state are still taken U** (rows 2 and 3) by claim and admission; both are global by design (6.8-G).
+* Admission now also locks the source, binding and revision rows `FOR UPDATE` (the obligation guard already did, planner-ordered). This serializes admission with source and binding edits; it adds no new refusal.
+
+### 12.4 C3B.2-1 implementation prerequisites (Hermes revision-5 review)
+
+These are acceptance requirements for the future migration. **None is implemented in C3B.2-0.**
+
+1. **Lock first, do not upgrade later.** The migration takes `ACCESS EXCLUSIVE` on `"Signal"` and on `"ExternalSignalBrokerDispatchConsumption"` at its very start (its first statements, in that order), rather than escalating from a weaker lock after other work. Ingestion, routing, admission and the worker must be drained before it is applied; the operator runbook states the drain and the check that nothing holds a conflicting lock.
+2. **Restate the trusted search-path audit** (the `DO` block of the C3A hardening migration, as restated by C3B.1 and C3B.2-0) at the end of the migration, so every new or replaced function is pinned and the audit proves no application function is unpinned.
+3. **Reject cross-account `BrokerActivity.brokerOrderRecordId` associations.** A `BrokerActivity` whose `brokerOrderRecordId` points at a `BrokerOrder` of a different trading account than the activity's must be refused by the replaced fence and quarantine logic (the account-scoped evidence key of 3.4.6), with a test that the pairing is rejected and does not bump or release any fence.
+4. **Update the fixtures.** The C3A replica-seeded fixtures and the PAPER-authority paired-consumption fixtures must be updated for the fence and the new `fenceVersion` requirement. **All 142 reported failures must be reconciled by test identity**: the acceptance report lists each failing test name before the fixture change, the fixture or expectation that was updated, and its result after; a count alone is not accepted, and no test may be deleted or skipped to reach a green count.
+5. **Failed-migration recovery.** If `prisma migrate deploy` fails on this migration, first confirm that the failed migration left **no persistent change** (the objects it creates are absent, the replaced functions still carry their previous `bodySha256`, no trigger was added or dropped, and the fence backfill wrote nothing), and only then run `prisma migrate resolve --rolled-back <migration_name>` and retry. If any persistent change is found, stop and repair forward; do not mark it rolled back.
+6. **Atomicity stays Prisma's.** Do not add an explicit `BEGIN`/`COMMIT` to the migration file. Prisma's atomicity of a migration script was independently tested in review (a script that fails midway leaves no change), and a nested wrapper would end the transaction early or hide the failure from the migration history.

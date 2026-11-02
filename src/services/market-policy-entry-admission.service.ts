@@ -19,6 +19,7 @@ import { acquireEntryExposureClaim } from './entry-exposure-claim.service.js';
 import { lockMarketPolicyEnforcementRollout } from './market-policy-enforcement-rollout.service.js';
 import { evaluateStrategyMarketEligibility, STRATEGY_MARKET_ELIGIBILITY_VERSION } from './strategy-market-eligibility.service.js';
 import { createSystemEvent } from './system-event.service.js';
+import { lockRowsInOrder } from './external-signal-lock-order.js';
 
 // Phase 3C.2 authoritative pre-intent market-policy admission. This is the single shared boundary
 // through which every BUY entry OrderIntent is created. While the PAPER runtime rollout is inactive,
@@ -70,6 +71,27 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
   // Prisma's PostgreSQL adapter cannot deserialize PostgreSQL's void pseudo-type. Cast the
   // lock result to text, matching the convention used by the other advisory-lock boundaries.
   await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)::text`;
+  // Canonical lock order (design section 6.5). PostgreSQL does not lock the rows of one multi-table
+  // `FOR UPDATE OF a, b, c` in the order the statement names them, so each relation is locked by its own
+  // statement, in the mode the obligation guard later requests (no upgrade): source, binding and revision
+  // FOR UPDATE; the source cycle before its account cycle; the identity rows FOR SHARE, which still fence a
+  // pause, kill switch or disablement but no longer conflict with Market Intelligence's own FOR SHARE requests.
+  // The ids below are immutable evidence; the validation statement after the locks re-checks every one.
+  const refused = () => new HttpError(409, 'TradingView execution candidate is no longer admissible.', { code: 'TRADINGVIEW_EXECUTION_AUTHORITY_REFUSED' });
+  const [ids] = await tx.$queryRaw<Array<{ account: number; assignment: number; subscription: number; security: number; source: number; binding: number; revision: number | null; routingRun: number }>>`
+    SELECT ac."tradingAccountId" AS account, ac."tradingAccountSubscriptionId" AS assignment, ac."subscriptionId" AS subscription, ac."securityId" AS security,
+           sig."signalSourceId" AS source, sig."strategySignalBindingId" AS binding, sig."strategySignalRevisionId" AS revision, rr.id AS "routingRun"
+    FROM "ExternalSignalTradeCycleAccount" ac
+    JOIN "SignalRoute" sr ON sr.id=ac."entrySignalRouteId"
+    JOIN "SignalRoutingRun" rr ON rr.id=sr."signalRoutingRunId"
+    JOIN "Signal" sig ON sig.id=rr."signalId"
+    WHERE ac.id=${context.accountCycleId}`;
+  if (!ids || ids.revision === null) throw refused();
+  const [work] = await tx.$queryRaw<Array<{ id: number }>>`SELECT id FROM "ExternalSignalCorrelationWork" WHERE "signalId"=${context.entrySignalId}`;
+  await lockRowsInOrder(tx, [['rolloutState', 1, 'UPDATE'], ['source', ids.source, 'UPDATE'], ['binding', ids.binding, 'UPDATE'], ['revision', ids.revision, 'UPDATE'], ['generation', context.rolloutGenerationId, 'UPDATE'], ['cycle', context.sourceCycleId, 'UPDATE'], ['accountCycle', context.accountCycleId, 'UPDATE']]);
+  await lockRowsInOrder(tx, [['signal', context.entrySignalId, 'UPDATE'], ['route', context.entrySignalRouteId, 'UPDATE'], ['routingRun', ids.routingRun, 'UPDATE']]);
+  if (work) await tx.$queryRaw`SELECT id FROM "ExternalSignalCorrelationWork" WHERE id=${work.id} FOR UPDATE`;
+  await lockRowsInOrder(tx, [['account', ids.account, 'SHARE'], ['assignment', ids.assignment, 'SHARE'], ['subscription', ids.subscription, 'SHARE'], ['security', ids.security, 'SHARE'], ['authorization', context.authorizationId, 'UPDATE']]);
   const rows = await tx.$queryRaw<Array<{ accountCycleId: number; clientOrderId: string | null }>>`
     SELECT ac.id AS "accountCycleId", oi."clientOrderId"
     FROM "ExternalSignalTradeCycleAccount" ac
@@ -105,8 +127,8 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
       AND sub.enabled=true AND sub."securityId"=sec.id AND sec.enabled=true
       AND ac."tradingAccountId"=${request.tradingAccountId}
       AND ac."tradingAccountSubscriptionId"=${request.tradingAccountSubscriptionId}
-    FOR UPDATE OF ac,c,sr,rr,sig,auth,state,gen,work,ta,tas,sub,sec`;
-  if (rows.length !== 1) throw new HttpError(409, 'TradingView execution candidate is no longer admissible.', { code: 'TRADINGVIEW_EXECUTION_AUTHORITY_REFUSED' });
+  `;
+  if (rows.length !== 1) throw refused();
   const [exit] = await tx.$queryRaw<Array<{ accepted: boolean }>>`SELECT EXISTS (SELECT 1 FROM "Signal" WHERE "externalSignalTradeCycleId"=${context.sourceCycleId} AND event='EXIT_LONG') AS accepted`;
   if (exit?.accepted) throw new HttpError(409, 'An accepted TradingView EXIT preempted ENTRY admission.', { code: 'TRADINGVIEW_EXIT_PREEMPTED' });
   if (rows[0]!.clientOrderId && rows[0]!.clientOrderId !== request.clientOrderId) throw new HttpError(409, 'TradingView client-order-ID provenance conflict.', { code: 'TRADINGVIEW_CLIENT_ORDER_ID_CONFLICT' });

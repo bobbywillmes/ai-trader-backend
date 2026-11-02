@@ -4,6 +4,7 @@ import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { submitOrder } from './place-order.service.js';
 import { reconcileReleasedTradingViewAdmissionCyclesForAccount } from './external-signal-entry-recovery.service.js';
+import { lockRowsInOrder } from './external-signal-lock-order.js';
 
 type Db = PrismaClient;
 
@@ -24,8 +25,11 @@ function refusalCode(error: unknown) {
     : 'ENTRY_ADMISSION_REFUSED';
 }
 
-async function refuseCandidate(db: Db, account: { id: number; tradingAccountId: number }, reasonCode: string) {
+async function refuseCandidate(db: Db, account: { id: number; tradingAccountId: number; externalSignalTradeCycleId: number }, reasonCode: string) {
   return db.$transaction(async tx => {
+    // The account-cycle trigger locks the parent source cycle, so updating the account cycle first would
+    // invert EXIT correlation and entry recovery, which lock cycle then account cycle (design section 6.9.1).
+    await lockRowsInOrder(tx, [['cycle', account.externalSignalTradeCycleId, 'UPDATE'], ['accountCycle', account.id, 'UPDATE']]);
     const changed = await tx.externalSignalTradeCycleAccount.updateMany({
       where: { id: account.id, status: 'ENTRY_EXECUTION_PROSPECTIVE' },
       // BLOCKED is deliberately nonterminal. The reason is durable event evidence; terminal fields

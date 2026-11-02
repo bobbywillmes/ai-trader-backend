@@ -7,8 +7,8 @@ export type ManifestFunction = { language: string; volatility: string; kind: str
 export type ManifestTrigger = { function: string; enabled: string; timing: string; events: string; scope: string; when: string; columns: string; arguments: string; deferrable: boolean; initiallyDeferred: boolean; transitionTables: string };
 
 export const SECURITY_MANIFEST: { version: string; migration: string; functions: Record<string, ManifestFunction>; triggers: Record<string, ManifestTrigger> } = {
-  "version": "20261101120000_tradingview_marked_exposure_claim_delete_protection",
-  "migration": "20261101120000_tradingview_marked_exposure_claim_delete_protection",
+  "version": "20261102120000_tradingview_lock_order_corrections",
+  "migration": "20261102120000_tradingview_lock_order_corrections",
   "functions": {
     "assert_strategy_market_policy_prepared()": {
       "language": "plpgsql",
@@ -305,7 +305,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "b9fc2ec692167c508e73864629430a903c1e62d086d1e90418e4ccd0eba6ee28"
+      "bodySha256": "5ad4ee0de969492aeaa2ac6ad4506eb29f93fed491a7d97e1724403ee0fcf850"
     },
     "external_signal_c2_delivery_event_fence()": {
       "language": "plpgsql",
@@ -341,7 +341,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "a1a8ec411fe9cf3990fb9163a6a7e8433dc14c1a1393b803e1cc7d3d8ff78a16"
+      "bodySha256": "52e472470c4dfa69b2a0cc05ff616f10db42869cb5e32ac41db94c4f715b454f"
     },
     "external_signal_entry_obligation_guard()": {
       "language": "plpgsql",
@@ -350,7 +350,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "57158c23411510d4277d5949af340422c597338e704245396720f1425f38c14c"
+      "bodySha256": "09d7bb9a2d7d39bc2bd4ffca24c7f4339e40382b3b6c041931720659357c5f5f"
     },
     "external_signal_execution_activation_invalidate()": {
       "language": "plpgsql",

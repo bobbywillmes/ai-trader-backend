@@ -3,6 +3,7 @@ import { Prisma } from '@prisma/client';
 import { prisma } from '../db/prisma.js';
 import { HttpError } from '../errors/http-error.js';
 import { createSystemEvent } from './system-event.service.js';
+import { lockRowsInOrder } from './external-signal-lock-order.js';
 
 const fingerprint = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 const conflict = (code: string, message: string) => new HttpError(409, message, { code });
@@ -11,6 +12,14 @@ const isConcurrencyError = (error: unknown) => error instanceof Prisma.PrismaCli
 
 async function requireOwner(actorUserId: number, db: Prisma.TransactionClient) {
   const actor = await db.user.findUnique({ where: { id: actorUserId }, select: { enabled: true, platformRole: true } });
+  if (!actor?.enabled || actor.platformRole !== 'SYSTEM_OWNER') throw new HttpError(403, 'SYSTEM_OWNER access required.');
+}
+
+// The authorization guard validates the granting owner inside this transaction. Taking the User row FOR SHARE
+// before every other lock (the order Market Intelligence's owner operations use) keeps the owner effective until
+// commit and replaces the guard's former late `User FOR UPDATE`, which inverted that order.
+async function requireOwnerLocked(actorUserId: number, db: Prisma.TransactionClient) {
+  const [actor] = await db.$queryRaw<Array<{ enabled: boolean; platformRole: string }>>`SELECT enabled, "platformRole"::text AS "platformRole" FROM "User" WHERE id = ${actorUserId} FOR SHARE`;
   if (!actor?.enabled || actor.platformRole !== 'SYSTEM_OWNER') throw new HttpError(403, 'SYSTEM_OWNER access required.');
 }
 
@@ -99,7 +108,9 @@ export async function listExternalSignalEntryExecutionAuthorizations(accountId: 
 export async function grantExternalSignalEntryExecutionAuthorization(accountId: number, assignmentId: number, input: { rolloutGenerationId: number; strategySignalBindingId: number; expectedStrategySignalRevisionId: number; expectedSecurityId: number; reason: string }, actorUserId: number) {
   try {
     return await prisma.$transaction(async db => {
-      await requireOwner(actorUserId, db);
+      // Canonical order (design section 6.5): User S, rollout advisory, rollout state, source, binding, revision,
+      // generation, then the identity rows FOR SHARE (TradingAccount, assignment, Subscription, Security).
+      await requireOwnerLocked(actorUserId, db);
       await db.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
       await db.$executeRaw`UPDATE "ExternalSignalExecutionRolloutState" SET version=version WHERE id=1`;
       await db.$queryRaw`SELECT id FROM "ExternalSignalSource" WHERE id=(SELECT "signalSourceId" FROM "StrategySignalBinding" WHERE id=${input.strategySignalBindingId}) FOR UPDATE`;
@@ -108,14 +119,11 @@ export async function grantExternalSignalEntryExecutionAuthorization(accountId: 
       if (!binding || !binding.revisions[0]) throw new HttpError(404, 'Active source binding revision not found.');
       const revision = binding.revisions[0];
       if (revision.id !== input.expectedStrategySignalRevisionId) throw conflict('STALE_STRATEGY_REVISION', 'The active strategy signal revision changed after it was loaded.');
-      await db.$queryRaw`SELECT id FROM "ExternalSignalExecutionRolloutGeneration" WHERE id=${input.rolloutGenerationId} FOR UPDATE`;
-      await db.$queryRaw`SELECT id FROM "TradingAccount" WHERE id=${accountId} FOR UPDATE`;
-      await db.$queryRaw`SELECT id FROM "TradingAccountSubscription" WHERE id=${assignmentId} FOR UPDATE`;
+      await lockRowsInOrder(db, [['revision', revision.id, 'UPDATE'], ['generation', input.rolloutGenerationId, 'UPDATE'], ['account', accountId, 'SHARE'], ['assignment', assignmentId, 'SHARE']]);
       const assignment = await db.tradingAccountSubscription.findFirst({ where: { id: assignmentId, tradingAccountId: accountId }, include: { tradingAccount: true, subscription: true } });
       if (!assignment) throw new HttpError(404, 'Account assignment not found.');
       if (assignment.routingSecurityId !== input.expectedSecurityId) throw conflict('STALE_SECURITY_IDENTITY', 'The assignment Security changed after it was loaded.');
-      await db.$queryRaw`SELECT id FROM "Subscription" WHERE id=${assignment.subscriptionId} FOR UPDATE`;
-      await db.$queryRaw`SELECT id FROM "Security" WHERE id=${assignment.routingSecurityId} FOR UPDATE`;
+      await lockRowsInOrder(db, [['subscription', assignment.subscriptionId, 'SHARE'], ['security', assignment.routingSecurityId, 'SHARE']]);
       const latest = await db.externalSignalEntryExecutionAuthorization.findFirst({ where: { rolloutGenerationId: input.rolloutGenerationId, tradingAccountSubscriptionId: assignmentId, strategySignalBindingId: input.strategySignalBindingId }, orderBy: { authorizationSequence: 'desc' } });
       const row = await db.externalSignalEntryExecutionAuthorization.create({ data: {
         rolloutGenerationId: input.rolloutGenerationId, authorizationSequence: (latest?.authorizationSequence ?? 0) + 1, status: 'AUTHORIZED',

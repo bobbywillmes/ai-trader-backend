@@ -21,7 +21,7 @@ export async function createTradingViewGraphFixture(db: Client) {
   const dispatchVersion = (await authority.changeExternalSignalBrokerDispatchState(executeGenerationId, 'ACTIVATE', 'Exercise inert worker claims', ownerId)).stateVersion;
   let sequence = 0;
 
-  async function createTarget() {
+  async function createTarget(options: { grant?: boolean } = {}) {
     sequence += 1;
     const symbol = `TV${sequence}`;
     const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ($1,$1,true,'STOCK',now(),now()) RETURNING id`, [symbol])).rows[0].id as number;
@@ -29,24 +29,41 @@ export async function createTradingViewGraphFixture(db: Client) {
     const assignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [paperId, subscriptionId])).rows[0].id as number;
     const allocationId = (await db.query(`INSERT INTO "TradingAccountAllocation" ("tradingAccountId",key,name,enabled,"maxAllocatedNotional","maxPositionNotional","createdAt","updatedAt") VALUES ($1,$2,$2,true,10000,1000,now(),now()) RETURNING id`, [paperId, `tv-graph-${sequence}`])).rows[0].id as number;
     await db.query(`UPDATE "TradingAccountSubscription" SET "allocationId"=$2 WHERE id=$1`, [assignmentId, allocationId]);
-    const grant = await authority.grantExternalSignalEntryExecutionAuthorization(paperId, assignmentId, { rolloutGenerationId: executeGenerationId, strategySignalBindingId: bindingId, expectedStrategySignalRevisionId: revisionId, expectedSecurityId: securityId, reason: 'Authorize isolated graph target' }, ownerId);
-    return { symbol, securityId, subscriptionId, assignmentId, authorizationId: grant.id };
+    const grant = options.grant === false ? null : await authority.grantExternalSignalEntryExecutionAuthorization(paperId, assignmentId, { rolloutGenerationId: executeGenerationId, strategySignalBindingId: bindingId, expectedStrategySignalRevisionId: revisionId, expectedSecurityId: securityId, reason: 'Authorize isolated graph target' }, ownerId);
+    return { symbol, securityId, subscriptionId, assignmentId, authorizationId: grant?.id as number };
   }
 
-  /** A marked 'received' intent with its ENTRY_PENDING claim and frozen obligation. */
-  async function admit(label: string) {
-    const target = await createTarget();
+  /** A correlated ENTRY signal, its completed routing and an ENTRY_ROUTE_PENDING account cycle for one target. */
+  async function buildCycle(label: string, target: { securityId: number; assignmentId: number; subscriptionId: number; symbol: string }, siblingAccount?: { tradingAccountId: number }) {
     const cycleRef = `${label}:${randomUUID()}`;
     const cycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycle" ("strategySignalBindingId","strategySignalRevisionId","strategyRevision","securityId","externalTradeCycleRef",status,"createdAt","updatedAt") VALUES ($1,$2,1,$3,$4,'ENTRY_RECEIVED',now(),now()) RETURNING id`, [bindingId, revisionId, target.securityId, cycleRef])).rows[0].id;
     await db.query('BEGIN');
     const signalId = (await db.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","createdAt") VALUES ($1,$2,$3,$4,2,$5,$6,$7,1,$8,$9,'ENTRY_LONG',$11,'15m',now(),$10,now()) RETURNING id`, [sourceId, bindingId, strategyId, target.securityId, `entry:${randomUUID()}`, cycleRef, randomUUID(), revisionId, cycleId, 'a'.repeat(64), target.symbol])).rows[0].id;
     await db.query(`INSERT INTO "ExternalSignalCorrelationWork" ("signalId",status,"attemptCount","nextAttemptAt","createdAt","updatedAt","completedAt") VALUES ($1,'COMPLETED',0,now(),now(),now(),now())`, [signalId]);
     await db.query('COMMIT');
+    // A sibling account cycle of the same source cycle shares its Subscription and Security on another paper account.
+    const sibling = siblingAccount ? { tradingAccountId: siblingAccount.tradingAccountId, subscriptionId: target.subscriptionId, securityId: target.securityId, assignmentId: (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [siblingAccount.tradingAccountId, target.subscriptionId])).rows[0].id as number } : undefined;
     await db.query('BEGIN');
-    const runId = (await db.query(`INSERT INTO "SignalRoutingRun" ("signalId","authorityMode",status,"startedAt","completedAt","routeCount","createdAt") VALUES ($1,'TRADE_ELIGIBLE','COMPLETED',now(),now(),1,now()) RETURNING id`, [signalId])).rows[0].id;
+    const runId = (await db.query(`INSERT INTO "SignalRoutingRun" ("signalId","authorityMode",status,"startedAt","completedAt","routeCount","createdAt") VALUES ($1,'TRADE_ELIGIBLE','COMPLETED',now(),now(),$2,now()) RETURNING id`, [signalId, sibling ? 2 : 1])).rows[0].id;
     const routeId = (await db.query(`INSERT INTO "SignalRoute" ("signalRoutingRunId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","targetSnapshot","createdAt") VALUES ($1,$2,$3,$4,'{}',now()) RETURNING id`, [runId, paperId, target.assignmentId, target.subscriptionId])).rows[0].id;
+    const siblingRouteId = sibling ? (await db.query(`INSERT INTO "SignalRoute" ("signalRoutingRunId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","targetSnapshot","createdAt") VALUES ($1,$2,$3,$4,'{}',now()) RETURNING id`, [runId, sibling.tradingAccountId, sibling.assignmentId, sibling.subscriptionId])).rows[0].id as number : null;
     await db.query('COMMIT');
     const accountCycleId = (await db.query(`INSERT INTO "ExternalSignalTradeCycleAccount" ("externalSignalTradeCycleId","entrySignalRouteId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId",status,"createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,'ENTRY_ROUTE_PENDING',now(),now()) RETURNING id`, [cycleId, routeId, paperId, target.assignmentId, target.subscriptionId, target.securityId])).rows[0].id as number;
+    const siblingAccountCycleId = sibling ? (await db.query(`INSERT INTO "ExternalSignalTradeCycleAccount" ("externalSignalTradeCycleId","entrySignalRouteId","tradingAccountId","tradingAccountSubscriptionId","subscriptionId","securityId",status,"createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,$6,'ENTRY_ROUTE_PENDING',now(),now()) RETURNING id`, [cycleId, siblingRouteId, sibling.tradingAccountId, sibling.assignmentId, sibling.subscriptionId, sibling.securityId])).rows[0].id as number : null;
+    return { cycleId, cycleRef, signalId, runId, routeId, accountCycleId, siblingAccountCycleId };
+  }
+
+  /** Prospective TradingView ENTRY admission candidate: no intent, claim or obligation yet. */
+  async function prospective(label: string, target: { securityId: number; assignmentId: number; subscriptionId: number; symbol: string }) {
+    const graph = await buildCycle(label, target);
+    await db.query(`UPDATE "ExternalSignalTradeCycleAccount" SET status='ENTRY_EXECUTION_PROSPECTIVE',"entryRolloutGenerationId"=$2 WHERE id=$1`, [graph.accountCycleId, executeGenerationId]);
+    return graph;
+  }
+
+  /** A marked 'received' intent with its ENTRY_PENDING claim and frozen obligation. */
+  async function admit(label: string, siblingAccount?: { tradingAccountId: number }) {
+    const target = await createTarget();
+    const { cycleId, signalId, routeId, accountCycleId, siblingAccountCycleId } = await buildCycle(label, target, siblingAccount);
     const clientOrderId = `${label}-${randomUUID()}`;
     await db.query('BEGIN');
     const raw = { symbol: target.symbol, side: 'buy', orderType: 'market', timeInForce: 'day', qty: 1, signalType: 'entry', tradingAccountSubscriptionId: target.assignmentId };
@@ -56,7 +73,7 @@ export async function createTradingViewGraphFixture(db: Client) {
     await db.query(`UPDATE "ExternalSignalTradeCycleAccount" SET status='ENTRY_INTENT_CREATED',"entryOrderIntentId"=$2 WHERE id=$1`, [accountCycleId, intentId]);
     const obligationId = (await db.query(`INSERT INTO "ExternalSignalEntryExecutionObligation" ("orderIntentId","accountCycleId","sourceCycleId","entrySignalId","entrySignalRouteId","authorizationId","rolloutGenerationId","executionEpochAt","authorizationFingerprint","obligationFingerprint","clientOrderId") VALUES ($1,$2,$3,$4,$5,$6,$7,now(),$8,$8,$9) RETURNING id`, [intentId, accountCycleId, cycleId, signalId, routeId, target.authorizationId, executeGenerationId, '0'.repeat(64), clientOrderId])).rows[0].id as number;
     await db.query('COMMIT');
-    return { intentId, claimId, accountCycleId, obligationId, clientOrderId };
+    return { intentId, claimId, accountCycleId, obligationId, clientOrderId, target, cycleId, signalId, routeId, siblingAccountCycleId };
   }
 
   /** The worker's atomic claim, stranded as a crash would leave it: 'submitting' and past its stale age. */
@@ -73,5 +90,5 @@ export async function createTradingViewGraphFixture(db: Client) {
     } catch (error) { await db.query('ROLLBACK'); throw error; }
   }
 
-  return { ownerId, paperId, admit, workerClaim };
+  return { ownerId, paperId, strategyId, sourceId, bindingId, revisionId, executeGenerationId, createTarget, prospective, admit, workerClaim };
 }
