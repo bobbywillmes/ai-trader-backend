@@ -1,6 +1,6 @@
 # TradingView Phase 4A.2C3B.2: final-dispatch transaction contract
 
-Status: **design, revision 5, for review. Only C3B.2-0 (lock-order corrections, section 12) is implemented; nothing else in this document is.** C3B.1 is independently accepted and its migration is applied to persistent development (107 migrations current);
+Status: **design, revision 5. C3B.2-0 (lock-order corrections, section 12) is accepted and migrated to persistent development (108 migrations). C3B.2-1 (the database safety foundation: receipt clock, dispatch fence, evidence identity, complete consumption guard, section 13) is implemented locally and awaiting independent review; nothing else in this document is implemented.** C3B.1 is independently accepted and its migration is applied to persistent development;
 it is broker-inert and adds no consumption writer, scheduler entry, broker adapter call or POST. Implementation of C3B.2 waits for review of this contract. No broker call is authorized in any checkpoint covered by this document.
 
 Revision 2 corrected the first draft after an independent PostgreSQL 16/17 audit. Revision 3 removed the false claim that a deferred constraint trigger is a commit-time guarantee and introduced the dispatch fence.
@@ -464,6 +464,7 @@ account cannot be tied to an intent by any database key; only the authoritative 
   `ExternalSignalEntryExecutionObligation`. The migration adds a partial index on `ExternalSignalEntryExecutionObligation
   ("clientOrderId")` and a `BrokerOrder ("tradingAccountId","brokerOrderId")` lookup already exists. The function must be
   written typed (not the probe overlay's `to_jsonb` dispatch) and its plans checked.
+  **[C3B.2-1 correction]** That sentence was wrong about the index: the existing account-scoped unique index has `broker` as its middle column, so a lookup by account and broker order id walked the whole account range, and `BrokerOrder.orderIntentId` had no index at all. Measured on 20 000 historical rows, the first typed implementation cost about 480 µs per unmarked broker write (against about 30 µs before); section 13.6 records the corrected design and measurements.
 * **Lock position.** The fence is the last lock a writer takes (row 24, section 6.5): the bump runs after the intent/claim
   write. Order sync and any `updateMany` over several rows must visit intents in ascending id, or accept `40P01` as fail-closed
   noise.
@@ -1812,3 +1813,46 @@ These are acceptance requirements for the future migration. **None is implemente
 4. **Update the fixtures.** The C3A replica-seeded fixtures and the PAPER-authority paired-consumption fixtures must be updated for the fence and the new `fenceVersion` requirement. **All 142 reported failures must be reconciled by test identity**: the acceptance report lists each failing test name before the fixture change, the fixture or expectation that was updated, and its result after; a count alone is not accepted, and no test may be deleted or skipped to reach a green count.
 5. **Failed-migration recovery.** If `prisma migrate deploy` fails on this migration, first confirm that the failed migration left **no persistent change** (the objects it creates are absent, the replaced functions still carry their previous `bodySha256`, no trigger was added or dropped, and the fence backfill wrote nothing), and only then run `prisma migrate resolve --rolled-back <migration_name>` and retry. If any persistent change is found, stop and repair forward; do not mark it rolled back.
 6. **Atomicity stays Prisma's.** Do not add an explicit `BEGIN`/`COMMIT` to the migration file. Prisma's atomicity of a migration script was independently tested in review (a script that fails midway leaves no change), and a nested wrapper would end the transaction early or hide the failure from the migration history.
+
+## 13. C3B.2-1 implementation record (receipt clock and dispatch-fence foundation)
+
+Migration `20261103120000_tradingview_receipt_clock_dispatch_fence_foundation` (109th). **Inert safety infrastructure:** no production code writes a TradingView consumption, no permit, scheduler or broker call exists, and a static test asserts it. Operator procedure: [`tradingview-c3b2-1-migration-runbook.md`](../production/tradingview-c3b2-1-migration-runbook.md).
+
+### 13.1 What it installs
+
+| Area | Objects |
+|---|---|
+| Locks (Hermes MEDIUM) | `lock_timeout 15s`; `ACCESS EXCLUSIVE` on `Signal` then `ExternalSignalBrokerDispatchConsumption` first; then one `SHARE ROW EXCLUSIVE` statement over twelve tables in a fixed order. No upgrade anywhere; no `BEGIN`/`COMMIT`. |
+| Fence | `ExternalSignalDispatchFence`, its guard (insert only from the creation trigger at version 1; update only trigger-issued +1; no delete/truncate), historical backfill at version 1 before any fence trigger exists, creation trigger, typed bump triggers on the nine fenced tables, post-conditions (zero missing, zero unexpected). |
+| Receipt clock | `Signal.receivedAt timestamptz` (no default, no backfill, stamped from `transaction_timestamp()`, supplied value rejected, immutable); `external_signal_signal_receipt_remaining/open/received_since`; database stamps of `ExternalSignalTradeCycleAccount.createdAt` and marked `OrderIntent.createdAt`; the obligation and worker-claim guards rewritten to read `receivedAt` with an explicit `IS NULL` branch. |
+| Evidence identity | Shared account-scoped key and its reverse; quarantine rebuilt on it, plus the contradictory-account, unattributable and **cross-account `brokerOrderRecordId`** refusals (Hermes LOW). |
+| Consumption | Four columns (`authorizedAt`, `authorizationDeadlineAt`, `fenceVersion`), `external_signal_lock_dispatch_graph`, the Market Intelligence lock-prelude trigger, the complete guard, the post-pair bump and its self-verification. |
+| Services | Admission, worker claim and correlation read the database receipt clock; the application-clock subtractions are gone. `createdAt` is unchanged for audit. |
+| Preflight | Every new trigger in `CRITICAL_TRIGGERS`, a firing-order invariant (`TRIGGER_ORDER_INVARIANTS`, finding `CRITICAL_TRIGGER_ORDER_UNSAFE`), regenerated manifest (138 functions, 158 triggers), trusted `search_path` restated. |
+
+### 13.2 Differences from the revision-5 overlay
+
+1. **Index claim corrected** (see 3.4.7). Added `BrokerOrder(orderIntentId)`, `BrokerOrder(tradingAccountId, brokerOrderId)`, `ExternalSignalEntryExecutionObligation(clientOrderId)` and a small partial index of marked intents per account. The key and its reverse are PL/pgSQL (cached plans) with a fast exit for accounts that own no marked intent.
+2. The fence bump uses typed per-shape trigger functions, not the overlay's `to_jsonb` dispatch.
+3. The migration also rewrites the C1 obligation guard and C2 worker-claim guard from their installed definitions with asserted replacements (the overlay only specified them).
+4. The cross-account activity link rule (13.1) is new. It rejects a `brokerOrderRecordId` link when both accounts are known and differ, or when the order is marked TradingView evidence (including a NULL account).
+5. Fence table privileges: guards run as the invoker, so the runtime role necessarily holds `INSERT/UPDATE/DELETE` on the fence; the guard, not a missing privilege, is the protection (the 3.4.7 sentence that said otherwise is superseded). `TRUNCATE`/`TRIGGER` are not granted and tested.
+6. A defect found by the legacy suites during development and fixed before commit: an expression combining `TG_TABLE_NAME` with `NEW."brokerOrderRecordId"` in the shared quarantine function failed at plan time for `BrokerOrder` (57 legacy tests failed). Nested `IF`s now keep field references table-specific.
+
+### 13.3 Decisions retained
+
+Sender-asserted `signalTime`/`barTime` remain observational: the 120-second rule measures server receipt on the database clock, not event age (3.5.3). Development stays observer-only; no runtime-role cutover is performed here.
+
+### 13.4 Evidence
+
+* PostgreSQL 16.13 and 17.11, all gated suites, `--maxWorkers=4`: baseline 4048 tests; final 4155 (107 new). PG16: 4084 passed, 0 failed; PG17: 4152 passed, 0 failed. The remainder in each JSON report (71 and 3) are tests the report writer flagged "pending/still running"; those files were re-run on their own and passed (PG16: 101 + 42; PG17: 143).
+* New suites: foundation 43, consumption guard with real Market Intelligence 44, genuine 108-to-109 upgrade through the real Prisma runner 13, unit tests for the trigger-order evaluator, one restricted-role test.
+* Fixture reconciliation: [`tradingview-c3b2-1-fixture-reconciliation.md`](tradingview-c3b2-1-fixture-reconciliation.md) lists all 155 tests that failed with the migration applied and no fixture change (153 fixture incompatibilities, 2 inventory expectations), each passing in the final run. Hermes's list of 142 was not available to this checkpoint, so the reconciliation is by this checkpoint's own identities.
+* Performance: [`…-performance-pg16.json`](tradingview-c3b2-1-performance-pg16.json) and [`…-pg17.json`](tradingview-c3b2-1-performance-pg17.json). Unmarked broker writes on accounts without marked intents: about +20 µs (BrokerOrder insert 36 to 56 µs). On an account that owns marked intents (the TradingView PAPER account) each broker row costs about 160 µs against 30 µs. The first implementation cost about 480 µs for every unmarked row; the indexes and PL/pgSQL form removed it.
+
+### 13.5 Remaining risks and limits
+
+* Lock inversion potential: a marked path that updates `OrderIntent` and later its claim in one transaction takes the fence before the claim; concurrent claim-first writers could deadlock (`40P01`, fail-closed). The existing concurrency suites show none; C3B.2-2 must keep its explicit lock order.
+* The paired-consumption fixtures write raw SQL; the Prisma model requires the three new columns although the database stamps two of them. C3B.2-2 must insert with SQL that omits them.
+* Historical signals have `receivedAt NULL` permanently; a signal accepted shortly before migration is refused at admission (safe direction).
+* Not applied to persistent development; the new migration needs the drain procedure in the runbook.

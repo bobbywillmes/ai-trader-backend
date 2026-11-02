@@ -348,7 +348,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       const lock = new Client({ connectionString: databaseUrl }); await lock.connect();
       await lock.query('BEGIN');
       await lock.query(barrier.sql);
-      const expiresWhileWaiting = processProspectiveTradingViewEntries({ db: (await import('../prisma.js')).prisma, limit: 10, now: new Date(), maxAgeMs: 150 });
+      const expiresWhileWaiting = processProspectiveTradingViewEntries({ db: (await import('../prisma.js')).prisma, limit: 10, maxAgeMs: 150 });
       await new Promise(resolve => setTimeout(resolve, 250));
       await lock.query('COMMIT'); await lock.end();
       expect(await expiresWhileWaiting, barrier.label).toMatchObject({ admitted: 0, refused: 1 });
@@ -657,16 +657,26 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       await db.query(`ALTER TABLE "OrderIntent" DISABLE TRIGGER "OrderIntent_external_signal_dispatch_quarantine"`);
       await db.query(`UPDATE "OrderIntent" SET status='submitting' WHERE id=$1`, [validWorkerClaim.intentId]);
       await db.query(`UPDATE "EntryExposureClaim" SET status='ENTRY_SUBMITTING' WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId]);
+      // C3B.2-1: the complete consumption guard requires the claim's WORKER_CLAIMED_FOR_SUBMISSION event to cite this worker claim, exactly as
+      // the C2 worker writes it, so the controlled fixture records it through the production event triggers.
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") SELECT id,'WORKER_CLAIMED_FOR_SUBMISSION',$2 FROM "EntryExposureClaim" WHERE "orderIntentId"=$1`,
+        [validWorkerClaim.intentId, JSON.stringify({ markerProtocol: 'ADAPTER_MARKER_V1', workerClaimId: validWorkerClaim.id, executionMode: 'TRADINGVIEW_C2_NON_EXECUTABLE' })]);
       await db.query(`SET CONSTRAINTS ALL IMMEDIATE`);
       await db.query(`ALTER TABLE "OrderIntent" ENABLE TRIGGER "OrderIntent_external_signal_dispatch_quarantine"`);
       await db.query('COMMIT');
     } catch (error) { await db.query('ROLLBACK'); throw error; }
     const prepared = await (await import('../../services/market-policy-broker-dispatch.service.js')).prepareEntryBrokerDispatch({ orderIntentId: validWorkerClaim.intentId, tradingAccountId: paperId, symbol: 'EX2', clientOrderId: validWorkerClaim.clientOrderId });
     expect(prepared).toMatchObject({ enforcement: 'FROZEN_OBLIGATION', applicability: 'FROZEN_OBLIGATION' });
+    // The fixture signal is database-stamped at insertion and the guard needs a receipt with at least five seconds of its 120 left. Fail with
+    // a legible message, not a guard error, if a very slow environment let it age out.
+    expect((await db.query(`SELECT external_signal_signal_receipt_open(o."entrySignalId", interval '20 seconds') AS open FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$1`, [validWorkerClaim.obligationId])).rows[0].open, 'fixture signal receipt is too old for the paired-consumption fixture').toBe(true);
     await db.query('BEGIN');
     try {
       const miConsumptionId = (await db.query(`INSERT INTO "MarketPolicyBrokerDispatchConsumption" ("decisionId","orderIntentId","clientOrderId","evidenceJson") VALUES ($1,$2,$3,'{}') RETURNING id`, [prepared.decisionId, validWorkerClaim.intentId, validWorkerClaim.clientOrderId])).rows[0].id as number;
-      await db.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId]);
+      // C3B.2-1: the writer reads the dispatch fence under lock after the canonical locks and supplies it as fenceVersion; the MI consumption above
+      // does not move it. authorizedAt and authorizationDeadlineAt are database-stamped, so the statement omits them.
+      const fenceVersion = (await db.query(`SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1 FOR UPDATE`, [validWorkerClaim.intentId])).rows[0].version as string;
+      await db.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","fenceVersion","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,$7,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId, fenceVersion]);
       await db.query('COMMIT');
     } catch (error) { await db.query('ROLLBACK'); throw error; }
     expect((await db.query(`SELECT count(*)::int n FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rows[0].n).toBe(1);
@@ -686,7 +696,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     }
     await expect(db.query(`DELETE FROM "ExternalSignalBrokerDispatchConsumption" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/immutable/);
     await expect(db.query(`DELETE FROM "ExternalSignalBrokerWorkerClaim" WHERE "orderIntentId"=$1`, [validWorkerClaim.intentId])).rejects.toThrow(/immutable/);
-    await expect(db.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,m.id,o."rolloutGenerationId",o."authorizationId",$4,$5,'{}' FROM "ExternalSignalEntryExecutionObligation" o CROSS JOIN "MarketPolicyBrokerDispatchConsumption" m WHERE o.id=$2 AND m."orderIntentId"=$1`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/duplicate key|immutable|inconsistent/);
+    await expect(db.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","fenceVersion","evidenceJson") SELECT $1,$2,$3,m.id,o."rolloutGenerationId",o."authorizationId",$4,$5,(SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1),'{}' FROM "ExternalSignalEntryExecutionObligation" o CROSS JOIN "MarketPolicyBrokerDispatchConsumption" m WHERE o.id=$2 AND m."orderIntentId"=$1`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/duplicate key|immutable|inconsistent|TRADINGVIEW_CONTRADICTORY_EVIDENCE/);
     const rollout = await import('../../services/market-policy-enforcement-rollout.service.js');
     const version = (await db.query(`SELECT version FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].version as number;
     await rollout.setMarketPolicyEnforcementRuntimeRollout(false, { expectedVersion: version, reason: 'Close paired-consumption fixture' }, ownerId);
@@ -700,13 +710,15 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       await stale.query('BEGIN ISOLATION LEVEL SERIALIZABLE');
       await stale.query(`SELECT status FROM "ExternalSignalEntryExecutionAuthorization" WHERE id=$1`, [identity.authorizationId]);
       await (await import('../../services/external-signal-execution-authority.service.js')).revokeExternalSignalEntryExecutionAuthorization(paperId, identity.tradingAccountSubscriptionId, identity.authorizationId, 'Concurrent final-consumption revocation probe', ownerId);
-      await expect(stale.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/serializ|40001/i);
+      await expect(stale.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","fenceVersion","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,(SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1),'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/serializ|40001/i);
       await stale.query('ROLLBACK');
     } finally { await stale.end(); }
     const readCommitted = new Client({ connectionString: databaseUrl });
     await readCommitted.connect();
     try {
-      await expect(readCommitted.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/final dispatch evidence graph is inconsistent/);
+      // The complete guard (C3B.2-1) checks the consumed pair before the authorization, so this already-paired intent is now refused for the
+      // earlier consumption; the revoked-authorization refusal on an unpaired intent is proved in the C3B.2-1 foundation suite.
+      await expect(readCommitted.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","fenceVersion","evidenceJson") SELECT $1,$2,$3,$4,o."rolloutGenerationId",o."authorizationId",$5,$6,(SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1),'{}' FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$2`, [validWorkerClaim.intentId, validWorkerClaim.obligationId, validWorkerClaim.id, identity.miConsumptionId, validWorkerClaim.dispatchVersion, validWorkerClaim.clientOrderId])).rejects.toThrow(/TRADINGVIEW_CONTRADICTORY_EVIDENCE|TRADINGVIEW_AUTHORIZATION_NOT_EFFECTIVE|final dispatch evidence graph is inconsistent/);
     } finally { await readCommitted.end(); }
   });
 

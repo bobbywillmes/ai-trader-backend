@@ -62,9 +62,9 @@ describe('TradingView C2 bounded transaction retries', () => {
   const refusableCandidate = {
     id: 7, status: 'pending', externalSignalAccountCycleId: 3, clientOrderId: 'c', tradingAccountId: 1, tradingAccountSubscriptionId: 2, subscriptionId: 4, side: 'buy', symbol: 'X', orderType: 'market', timeInForce: 'day',
     rawRequestJson: { tradingAccountSubscriptionId: 2 },
-    externalSignalOriginAccountCycle: { securityId: 5, entryExecutionObligation: { id: 9, rolloutGenerationId: 1, entrySignal: { createdAt: new Date() } }, accountSubscription: { id: 999, tradingAccountId: 1, subscriptionId: 4 } },
+    externalSignalOriginAccountCycle: { securityId: 5, entryExecutionObligation: { id: 9, rolloutGenerationId: 1, entrySignal: { id: 77 } }, accountSubscription: { id: 999, tradingAccountId: 1, subscriptionId: 4 } },
   };
-  const stubDb = ($transaction: unknown, row: unknown = refusableCandidate) => ({ $transaction, orderIntent: { findUnique: vi.fn(async () => row) } }) as never;
+  const stubDb = ($transaction: unknown, row: unknown = refusableCandidate) => ({ $transaction, $queryRaw: vi.fn(async () => [{ open: true }]), orderIntent: { findUnique: vi.fn(async () => row) } }) as never;
 
   it('gives every retry a fresh transaction and fails closed after the bound', async () => {
     const failure = adapterError({ originalCode: '40001' });

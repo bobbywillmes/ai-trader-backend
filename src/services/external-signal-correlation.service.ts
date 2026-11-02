@@ -21,7 +21,7 @@ async function prospectiveExecution(tx:Prisma.TransactionClient, signalId:number
  JOIN "ExternalSignalExecutionRolloutGeneration" gen ON gen.id=state."activeRolloutGenerationId"
  JOIN "ExternalSignalEntryExecutionAuthorization" auth ON auth."rolloutGenerationId"=gen.id
  WHERE sig.id=${signalId} AND sig."schemaVersion"=2 AND sig.event='ENTRY_LONG' AND gen.direction='ENTRY' AND gen."authorityMode"='EXECUTE' AND gen.enabled=true
-   AND state."activatedAt" IS NOT NULL AND sig."createdAt">=state."activatedAt" AND sig."createdAt">=auth."authorizedAt"
+   AND state."activatedAt" IS NOT NULL AND external_signal_signal_received_since(sig.id, state."activatedAt") AND external_signal_signal_received_since(sig.id, auth."authorizedAt")
    AND auth.status='AUTHORIZED' AND auth."tradingAccountId"=${route.tradingAccountId}
    AND auth."tradingAccountSubscriptionId"=${route.tradingAccountSubscriptionId} AND auth."subscriptionId"=${route.subscriptionId}
    AND auth."securityId"=sig."securityId" AND auth."signalSourceId"=sig."signalSourceId"

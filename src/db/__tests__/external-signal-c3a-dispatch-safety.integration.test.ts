@@ -86,6 +86,11 @@ const matrix = (pairs: Array<[Isolation, Isolation]>) => pairs.flatMap(([eventIs
       await client.query(`INSERT INTO "TradingAccount" (id,"accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","createdAt","updatedAt") VALUES ($1,$1,'C3A seed','PAPER','PAUSED',false,true,now(),now()) ON CONFLICT (id) DO NOTHING`, [SEED_ACCOUNT_ID]);
       const securityId = (await client.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ($1,$1,true,'STOCK',now(),now()) RETURNING id`, [`SEED${randomUUID().slice(0, 8)}`])).rows[0].id as number;
       const intentId = (await client.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"clientOrderId","rawRequestJson","tradingAccountId","externalSignalAccountCycleId","createdAt","updatedAt") VALUES ('seed','SEED','buy','market','day',$1,$2,'{}',$3,$4,now(),now()) RETURNING id`, [intentStatus, `seed-${randomUUID()}`, SEED_ACCOUNT_ID, marked ? 900_000 + n : null])).rows[0].id as number;
+      // Replica mode switches the creation trigger off, so a marked seed must be given the fence that trigger would have created
+      // (C3B.2-1). The pre-C3B.2-1 comparison database has no fence table. A fence at version 1 is exactly what a migration backfill writes.
+      if (marked && (await client.query(`SELECT to_regclass('public."ExternalSignalDispatchFence"') IS NOT NULL AS present`)).rows[0].present) {
+        await client.query(`INSERT INTO "ExternalSignalDispatchFence" ("orderIntentId", version) VALUES ($1, 1)`, [intentId]);
+      }
       const claimId = (await client.query(`INSERT INTO "EntryExposureClaim" ("tradingAccountId","securityId","orderIntentId","ownerKey",status,"acquiredAt","createdAt","updatedAt") VALUES ($1,$2,$3,$4,$5,coalesce($6::timestamp,(now() AT TIME ZONE 'UTC')),now(),now()) RETURNING id`, [SEED_ACCOUNT_ID, securityId, intentId, `seed:${randomUUID()}`, claimStatus, acquiredAtUtc ?? null])).rows[0].id as number;
       let workerClaimId: number | null = null;
       if (worker) {

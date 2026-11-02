@@ -257,6 +257,9 @@ model Signal {
   metadata                   Json?
   canonicalPayloadHash       String
   createdAt                  DateTime    @default(now())
+  // Database-owned receipt clock (C3B.2-1): stamped by trigger from the ingestion transaction start. NO default and no backfill:
+  // historical rows stay NULL and fail closed for TradingView execution. A supplied value is rejected; it is immutable.
+  receivedAt                 DateTime?   @db.Timestamptz(6)
 
   signalSource              ExternalSignalSource                     @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   strategySignalBinding     StrategySignalBinding                    @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict)
@@ -1738,6 +1741,7 @@ model OrderIntent {
   externalSignalEntryExecutionObligation  ExternalSignalEntryExecutionObligation?
   externalSignalBrokerWorkerClaim         ExternalSignalBrokerWorkerClaim?
   externalSignalBrokerDispatchConsumption ExternalSignalBrokerDispatchConsumption?
+  externalSignalDispatchFence             ExternalSignalDispatchFence?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1773,6 +1777,8 @@ model ExternalSignalEntryExecutionObligation {
   rolloutGeneration         ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   brokerWorkerClaim         ExternalSignalBrokerWorkerClaim?
   brokerDispatchConsumption ExternalSignalBrokerDispatchConsumption?
+
+  @@index([clientOrderId])
 }
 
 // Future worker ownership evidence. C1 defines and protects it, but the deny-all OrderIntent
@@ -1810,6 +1816,11 @@ model ExternalSignalBrokerDispatchConsumption {
   brokerPostOpportunityId           Int?
   consumedAt                        DateTime @default(now()) @db.Timestamptz(3)
   evidenceJson                      Json
+  // C3B.2-1, inert until C3B.2-2: authorizedAt and authorizationDeadlineAt are stamped by the database guard and a supplied value is
+  // rejected (so the writer must insert with SQL that omits them); fenceVersion is the pre-consumption fence version F validated.
+  authorizedAt                      DateTime @db.Timestamptz(6)
+  authorizationDeadlineAt           DateTime @db.Timestamptz(6)
+  fenceVersion                      BigInt
 
   orderIntent                     OrderIntent                               @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   executionObligation             ExternalSignalEntryExecutionObligation    @relation(fields: [executionObligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsumpt_executionObligationId_fkey")
@@ -1854,6 +1865,8 @@ model BrokerOrder {
   @@index([trackedPositionId])
   @@index([tradingAccountId])
   @@index([tradingAccountId, status])
+  @@index([orderIntentId])
+  @@index([tradingAccountId, brokerOrderId])
   @@index([tradingAccountId, symbol])
 }
 
@@ -4362,4 +4375,13 @@ model Subscription {
   @@index([symbol])
   @@index([strategyId])
   @@index([exitProfileId])
+}
+
+/// Dispatch fence (C3B.2-1): one row per marked TradingView OrderIntent, created and advanced only by database triggers (the guard rejects
+/// direct inserts, updates, deletes and truncation). Application code never writes it; it only reads the version under lock.
+model ExternalSignalDispatchFence {
+  orderIntentId Int    @id
+  version       BigInt
+
+  orderIntent OrderIntent @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
 }

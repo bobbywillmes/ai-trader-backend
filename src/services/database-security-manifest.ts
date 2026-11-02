@@ -7,8 +7,8 @@ export type ManifestFunction = { language: string; volatility: string; kind: str
 export type ManifestTrigger = { function: string; enabled: string; timing: string; events: string; scope: string; when: string; columns: string; arguments: string; deferrable: boolean; initiallyDeferred: boolean; transitionTables: string };
 
 export const SECURITY_MANIFEST: { version: string; migration: string; functions: Record<string, ManifestFunction>; triggers: Record<string, ManifestTrigger> } = {
-  "version": "20261102120000_tradingview_lock_order_corrections",
-  "migration": "20261102120000_tradingview_lock_order_corrections",
+  "version": "20261103120000_tradingview_receipt_clock_dispatch_fence_foundation",
+  "migration": "20261103120000_tradingview_receipt_clock_dispatch_fence_foundation",
   "functions": {
     "assert_strategy_market_policy_prepared()": {
       "language": "plpgsql",
@@ -260,7 +260,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "0c4c5e4e3b9ba36da60fdcd2b0bde4974094eb7c3530ac938c8eb2e96dca0005"
+      "bodySha256": "d05685e7e398c56c9f90c29b46371788cc953751e8e7b766d1ffe3486ce8613e"
     },
     "external_signal_broker_dispatch_activation_apply()": {
       "language": "plpgsql",
@@ -289,6 +289,15 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "result": "trigger",
       "bodySha256": "0b144dd1c63863e3a181584263ecd2a7bdddd62f7c5e2b2c56c2a9eeb405b515"
     },
+    "external_signal_broker_evidence_marked_intents(p_intent_id integer, p_client_order_id text, p_broker_order_id text, p_account_id integer, p_broker_order_record_id integer)": {
+      "language": "plpgsql",
+      "volatility": "s",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "SETOF integer",
+      "bodySha256": "3b47a599d5d559e03695f99aad38635bb900649cb88452f84f38415613c6cfdc"
+    },
     "external_signal_broker_evidence_quarantine()": {
       "language": "plpgsql",
       "volatility": "v",
@@ -296,7 +305,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "545bb2b965a015e710e36e8f3fb313363e50398420b0fd0ef402b738572a968b"
+      "bodySha256": "9184cc9c6fa0035c696d6251e10f518d3a202360eb27c6c62e096cab9717a7b4"
     },
     "external_signal_broker_worker_claim_guard()": {
       "language": "plpgsql",
@@ -305,7 +314,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "5ad4ee0de969492aeaa2ac6ad4506eb29f93fed491a7d97e1724403ee0fcf850"
+      "bodySha256": "9c401a4ea2a2f33b31ce9ed221507952feac131237e5a5e7ab4290af61571537"
     },
     "external_signal_c2_delivery_event_fence()": {
       "language": "plpgsql",
@@ -324,6 +333,96 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "strict": false,
       "result": "trigger",
       "bodySha256": "70f1cf0a2dc418cf2934bea88082d325f6fe8c72dae1e3a9aa67389d30cee3d2"
+    },
+    "external_signal_dispatch_fence_advance(p_intent_ids integer[])": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "void",
+      "bodySha256": "4b7d532f068e7aab7c6cc5e2696fcb3f820f9430ce008abfad568f46f2be1aeb"
+    },
+    "external_signal_dispatch_fence_bump_broker_activity()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "05c143fbb5d3986712da8a801a7a299709f865ec3d496b766850b6774da7a220"
+    },
+    "external_signal_dispatch_fence_bump_broker_order()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "6dd1bf9cd5d6f015040cb59b393f2e2cfdaf84ede6e77e4a68385900e0d38daf"
+    },
+    "external_signal_dispatch_fence_bump_claim_event()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "417495a88ef46411fe7d049a4fc7db70fb66b964bf953775ad02e979213632dd"
+    },
+    "external_signal_dispatch_fence_bump_exposure_claim()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "3c9e75657c1eddda639d24f204d3c166f27796f6e3c3f22ad7e7f53d33f3a293"
+    },
+    "external_signal_dispatch_fence_bump_intent()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "e9a8b3a1cea37b3efdebeb8531ee4ad84f9ce37387597f23813ebda5e19f5de3"
+    },
+    "external_signal_dispatch_fence_bump_order_ref()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "18c22d684c9394bddf1db9d0cd5ed0dfb8a1e964c5569454c40e7746f12a646f"
+    },
+    "external_signal_dispatch_fence_consumption_verify()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "b7c7db7c068746fba335012cd41ab3b44c688cbdfd01a494a94b1fcd8e7dab4f"
+    },
+    "external_signal_dispatch_fence_create()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "50533f249b2c414c1a7e7b96fe52c1182f5b88534966954413417c22daea132e"
+    },
+    "external_signal_dispatch_fence_guard()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "cf89de665a9389c80d4085d7f60895bf7808b278f776560da3ddae309a5a4bd2"
     },
     "external_signal_dispatch_pair_check()": {
       "language": "plpgsql",
@@ -350,7 +449,25 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "09d7bb9a2d7d39bc2bd4ffca24c7f4339e40382b3b6c041931720659357c5f5f"
+      "bodySha256": "527889abe541e6e3db34fb4dc9bf0327aa95371c71727c0ce6c3e818ba6d4fa2"
+    },
+    "external_signal_epoch_created_at_stamp()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "a2cb47f59d2580cbaa842f020619376f83025ddee91ed2661773d8b3e28a30ae"
+    },
+    "external_signal_epoch_marked_intent_created_at_stamp()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "cd2fdfc840ab7c7ee9ac854ad40d8a0aa1d1b6757c6cb0b6a7b7d1b3a8816159"
     },
     "external_signal_execution_activation_invalidate()": {
       "language": "plpgsql",
@@ -433,6 +550,42 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "result": "trigger",
       "bodySha256": "433894630749504a919dded142916e5bf666800c488aef352b35a5beb324e5d6"
     },
+    "external_signal_lock_dispatch_graph(p_intent_id integer, p_decision_id integer)": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "void",
+      "bodySha256": "367dd77379fcf48af65614b8c11b0958e56a6a92fd0379a724d2f3edd09879a8"
+    },
+    "external_signal_marked_intent(p_intent_id integer)": {
+      "language": "sql",
+      "volatility": "s",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "boolean",
+      "bodySha256": "88f94baf053c5d7f1fe1b607f90931577338c67bbfd9c90806c38f983644be63"
+    },
+    "external_signal_marked_intent_broker_evidence(p_intent_id integer)": {
+      "language": "plpgsql",
+      "volatility": "s",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "TABLE(kind text, id integer)",
+      "bodySha256": "cd50f202b1952b55cc359cbf0a9a5d81cf10fe46407afa5b01a2633301d5b0f3"
+    },
+    "external_signal_mi_consumption_lock_prelude()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "7bc5957679572d41486548a9aff0a91ca3669f8cfca6f2d2ba3984927c420cb6"
+    },
     "external_signal_order_intent_dispatch_quarantine()": {
       "language": "plpgsql",
       "volatility": "v",
@@ -459,6 +612,42 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "strict": false,
       "result": "trigger",
       "bodySha256": "6df7dcb64b49b9d7412977fb10cff28248b8b408e45592ed702d109fdcc921fe"
+    },
+    "external_signal_signal_receipt_open(p_signal_id integer, p_minimum_remaining interval)": {
+      "language": "sql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "boolean",
+      "bodySha256": "94857d8d42f924900f6859d47c4bfa293a6c15a41b520b80fc18335ff1c20728"
+    },
+    "external_signal_signal_receipt_remaining(p_signal_id integer)": {
+      "language": "sql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "interval",
+      "bodySha256": "27f78c0d41bc6c325ef91337e3616d43fd679dc9afa01e1b4947a72535fafb6f"
+    },
+    "external_signal_signal_received_at_guard()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "393c498f5ccb2e2e85a32e964f085d441198a7867e88cadaed42653c9af038f1"
+    },
+    "external_signal_signal_received_since(p_signal_id integer, p_epoch timestamp with time zone)": {
+      "language": "sql",
+      "volatility": "s",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "boolean",
+      "bodySha256": "0162615dce2a993359ada6ccb6e8dfd63500ac45cf91458701d63fef66f535e5"
     },
     "external_signal_signal_v2_immutability_guard()": {
       "language": "plpgsql",
@@ -1182,6 +1371,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": false,
       "transitionTables": "/"
     },
+    "BrokerActivity/BrokerActivity_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_broker_activity()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT,DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "BrokerActivity/BrokerActivity_external_signal_quarantine": {
       "function": "external_signal_broker_evidence_quarantine()",
       "enabled": "O",
@@ -1195,11 +1397,37 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": false,
       "transitionTables": "/"
     },
+    "BrokerOrder/BrokerOrder_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_broker_order()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT,DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "BrokerOrder/BrokerOrder_external_signal_quarantine": {
       "function": "external_signal_broker_evidence_quarantine()",
       "enabled": "O",
       "timing": "BEFORE",
       "events": "INSERT,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "EntryExposureClaim/EntryExposureClaim_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_exposure_claim()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT,DELETE,UPDATE",
       "scope": "ROW",
       "when": "",
       "columns": "",
@@ -1252,6 +1480,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "enabled": "O",
       "timing": "BEFORE",
       "events": "DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "EntryExposureClaimEvent/EntryExposureClaimEvent_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_claim_event()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
       "scope": "ROW",
       "when": "",
       "columns": "",
@@ -1338,11 +1579,50 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": true,
       "transitionTables": "/"
     },
+    "ExternalSignalBrokerDispatchConsumption/ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_order_ref()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerDispatchConsumption/ExternalSignalBrokerDispatchConsumption_zz_b_fence_verify": {
+      "function": "external_signal_dispatch_fence_consumption_verify()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "ExternalSignalBrokerDispatchState/ExternalSignalBrokerDispatchState_guard": {
       "function": "external_signal_broker_dispatch_state_guard()",
       "enabled": "O",
       "timing": "BEFORE",
       "events": "INSERT,DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerWorkerClaim/ExternalSignalBrokerWorkerClaim_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_order_ref()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
       "scope": "ROW",
       "when": "",
       "columns": "",
@@ -1396,6 +1676,32 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "timing": "BEFORE",
       "events": "DELETE,UPDATE",
       "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalDispatchFence/ExternalSignalDispatchFence_guard": {
+      "function": "external_signal_dispatch_fence_guard()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT,DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalDispatchFence/ExternalSignalDispatchFence_truncate_guard": {
+      "function": "external_signal_dispatch_fence_guard()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "TRUNCATE",
+      "scope": "STATEMENT",
       "when": "",
       "columns": "",
       "arguments": "",
@@ -1559,6 +1865,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": true,
       "transitionTables": "/"
     },
+    "ExternalSignalTradeCycleAccount/ExternalSignalTradeCycleAccount_a_epoch_stamp": {
+      "function": "external_signal_epoch_created_at_stamp()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "ExternalSignalTradeCycleAccount/ExternalSignalTradeCycleAccount_entry_graph_check": {
       "function": "check_external_signal_entry_intent_graph()",
       "enabled": "O",
@@ -1702,6 +2021,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": false,
       "transitionTables": "/"
     },
+    "MarketPolicyBrokerDispatchConsumption/BrokerDispatchConsumption_a_lock_prelude": {
+      "function": "external_signal_mi_consumption_lock_prelude()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "MarketPolicyBrokerDispatchConsumption/BrokerDispatchConsumption_validate": {
       "function": "validate_market_policy_broker_dispatch_consumption()",
       "enabled": "O",
@@ -1754,11 +2086,37 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": true,
       "transitionTables": "/"
     },
+    "MarketPolicyBrokerDispatchDecision/MarketPolicyBrokerDispatchDecision_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_order_ref()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "MarketPolicyBrokerDispatchGate/BrokerDispatchGate_validate": {
       "function": "validate_market_policy_broker_dispatch_gate()",
       "enabled": "O",
       "timing": "BEFORE",
       "events": "INSERT,DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "MarketPolicyBrokerUnenforcedDispatch/MarketPolicyBrokerUnenforcedDispatch_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_order_ref()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
       "scope": "ROW",
       "when": "",
       "columns": "",
@@ -1962,6 +2320,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "initiallyDeferred": false,
       "transitionTables": "/"
     },
+    "OrderIntent/OrderIntent_a_epoch_stamp": {
+      "function": "external_signal_epoch_marked_intent_created_at_stamp()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
     "OrderIntent/OrderIntent_capture_market_policy_coverage": {
       "function": "capture_order_intent_market_policy_coverage()",
       "enabled": "O",
@@ -1969,6 +2340,32 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "events": "INSERT",
       "scope": "ROW",
       "when": "(((lower(new.side) = 'buy'::text) AND (new.\"tradingAccountId\" IS NOT NULL) AND (new.\"tradingAccountSubscriptionId\" IS NOT NULL)))",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "OrderIntent/OrderIntent_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_intent()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "OrderIntent/OrderIntent_dispatch_fence_create": {
+      "function": "external_signal_dispatch_fence_create()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
       "columns": "",
       "arguments": "",
       "deferrable": false,
@@ -2112,6 +2509,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "events": "UPDATE",
       "scope": "ROW",
       "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "OrderIntentBrokerOpportunityEvent/OrderIntentBrokerOpportunityEvent_dispatch_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_order_ref()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "((new.\"eventType\" <> ALL (ARRAY['OPPORTUNITY_CAPTURED'::\"OrderIntentBrokerOpportunityEventType\", 'DEFERRED'::\"OrderIntentBrokerOpportunityEventType\", 'MISSING_OBSERVATION'::\"OrderIntentBrokerOpportunityEventType\"])))",
       "columns": "",
       "arguments": "",
       "deferrable": false,
@@ -2370,6 +2780,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "enabled": "O",
       "timing": "AFTER",
       "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "Signal/Signal_received_at_guard": {
+      "function": "external_signal_signal_received_at_guard()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT,UPDATE",
       "scope": "ROW",
       "when": "",
       "columns": "",

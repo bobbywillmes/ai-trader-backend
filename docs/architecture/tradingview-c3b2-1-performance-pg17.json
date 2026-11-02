@@ -1,0 +1,216 @@
+{
+  "server": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "rows": 20000,
+  "operationsPerLoop": 2000,
+  "results": [
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerOrder INSERT (unmarked)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 56.7
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerOrder INSERT (unmarked)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 45.1
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerOrder INSERT (unmarked)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 37.2
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerOrder status UPDATE (the order-sync hot path)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 49.4
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerOrder status UPDATE (the order-sync hot path)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 39.9
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerOrder status UPDATE (the order-sync hot path)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 31.8
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerActivity INSERT linked by order id and record id",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 56.5
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerActivity INSERT linked by order id and record id",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 46.2
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerActivity INSERT linked by order id and record id",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 36.2
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerActivity UPDATE (later attribution)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 53.7
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerActivity UPDATE (later attribution)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 45.4
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "BrokerActivity UPDATE (later attribution)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 33.3
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "OrderIntent status UPDATE (unmarked)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 29.2
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "OrderIntent status UPDATE (unmarked)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 25.6
+    },
+    {
+      "population": "accounts WITHOUT marked TradingView intents (every LIVE account, any PAPER account without TradingView traffic)",
+      "scenario": "OrderIntent status UPDATE (unmarked)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 20.7
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerOrder INSERT (unmarked)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 162.4
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerOrder INSERT (unmarked)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 101.5
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerOrder INSERT (unmarked)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 38.9
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerOrder status UPDATE (the order-sync hot path)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 163.1
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerOrder status UPDATE (the order-sync hot path)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 95
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerOrder status UPDATE (the order-sync hot path)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 29.8
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerActivity INSERT linked by order id and record id",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 177.5
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerActivity INSERT linked by order id and record id",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 107
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerActivity INSERT linked by order id and record id",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 35.6
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerActivity UPDATE (later attribution)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 177.3
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerActivity UPDATE (later attribution)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 108.3
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "BrokerActivity UPDATE (later attribution)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 36.8
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "OrderIntent status UPDATE (unmarked)",
+      "mode": "all triggers (C3B.2-1)",
+      "microsecondsPerOp": 37.8
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "OrderIntent status UPDATE (unmarked)",
+      "mode": "fence bump triggers off (quarantine only)",
+      "microsecondsPerOp": 20.5
+    },
+    {
+      "population": "accounts WITH marked TradingView intents (worst case: every broker row takes the full candidate path)",
+      "scenario": "OrderIntent status UPDATE (unmarked)",
+      "mode": "pre-C3B.2-1 (bump and new quarantine logic bypassed)",
+      "microsecondsPerOp": 20.9
+    }
+  ],
+  "plans": [
+    {
+      "label": "evidence key for an unmarked PAPER order",
+      "plan": [
+        "Function Scan on external_signal_broker_evidence_marked_intents m (actual time=0.587..0.587 rows=0 loops=1)",
+        "  Buffers: shared hit=132",
+        "Planning Time: 0.015 ms",
+        "Execution Time: 0.593 ms"
+      ]
+    },
+    {
+      "label": "evidence key for an unmarked activity (record id)",
+      "plan": [
+        "Function Scan on external_signal_broker_evidence_marked_intents m (actual time=0.129..0.130 rows=0 loops=1)",
+        "  Buffers: shared hit=25",
+        "Planning Time: 0.008 ms",
+        "Execution Time: 0.133 ms"
+      ]
+    },
+    {
+      "label": "absence check for one marked intent",
+      "plan": [
+        "Function Scan on external_signal_marked_intent_broker_evidence (actual time=0.164..0.164 rows=0 loops=1)",
+        "  Buffers: shared hit=16",
+        "Planning Time: 0.007 ms",
+        "Execution Time: 0.168 ms"
+      ]
+    }
+  ]
+}

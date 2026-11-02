@@ -13,7 +13,6 @@ import { lockRowsInOrder } from './external-signal-lock-order.js';
 
 type Db = PrismaClient;
 const C2_REFUSAL = 'TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE';
-const C2_MAX_SIGNAL_AGE_MS = 120_000;
 const SERIALIZATION_RETRIES = 2;
 const { DatabaseError } = pg;
 export type TradingViewC2WorkerResult = { outcome: 'NOT_CLAIMED' | 'LOST_REFUSAL_RACE' } | { outcome: 'RISK_DENIED'; reason: string } | { outcome: 'C2_DISPATCH_REFUSED' };
@@ -59,7 +58,7 @@ export async function processTradingViewOrderIntentForC2(orderIntentId: number, 
   const db = options.db ?? prisma;
   const candidate = await db.orderIntent.findUnique({ where: { id: orderIntentId }, include: {
     externalSignalOriginAccountCycle: { include: {
-      entryExecutionObligation: { include: { entrySignal: { select: { createdAt: true } } } },
+      entryExecutionObligation: { include: { entrySignal: { select: { id: true } } } },
       accountSubscription: { include: { allocation: true, tradingAccount: { include: { credential: true } }, subscription: { include: { security: true, strategy: true, exitProfile: true } } } },
     } },
   } });
@@ -81,7 +80,10 @@ export async function processTradingViewOrderIntentForC2(orderIntentId: number, 
     const refused = await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_C2_PRECLAIM_READINESS_REFUSED');
     return { outcome: refused ? 'C2_DISPATCH_REFUSED' : 'LOST_REFUSAL_RACE' };
   }
-  if (Date.now() - obligation.entrySignal.createdAt.getTime() > C2_MAX_SIGNAL_AGE_MS) {
+  // The 120-second rule is the database receipt clock (Signal.receivedAt against clock_timestamp()); the claim guard enforces the same rule at
+  // insert. This early read only gives the legible refusal. A signal without a receipt (historical) is never fresh.
+  const [receipt] = await db.$queryRaw<Array<{ open: boolean }>>`SELECT external_signal_signal_receipt_open(${obligation.entrySignal.id}) AS open`;
+  if (receipt?.open !== true) {
     await options.beforeUnclaimedRefusal?.('TRADINGVIEW_ENTRY_SIGNAL_EXPIRED');
     const refused = await terminalizeUnclaimedRefusal(db, candidate.id, 'TRADINGVIEW_ENTRY_SIGNAL_EXPIRED');
     return { outcome: refused ? 'C2_DISPATCH_REFUSED' : 'LOST_REFUSAL_RACE' };

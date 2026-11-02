@@ -2,6 +2,8 @@
 
 `20260817120000_add_live_entry_arming` adds immutable arming/termination evidence, the account active-binding foreign key, and `LIVE_ENTRY_ARMING`. It must precede application rollout.
 
+`20261103120000_tradingview_receipt_clock_dispatch_fence_foundation` (TradingView C3B.2-1) takes ACCESS EXCLUSIVE locks on `Signal` and the TradingView consumption table and SHARE ROW EXCLUSIVE locks on the broker-evidence tables. Ingestion, routing, admission and every worker must be drained first, and a failed deploy must be inspected before it is ever marked rolled back. Follow [tradingview-c3b2-1-migration-runbook.md](tradingview-c3b2-1-migration-runbook.md).
+
 ## Account-scoped broker identity migration
 
 `20260725120000_scope_broker_lifecycle_identity_by_account` replaces global

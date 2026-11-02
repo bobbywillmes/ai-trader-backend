@@ -120,7 +120,7 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
       AND auth."strategySignalRevisionId"=sig."strategySignalRevisionId" AND auth."strategyRevision"=sig."strategyRevision"
       AND state."activeRolloutGenerationId"=gen.id AND state."activatedAt" IS NOT NULL
       AND gen.enabled=true AND gen.direction='ENTRY' AND gen."authorityMode"='EXECUTE'
-      AND sig."createdAt">=state."activatedAt" AND sig."createdAt">=auth."authorizedAt"
+      AND external_signal_signal_received_since(sig.id, state."activatedAt") AND external_signal_signal_received_since(sig.id, auth."authorizedAt")
       AND ac."createdAt">=state."activatedAt" AND ac."createdAt">=auth."authorizedAt"
       AND ta.environment='PAPER' AND ta.status='ACTIVE' AND ta."tradingEnabled"=true AND ta."killSwitchEnabled"=false
       AND tas.enabled=true AND tas."entriesEnabled"=true AND tas."tradingAccountId"=ta.id AND tas."subscriptionId"=sub.id
@@ -138,13 +138,14 @@ async function lockAndValidateTradingViewExecution(tx: Prisma.TransactionClient,
 async function validateTradingViewSignalFreshness(tx: Prisma.TransactionClient, request: EntryAdmissionRequest) {
   const context = request.tradingViewExecution;
   if (!context) return;
-  // This must remain a separate statement: clock_timestamp() is sampled after all admission locks
-  // acquired before the call, against the immutable original Signal timestamp.
-  const [freshness] = await tx.$queryRaw<Array<{ signalCreatedAt: Date; databaseNow: Date }>>`
-    SELECT sig."createdAt" AS "signalCreatedAt", clock_timestamp() AS "databaseNow"
+  // This must remain a separate statement: clock_timestamp() is sampled after all admission locks acquired before the call. The age is
+  // measured from the immutable database receipt (Signal.receivedAt) entirely inside the database, so neither the application clock
+  // nor the session TimeZone can extend it; a signal without a receipt (historical) is never fresh. The window never exceeds 120 s.
+  const [freshness] = await tx.$queryRaw<Array<{ fresh: boolean }>>`
+    SELECT coalesce(sig."receivedAt" + make_interval(secs => ${Math.min(context.maxSignalAgeMs, 120_000) / 1000}::double precision) > clock_timestamp(), false) AS fresh
     FROM "Signal" sig
     WHERE sig.id=${context.entrySignalId}`;
-  if (!freshness || freshness.databaseNow.getTime() - freshness.signalCreatedAt.getTime() > context.maxSignalAgeMs) {
+  if (!freshness?.fresh) {
     throw new HttpError(409, 'The TradingView ENTRY signal expired before locked admission completed.', { code: 'ENTRY_SIGNAL_EXPIRED' });
   }
 }

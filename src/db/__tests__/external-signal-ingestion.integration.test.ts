@@ -67,6 +67,9 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
     legacySignal = (await admin.query('SELECT * FROM "Signal" WHERE id = 1')).rows[0];
     legacyDelivery = (await admin.query('SELECT * FROM "SignalDelivery" WHERE id = 1')).rows[0];
     await admin.query(await readFile('prisma/migrations/20260908120000_strategy_signal_revisions/migration.sql', 'utf8'));
+    // This suite assembles a partial historical schema, not the full migration chain. The generated client now selects Signal.receivedAt
+    // (C3B.2-1), so the partial schema carries the same nullable column the full migration adds. Its trigger and the fence are not needed here.
+    await admin.query('ALTER TABLE "Signal" ADD COLUMN "receivedAt" timestamptz');
     await admin.query(`INSERT INTO "Signal" ("signalSourceId", "strategySignalBindingId", "strategyId", "securityId", "schemaVersion", "externalEventKey", "strategyRevision", "strategySignalRevisionId", event, symbol, timeframe, "signalTime", "canonicalPayloadHash") VALUES (1, 1, 1, 1, 1, 'legacy-numeric-key', 1, 1, 'EXIT_LONG', 'QQQ', '15m', CURRENT_TIMESTAMP, 'numeric-original-hash')`);
     numericLegacySignal = (await admin.query('SELECT * FROM "Signal" WHERE id = 2')).rows[0];
     await admin.query(await readFile('prisma/migrations/20260910120000_external_signal_provider_contract/migration.sql', 'utf8'));
@@ -143,8 +146,10 @@ describeDatabase('external signal PostgreSQL atomicity and restrictive identitie
 
   it('backfills active Revision 1 without rewriting legacy Signal or Delivery evidence', async () => {
     const { legacyStrategyRevision, strategyRevision, strategySignalRevisionId, eventFingerprint,
-      externalEventId, externalTradeCycleRef, externalSignalTradeCycleId, ...row } = (await admin.query('SELECT * FROM "Signal" WHERE id = 1')).rows[0];
+      externalEventId, externalTradeCycleRef, externalSignalTradeCycleId, receivedAt, ...row } = (await admin.query('SELECT * FROM "Signal" WHERE id = 1')).rows[0];
     expect({ ...row, strategyRevision: legacyStrategyRevision }).toEqual(legacySignal);
+    // C3B.2-1: this partial schema carries only the nullable column, so the historical row proves it was never given a receipt.
+    expect(receivedAt).toBeNull();
     expect(eventFingerprint).toBeNull(); expect(strategyRevision).toBeNull(); expect(strategySignalRevisionId).toBeNull();
     expect(externalEventId).toBeNull(); expect(externalTradeCycleRef).toBeNull(); expect(externalSignalTradeCycleId).toBeNull();
     expect((await admin.query('SELECT * FROM "SignalDelivery" WHERE id = 1')).rows[0]).toEqual(legacyDelivery);

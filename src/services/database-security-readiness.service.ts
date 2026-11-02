@@ -46,6 +46,24 @@ export const CRITICAL_TRIGGERS: ReadonlyArray<readonly [table: string, trigger: 
   ['EntryExposureClaim', 'EntryExposureClaim_external_signal_delete_guard', 'external_signal_exposure_claim_delete_guard'],
   ['EntryExposureClaimEvent', 'EntryExposureClaimEvent_external_signal_c2_delivery_fence', 'external_signal_c2_delivery_event_fence'],
   ['EntryExposureClaimEvent', 'EntryExposureClaimEvent_external_signal_c2_not_sent_guard', 'external_signal_c2_not_sent_evidence_guard'],
+  ['EntryExposureClaimEvent', 'EntryExposureClaimEvent_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_claim_event'],
+  ['EntryExposureClaim', 'EntryExposureClaim_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_exposure_claim'],
+  ['BrokerActivity', 'BrokerActivity_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_broker_activity'],
+  ['BrokerOrder', 'BrokerOrder_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_broker_order'],
+  ['ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump', 'external_signal_dispatch_fence_bump_order_ref'],
+  ['ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_zz_b_fence_verify', 'external_signal_dispatch_fence_consumption_verify'],
+  ['ExternalSignalBrokerWorkerClaim', 'ExternalSignalBrokerWorkerClaim_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_order_ref'],
+  ['ExternalSignalDispatchFence', 'ExternalSignalDispatchFence_guard', 'external_signal_dispatch_fence_guard'],
+  ['ExternalSignalDispatchFence', 'ExternalSignalDispatchFence_truncate_guard', 'external_signal_dispatch_fence_guard'],
+  ['ExternalSignalTradeCycleAccount', 'ExternalSignalTradeCycleAccount_a_epoch_stamp', 'external_signal_epoch_created_at_stamp'],
+  ['MarketPolicyBrokerDispatchConsumption', 'BrokerDispatchConsumption_a_lock_prelude', 'external_signal_mi_consumption_lock_prelude'],
+  ['MarketPolicyBrokerDispatchDecision', 'MarketPolicyBrokerDispatchDecision_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_order_ref'],
+  ['MarketPolicyBrokerUnenforcedDispatch', 'MarketPolicyBrokerUnenforcedDispatch_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_order_ref'],
+  ['OrderIntent', 'OrderIntent_a_epoch_stamp', 'external_signal_epoch_marked_intent_created_at_stamp'],
+  ['OrderIntent', 'OrderIntent_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_intent'],
+  ['OrderIntent', 'OrderIntent_dispatch_fence_create', 'external_signal_dispatch_fence_create'],
+  ['OrderIntentBrokerOpportunityEvent', 'OrderIntentBrokerOpportunityEvent_dispatch_fence_bump', 'external_signal_dispatch_fence_bump_order_ref'],
+  ['Signal', 'Signal_received_at_guard', 'external_signal_signal_received_at_guard'],
   ['ExternalSignalBrokerDispatchActivation', 'ExternalSignalBrokerDispatchActivation_apply', 'external_signal_broker_dispatch_activation_apply'],
   ['ExternalSignalBrokerDispatchActivation', 'ExternalSignalBrokerDispatchActivation_guard', 'external_signal_broker_dispatch_activation_guard'],
   ['ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_guard', 'external_signal_broker_consumption_guard'],
@@ -67,6 +85,49 @@ export const CRITICAL_TRIGGERS: ReadonlyArray<readonly [table: string, trigger: 
   ['Signal', 'Signal_external_exit_touch_source_cycle', 'external_signal_exit_touch_source_cycle'],
   ['Signal', 'Signal_v2_immutability_guard', 'external_signal_signal_v2_immutability_guard'],
 ];
+
+/**
+ * PostgreSQL fires triggers of the same table, timing and event in trigger-NAME order (byte order), so several guarantees rest on names:
+ * the claim-row lock of the C2 delivery fence must run before the not-sent guard reads, the Market Intelligence lock prelude before its
+ * validation, the receipt/epoch stamps before every other BEFORE INSERT guard, and the dispatch-fence bump before its verification. The
+ * manifest implies the order only through names, so a NEW trigger whose name sorts in between would silently change it. `contiguous`
+ * additionally forbids any other trigger of that table, timing and event between the listed ones; `first` requires the first listed
+ * trigger to fire before every other trigger of that table, timing and event.
+ */
+export type TriggerOrderRule = { table: string; timing: 'BEFORE' | 'AFTER'; event: 'INSERT' | 'UPDATE' | 'DELETE'; sequence: readonly string[]; contiguous: boolean; first?: boolean; reason: string };
+export const TRIGGER_ORDER_INVARIANTS: readonly TriggerOrderRule[] = [
+  { table: 'EntryExposureClaimEvent', timing: 'BEFORE', event: 'INSERT', contiguous: true, first: true, reason: 'the claim-row lock must precede the not-sent contradiction read',
+    sequence: ['EntryExposureClaimEvent_external_signal_c2_delivery_fence', 'EntryExposureClaimEvent_external_signal_c2_not_sent_guard'] },
+  { table: 'MarketPolicyBrokerDispatchConsumption', timing: 'BEFORE', event: 'INSERT', contiguous: true, first: true, reason: 'the canonical lock prelude must precede the Market Intelligence consumption validation',
+    sequence: ['BrokerDispatchConsumption_a_lock_prelude', 'BrokerDispatchConsumption_validate'] },
+  { table: 'OrderIntent', timing: 'BEFORE', event: 'INSERT', contiguous: false, first: true, reason: 'the candidate timestamp stamp must precede every other BEFORE INSERT guard',
+    sequence: ['OrderIntent_a_epoch_stamp', 'OrderIntent_external_signal_dispatch_quarantine'] },
+  { table: 'ExternalSignalTradeCycleAccount', timing: 'BEFORE', event: 'INSERT', contiguous: false, first: true, reason: 'the candidate timestamp stamp must precede every other BEFORE INSERT guard',
+    sequence: ['ExternalSignalTradeCycleAccount_a_epoch_stamp'] },
+  { table: 'ExternalSignalBrokerDispatchConsumption', timing: 'AFTER', event: 'INSERT', contiguous: false, reason: 'the single post-pair bump must precede its verification',
+    sequence: ['ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump', 'ExternalSignalBrokerDispatchConsumption_zz_b_fence_verify'] },
+];
+
+export type TriggerCatalogRow = { table_name: string; trigger_name: string; tgtype: number; enabled: string };
+/** Pure evaluation of TRIGGER_ORDER_INVARIANTS against catalog rows (ROW triggers only). */
+export function evaluateTriggerOrder(rows: readonly TriggerCatalogRow[], rules: readonly TriggerOrderRule[] = TRIGGER_ORDER_INVARIANTS) {
+  const eventBit = { INSERT: 4, DELETE: 8, UPDATE: 16 } as const;
+  return rules.flatMap(rule => {
+    const fired = rows
+      .filter(row => row.table_name === rule.table && (row.tgtype & 1) === 1 && ((row.tgtype & 2) === 2) === (rule.timing === 'BEFORE') && (row.tgtype & eventBit[rule.event]) !== 0)
+      .map(row => row.trigger_name)
+      .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+    const positions = rule.sequence.map(name => fired.indexOf(name));
+    const problems: string[] = [];
+    if (positions.some(position => position < 0)) problems.push(`missing (or not enabled) among the ${rule.timing} ${rule.event} row triggers: ${rule.sequence.filter((_, i) => positions[i]! < 0).join(', ')}`);
+    else {
+      if (positions.some((position, i) => i > 0 && position <= positions[i - 1]!)) problems.push(`firing order is ${positions.map((p, i) => `${rule.sequence[i]}@${p}`).join(' ')}`);
+      if (rule.contiguous && positions.some((position, i) => i > 0 && position !== positions[i - 1]! + 1)) problems.push(`another trigger fires between them: ${fired.join(' > ')}`);
+      if (rule.first && positions[0] !== 0) problems.push(`${rule.sequence[0]} is not the first ${rule.timing} ${rule.event} trigger: ${fired.join(' > ')}`);
+    }
+    return problems.length ? [{ table: rule.table, timing: rule.timing, event: rule.event, reason: rule.reason, problems }] : [];
+  });
+}
 
 /** The migrated schema's function-level path; migrations pin exactly this on every application function. */
 export const trustedSearchPath = (schema: string) => `search_path=pg_catalog, ${/^[a-z_][a-z0-9_]*$/.test(schema) ? schema : `"${schema.replaceAll('"', '""')}"`}, pg_temp`;
@@ -151,6 +212,17 @@ export async function assessDatabaseSecurity(query: SqlRows, options: Assessment
       return [];
     });
     if (problems.length) findings.push({ code: 'CRITICAL_TRIGGER_UNSAFE', message: `${problems.length} critical trigger(s) are missing, rebound or not firing for ordinary sessions.`, detail: problems });
+  }
+
+  // 2b. Trigger execution ORDER. PostgreSQL fires same-timing, same-event triggers in name order; several guarantees depend on it.
+  const order = await gather('Trigger order audit', () => query<TriggerCatalogRow>(
+    `SELECT c.relname::text AS table_name, t.tgname::text AS trigger_name, t.tgtype::int AS tgtype, t.tgenabled::text AS enabled
+     FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid JOIN pg_namespace n ON n.oid=c.relnamespace
+     WHERE NOT t.tgisinternal AND n.nspname=current_schema() AND t.tgenabled IN ('O','A') AND c.relname = ANY ($1::text[])`,
+    [[...new Set(TRIGGER_ORDER_INVARIANTS.map(rule => rule.table))]]), findings);
+  if ('value' in order) {
+    const violations = evaluateTriggerOrder(order.value);
+    if (violations.length) findings.push({ code: 'CRITICAL_TRIGGER_ORDER_UNSAFE', message: `${violations.length} trigger firing-order invariant(s) are violated; guarantees that depend on trigger-name order no longer hold.`, detail: violations });
   }
 
   // 3. Execution-critical definitions match the reviewed manifest: trigger timing/events/scope/WHEN/columns/arguments

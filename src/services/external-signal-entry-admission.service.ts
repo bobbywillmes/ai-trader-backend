@@ -46,9 +46,17 @@ async function refuseCandidate(db: Db, account: { id: number; tradingAccountId: 
   });
 }
 
-export async function processProspectiveTradingViewEntries(options: { limit?: number; db?: Db; now?: Date; maxAgeMs?: number } = {}) {
+/** The database-owned receipt age rule: receivedAt + min(configured age, 120 s) is still in the future on the database clock. NULL fails closed. */
+async function signalReceiptIsFresh(db: Db, signalId: number, maxAgeMs: number) {
+  const seconds = Math.min(maxAgeMs, 120_000) / 1000;
+  const [row] = await db.$queryRaw<Array<{ fresh: boolean }>>`
+    SELECT coalesce(s."receivedAt" + make_interval(secs => ${seconds}::double precision) > clock_timestamp(), false) AS fresh
+    FROM "Signal" s WHERE s.id = ${signalId}`;
+  return row?.fresh === true;
+}
+
+export async function processProspectiveTradingViewEntries(options: { limit?: number; db?: Db; maxAgeMs?: number } = {}) {
   const db = options.db ?? prisma;
-  const now = options.now ?? new Date();
   const maxAgeMs = options.maxAgeMs ?? TRADINGVIEW_ENTRY_MAX_AGE_MS;
   const limit = Math.min(Math.max(options.limit ?? 10, 1), 50);
   const candidates = await db.externalSignalTradeCycleAccount.findMany({
@@ -59,7 +67,9 @@ export async function processProspectiveTradingViewEntries(options: { limit?: nu
   for (const account of candidates) {
     try {
       const signal = account.entryRoute.routingRun.signal;
-      if (now.getTime() - signal.createdAt.getTime() > maxAgeMs) {
+      // C3B.2-1: freshness is the database receipt clock (Signal.receivedAt, stamped by the ingestion transaction) against the database
+      // clock, never an application-clock subtraction of Signal.createdAt. A historical signal without a receipt is never fresh.
+      if (!await signalReceiptIsFresh(db, signal.id, maxAgeMs)) {
         if (await refuseCandidate(db, account, 'ENTRY_SIGNAL_EXPIRED')) refused += 1;
         continue;
       }

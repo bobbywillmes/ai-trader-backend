@@ -182,7 +182,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     it('audits the catalog: every application function pins exactly the trusted path, none is SECURITY DEFINER, ownership is unchanged', async () => {
       expect((await superDb.query(unpinnedFunctionsSql)).rows).toEqual([]);
       const counted = (await superDb.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE l.lanname='plpgsql')::int AS plpgsql, count(*) FILTER (WHERE p.prosecdef)::int AS definers, count(*) FILTER (WHERE pg_get_userbyid(p.proowner)<>'ai_trader_migrator')::int AS foreign_owner, count(*) FILTER (WHERE array_length(p.proconfig,1)<>1)::int AS extra_settings ${applicationFunctions}`)).rows[0];
-      expect(counted).toEqual({ total: 117, plpgsql: 113, definers: 0, foreign_owner: 0, extra_settings: 0 });
+      expect(counted).toEqual({ total: 138, plpgsql: 130, definers: 0, foreign_owner: 0, extra_settings: 0 });
     });
 
     it('closes nested name resolution: every application function that another application function calls is itself pinned', async () => {
@@ -337,6 +337,40 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
       expect((await app.query(`SELECT count(*)::int n FROM "EntryExposureClaim" WHERE id=$1`, [target.claimId])).rows[0].n).toBe(1);
     }
     await expect(app.query(`DELETE FROM "EntryExposureClaim" WHERE "orderIntentId" IN ($1,$2)`, [unclaimed.intentId, claimed.intentId])).rejects.toThrow(/permanent/);
+  });
+
+  // Phase 4A.2C3B.2-1: with ordinary DML privileges on every table (and no TRUNCATE), the runtime role can neither forge, reset, advance, delete
+  // nor truncate a dispatch fence, cannot supply or change a Signal receipt, cannot switch the triggers off, and still creates fences normally.
+  it('cannot bypass the dispatch fence or the Signal receipt clock with direct SQL (C3B.2-1)', async () => {
+    const marked = await fixture.admit('restricted-fence');
+    const unmarkedId = (await app.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"clientOrderId","rawRequestJson","tradingAccountId","createdAt","updatedAt") VALUES ('manual','RFN','sell','market','day','received',$2,'{}',$1,now(),now()) RETURNING id`, [fixture.paperId, `rfn-${randomUUID()}`])).rows[0].id as number;
+    const privileges = (await app.query(`SELECT has_table_privilege(current_user,'"ExternalSignalDispatchFence"','INSERT') AS i, has_table_privilege(current_user,'"ExternalSignalDispatchFence"','UPDATE') AS u,
+      has_table_privilege(current_user,'"ExternalSignalDispatchFence"','DELETE') AS d, has_table_privilege(current_user,'"ExternalSignalDispatchFence"','TRUNCATE') AS t, has_table_privilege(current_user,'"ExternalSignalDispatchFence"','TRIGGER') AS g`)).rows[0];
+    // Invoker triggers must be able to write the fence, so the role holds INSERT/UPDATE/DELETE; the guard, not a missing privilege, is the protection.
+    expect(privileges).toEqual({ i: true, u: true, d: true, t: false, g: false });
+    const version = async () => Number((await app.query(`SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1`, [marked.intentId])).rows[0].version);
+    const before = await version();
+    await expect(app.query(`INSERT INTO "ExternalSignalDispatchFence" ("orderIntentId", version) VALUES ($1, 1)`, [unmarkedId])).rejects.toThrow(/created only by the marked-intent creation trigger/);
+    await expect(app.query(`INSERT INTO "ExternalSignalDispatchFence" ("orderIntentId", version) VALUES ($1, 999)`, [unmarkedId])).rejects.toThrow(/created only by the marked-intent creation trigger/);
+    await expect(app.query(`UPDATE "ExternalSignalDispatchFence" SET version = version + 1 WHERE "orderIntentId"=$1`, [marked.intentId])).rejects.toThrow(/only trigger-issued \+1 increments/);
+    await expect(app.query(`UPDATE "ExternalSignalDispatchFence" SET version = 1 WHERE "orderIntentId"=$1`, [marked.intentId])).rejects.toThrow(/only trigger-issued \+1 increments/);
+    await expect(app.query(`DELETE FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1`, [marked.intentId])).rejects.toThrow(/never deleted or truncated/);
+    await expect(app.query(`TRUNCATE "ExternalSignalDispatchFence"`)).rejects.toThrow(/permission denied/);
+    await expect(app.query(`SELECT external_signal_dispatch_fence_advance(ARRAY[${marked.intentId}])`)).rejects.toThrow(/only trigger-issued \+1 increments/);
+    await expect(app.query(`SET session_replication_role = replica`)).rejects.toThrow(/permission denied/);
+    await expect(app.query(`ALTER TABLE "ExternalSignalDispatchFence" DISABLE TRIGGER "ExternalSignalDispatchFence_guard"`)).rejects.toThrow(/must be owner|permission denied/);
+    await expect(app.query(`ALTER TABLE "Signal" DISABLE TRIGGER "Signal_received_at_guard"`)).rejects.toThrow(/must be owner|permission denied/);
+    expect(await version()).toBe(before);
+    // A legitimate fenced write by the runtime role still advances the fence, and a marked intent it creates receives its fence.
+    await app.query(`UPDATE "OrderIntent" SET status='pending' WHERE id=$1`, [marked.intentId]);
+    expect(await version()).toBeGreaterThan(before);
+    const signalId = (await app.query(`SELECT "entrySignalId" FROM "ExternalSignalEntryExecutionObligation" WHERE "orderIntentId"=$1`, [marked.intentId])).rows[0].entrySignalId as number;
+    await expect(app.query(`UPDATE "Signal" SET "receivedAt" = now() WHERE id=$1`, [signalId])).rejects.toThrow(/immutable/);
+    await expect(app.query(`UPDATE "Signal" SET "receivedAt" = NULL WHERE id=$1`, [signalId])).rejects.toThrow(/immutable/);
+    await expect(app.query(`INSERT INTO "Signal" ("signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion","externalEventId","externalTradeCycleRef","eventFingerprint","strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",event,symbol,timeframe,"signalTime","canonicalPayloadHash","receivedAt") SELECT "signalSourceId","strategySignalBindingId","strategyId","securityId","schemaVersion",'rr-' || gen_random_uuid(),"externalTradeCycleRef",gen_random_uuid()::text,"strategyRevision","strategySignalRevisionId","externalSignalTradeCycleId",'EXIT_LONG',symbol,timeframe,"signalTime","canonicalPayloadHash",now() FROM "Signal" WHERE id=$1`, [signalId])).rejects.toThrow(/database-owned and cannot be supplied/);
+    // The pair columns are database-stamped: the runtime role cannot supply them either (the earlier checks fail first on the missing graph, so
+    // assert the privilege-independent guard directly with an empty pair).
+    await expect(app.query(`INSERT INTO "ExternalSignalBrokerDispatchConsumption" ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId","rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId","fenceVersion","authorizedAt","evidenceJson") VALUES (1,1,1,1,1,1,1,'x',1,now(),'{}')`)).rejects.toThrow(/database-stamped|evidence graph is inconsistent|foreign key/);
   });
 
   // ---------------------------------------------------------------------------------------------
@@ -819,7 +853,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         const catalog = await readSecurityCatalog(rowsOf(sec) as never);
         const drift = compareWithManifest(catalog);
         expect(drift, 'regenerate with scripts/generate-database-security-manifest.ts after a migration changes a function or trigger').toEqual({ functionsChanged: [], functionsMissing: [], functionsUnreviewed: [], triggersChanged: [], triggersMissing: [], triggersUnreviewed: [] });
-        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(117);
+        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(138);
         for (const [table, trigger, fn] of CRITICAL_TRIGGERS) expect(SECURITY_MANIFEST.triggers[`${table}/${trigger}`], `${table}/${trigger}`).toMatchObject({ function: `${fn}()`, enabled: 'O', timing: expect.stringMatching(/^(BEFORE|AFTER)$/), scope: expect.stringMatching(/^(ROW|STATEMENT)$/) });
         expect(SECURITY_MANIFEST.migration).toBe((await sec.query(`SELECT migration_name FROM _prisma_migrations ORDER BY migration_name DESC LIMIT 1`)).rows[0].migration_name);
       });
