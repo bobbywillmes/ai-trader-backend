@@ -1,0 +1,143 @@
+{
+  "server": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "migrations": 107,
+  "upgrade": {
+    "U0 historical population: ENTRY_PENDING, ENTRY_SUBMITTING, BLOCKED (held) and released marked intents exist before the migration, and no fence table exists": {
+      "pass": true,
+      "detail": [
+        "A: intent received, claim ENTRY_PENDING",
+        "B: intent pending, claim ENTRY_PENDING",
+        "C: intent submitting, claim ENTRY_SUBMITTING",
+        "D: intent submitting, claim ENTRY_SUBMITTING",
+        "E: intent blocked, claim ENTRY_SUBMITTING",
+        "F: intent blocked, claim RELEASED (released)"
+      ]
+    },
+    "U1 with a writer holding a marked intent open, the migration fails on lock_timeout (55P03) and leaves no table, trigger or column behind": {
+      "pass": true,
+      "detail": {
+        "error": "canceling statement due to lock timeout",
+        "leftovers": {
+          "fence": null,
+          "triggers": 0,
+          "col": 0
+        }
+      }
+    },
+    "U2 a marked-intent writer started while the migration transaction was open BLOCKED behind its table locks and completed after COMMIT with a fence from the creation trigger (created at 1; admission own claim insert then advanced it)": {
+      "pass": true,
+      "detail": {
+        "blockedBehindMigration": true,
+        "concurrentFence": {
+          "v": 2
+        }
+      }
+    },
+    "U3 every existing marked intent (all six historical states) has a fence at version 1; the unmarked intent has none; there are no extra fences and no marked intent is left without one": {
+      "pass": true,
+      "detail": {
+        "fenceCount": 7,
+        "markedWithoutFence": 0,
+        "fencesForUnmarked": 0,
+        "historical": [
+          "A=1",
+          "B=1",
+          "C=1",
+          "D=1",
+          "E=1",
+          "F=1"
+        ]
+      }
+    },
+    "U4a every row that existed before the migration is byte-identical afterwards in all ten tables (worker claims, claims, claim events, intents, signals, obligations, account cycles, cycles, authorizations, positions)": {
+      "pass": true,
+      "detail": {
+        "tablesChecked": 10,
+        "changed": [],
+        "rowsHashed": {
+          "ExternalSignalBrokerWorkerClaim": 4,
+          "EntryExposureClaim": 6,
+          "EntryExposureClaimEvent": 6,
+          "OrderIntent": 7,
+          "Signal": 6,
+          "ExternalSignalEntryExecutionObligation": 6,
+          "ExternalSignalTradeCycleAccount": 6,
+          "ExternalSignalTradeCycle": 6,
+          "ExternalSignalEntryExecutionAuthorization": 6,
+          "TrackedPosition": 0
+        }
+      }
+    },
+    "U4b no historical signal received a receipt (receivedAt stays NULL, the receipt functions report not-open) while the signal created by the concurrent post-migration writer has one": {
+      "pass": true,
+      "detail": {
+        "historical": {
+          "n": 6,
+          "nulls": 6,
+          "open": 0
+        },
+        "receipts": {
+          "null_receipts": 6,
+          "stamped": 1,
+          "total": 7
+        },
+        "signalsBefore": {
+          "n": 6,
+          "oldest": "2026-11-02T07:16:59.764Z"
+        }
+      }
+    },
+    "U5 C2 pre-dispatch recovery of a historical ENTRY_SUBMITTING graph (evidence, block, release) works after the upgrade; the fence only increases": {
+      "pass": true,
+      "detail": {
+        "steps": [
+          true,
+          true,
+          true
+        ],
+        "row": {
+          "intent": "blocked",
+          "claim": "RELEASED",
+          "released": true,
+          "fence": 5
+        },
+        "fenceBefore": 1
+      }
+    },
+    "U6 a historical ENTRY_SUBMITTING graph with a valid decision and the current fence version is refused final authorization: its signal has no receipt": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ENTRY_SIGNAL_EXPIRED"
+      }
+    },
+    "U7 the historical BLOCKED graph (evidence recorded, claim held) releases after the upgrade; the historical released graph stays released": {
+      "pass": true,
+      "detail": {
+        "release": true,
+        "rows": [
+          {
+            "id": 5,
+            "status": "blocked",
+            "claim": "RELEASED"
+          },
+          {
+            "id": 6,
+            "status": "blocked",
+            "claim": "RELEASED"
+          }
+        ]
+      }
+    },
+    "U8 applying the migration body a second time fails on its precondition and changes nothing": {
+      "pass": true,
+      "detail": "C3B.2 migration precondition: fence table already exists"
+    },
+    "U9 a marked intent created after the migration gets a fence (created at 1; admission own claim insert advanced it) and its entry signal a database receipt": {
+      "pass": true,
+      "detail": {
+        "fence": 2,
+        "receipt": true
+      }
+    }
+  }
+}

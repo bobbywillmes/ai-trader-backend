@@ -1,0 +1,1734 @@
+{
+  "server": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "migrations": 107,
+  "catalogBefore": {
+    "functions": 117,
+    "triggers": 140,
+    "drift": {
+      "functionsChanged": 0,
+      "functionsMissing": 0,
+      "functionsUnreviewed": 0,
+      "triggersChanged": 0,
+      "triggersMissing": 0,
+      "triggersUnreviewed": 0
+    }
+  },
+  "setup": {
+    "real graph, worker claim, MI authorization (production services) and seeded ALLOWED decision with its frozen obligation build on the migrated schema": {
+      "pass": true,
+      "detail": {
+        "prepared": {
+          "decisionId": 1,
+          "obligationId": 1,
+          "authorizationId": 1
+        },
+        "fenceAfterSetup": 8
+      }
+    }
+  },
+  "fence": {
+    "A0 direct UPDATE, DELETE and TRUNCATE of the fence are rejected": {
+      "pass": true,
+      "detail": {
+        "direct": "dispatch fence accepts only trigger-issued +1 increments",
+        "del": "dispatch fence rows are never deleted or truncated",
+        "trunc": "dispatch fence rows are never deleted or truncated"
+      }
+    },
+    "A1 revision-3 protocol (MI consumption in the bump set) is self-defeating": {
+      "pass": true,
+      "detail": {
+        "fenceReadByF": 8,
+        "fenceAfterMiInsert": 9,
+        "tvInsert": {
+          "ok": false,
+          "message": "TradingView dispatch fence version is stale or missing (supplied 8, current 9)"
+        }
+      }
+    },
+    "A2 corrected protocol commits the pair; MI insert leaves the version unchanged, the TV insert advances it exactly once": {
+      "pass": true,
+      "detail": {
+        "v0": 8,
+        "vAfterMi": 8,
+        "vAfterTv": 9,
+        "committed": 9,
+        "storedFenceVersion": 8,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A2b a second consumption for the same intent is rejected by the existing constraints": {
+      "pass": true,
+      "detail": {
+        "fenceRead": 9,
+        "second": {
+          "ok": false,
+          "code": "23505",
+          "message": "duplicate key value violates unique constraint \"BrokerDispatchConsumption_decision_key\""
+        }
+      }
+    },
+    "A3 rolled-back pair restores the fence and leaves no consumption; a retry then succeeds": {
+      "pass": true,
+      "detail": {
+        "before": 8,
+        "v0": 8,
+        "inTx": 9,
+        "after": 8,
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        },
+        "retryFinal": 9
+      }
+    },
+    "A4 wrong, stale or missing fenceVersion is rejected": {
+      "pass": true,
+      "detail": {
+        "plus1": "REJECTED",
+        "minus1": "REJECTED",
+        "null": "REJECTED"
+      }
+    },
+    "A5 fenced write between fence read and TV insert is rejected; a fenced write after the pair is legal and keeps raising the version": {
+      "pass": true,
+      "detail": {
+        "midWrite": "REJECTED",
+        "laterWrite": "committed at 10 (stored 8)"
+      }
+    },
+    "A5b consumption without a fence advance is impossible (self-verification)": {
+      "pass": true,
+      "detail": "TradingView dispatch fence did not advance exactly once for the pair (stored 8, current 8)"
+    },
+    "A6.0 today the quarantine rejects BrokerOrder evidence for a marked intent": {
+      "pass": true,
+      "detail": "marked external signal broker evidence is quarantined in Phase 4A.2C1"
+    },
+    "A6.O1 [W READ COMMITTED] competitor BrokerOrder committed after F's snapshot: row locks pass, fence lock raises 40001": {
+      "pass": true,
+      "detail": {
+        "quarantineLetItThrough": true,
+        "rowLocks": true,
+        "fence": "40001"
+      }
+    },
+    "A6.O2 [W READ COMMITTED] stale competitor after F committed the pair: proceeds and raises the fence again": {
+      "pass": true,
+      "detail": {
+        "write": "ok",
+        "commit": "ok",
+        "fence": 10,
+        "v": 8
+      }
+    },
+    "A6.O3a [W READ COMMITTED] in-flight competitor: F waits at the intent lock, then is aborted at the fence (40001)": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "40001"
+      }
+    },
+    "A6.O3a [W READ COMMITTED] in-flight competitor: F waits at the intent lock, then commits the pair after a rollback": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "committed pair, fence 9"
+      }
+    },
+    "A6.O3b [W READ COMMITTED] competitor blocked by F's locks proceeds only after F commits: ok at the next fence version": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "write": "ok",
+        "commit": "ok",
+        "fence": 10,
+        "v": 8
+      }
+    },
+    "A6.O1 [W SERIALIZABLE] competitor BrokerOrder committed after F's snapshot: row locks pass, fence lock raises 40001": {
+      "pass": true,
+      "detail": {
+        "quarantineLetItThrough": true,
+        "rowLocks": true,
+        "fence": "40001"
+      }
+    },
+    "A6.O2 [W SERIALIZABLE] stale competitor after F committed the pair: serialization failure": {
+      "pass": true,
+      "detail": {
+        "write": "40001",
+        "commit": "ok",
+        "fence": 9,
+        "v": 8
+      }
+    },
+    "A6.O3a [W SERIALIZABLE] in-flight competitor: F waits at the intent lock, then is aborted at the fence (40001)": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "40001"
+      }
+    },
+    "A6.O3a [W SERIALIZABLE] in-flight competitor: F waits at the intent lock, then commits the pair after a rollback": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "intentLock": "ok",
+        "claimLock": "ok",
+        "outcome": "committed pair, fence 9"
+      }
+    },
+    "A6.O3b [W SERIALIZABLE] competitor blocked by F's locks proceeds only after F commits: 40001": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "write": "40001",
+        "commit": "40001",
+        "fence": 9,
+        "v": 8
+      }
+    },
+    "A6c.RC [F READ COMMITTED, bump trigger disabled] the guard own evidence check refuses the pair next to committed broker evidence": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent",
+        "brokerOrders": 1
+      }
+    },
+    "A6c.SER [F stale SERIALIZABLE snapshot, bump trigger disabled] NEGATIVE CONTROL: the pair IS committed next to committed broker evidence (the fence is required for stale snapshots)": {
+      "pass": true,
+      "detail": {
+        "outcome": "INSERTED",
+        "brokerOrders": 1
+      }
+    },
+    "A7.1 [R READ COMMITTED] release waits for F, then cannot release the consumed claim": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "release": "P0001",
+        "released": false
+      }
+    },
+    "A7.2 [R READ COMMITTED] release after the pair committed is refused": {
+      "pass": true,
+      "detail": {
+        "release": "P0001"
+      }
+    },
+    "A7.1 [R SERIALIZABLE] release waits for F, then cannot release the consumed claim": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "release": "P0001",
+        "released": false
+      }
+    },
+    "A7.2 [R SERIALIZABLE] release after the pair committed is refused": {
+      "pass": true,
+      "detail": {
+        "release": "P0001"
+      }
+    },
+    "A7.3 [R REPEATABLE READ] a stale releaser holding valid not-sent evidence is stopped (40001) and the consumed claim stays unreleased": {
+      "pass": true,
+      "detail": {
+        "evidence": "40001",
+        "intent": "40001",
+        "release": "40001",
+        "commit": "40001",
+        "claimReleased": false,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.3 [R SERIALIZABLE] a stale releaser holding valid not-sent evidence is stopped (40001) and the consumed claim stays unreleased": {
+      "pass": true,
+      "detail": {
+        "evidence": "40001",
+        "intent": "40001",
+        "release": "40001",
+        "commit": "40001",
+        "claimReleased": false,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.4 [R REPEATABLE READ] negative control: with the fence bump triggers disabled the same stale releaser RELEASES the consumed claim": {
+      "pass": true,
+      "detail": {
+        "evidence": "ok",
+        "intent": "ok",
+        "release": "ok",
+        "commit": "ok",
+        "claimReleased": true,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A7.4b [R SERIALIZABLE] control without the fence: recorded outcome (SSI alone may or may not abort this shape)": {
+      "pass": true,
+      "detail": {
+        "evidence": "40001",
+        "intent": "40001",
+        "release": "40001",
+        "commit": "40001",
+        "claimReleased": false,
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "A8 [D1] the existing evidence fence makes a SERIALIZABLE claim lock fail (40001) after an evidence event": {
+      "pass": true,
+      "detail": {
+        "insert": "ok",
+        "claimLock": "40001"
+      }
+    }
+  },
+  "receipt": {
+    "B0 Signal.createdAt is timestamp without time zone with a session-TimeZone default; receivedAt is timestamptz with no default": {
+      "pass": true,
+      "detail": {
+        "createdAt": {
+          "data_type": "timestamp without time zone",
+          "column_default": "CURRENT_TIMESTAMP"
+        },
+        "receivedAt": {
+          "data_type": "timestamp with time zone",
+          "column_default": null,
+          "is_nullable": "YES"
+        }
+      }
+    },
+    "B1 receivedAt freshness is the same for every zone and every way of setting it (stale=false, 60s=true, fresh=true, historical NULL=false)": {
+      "pass": true,
+      "detail": {
+        "SET TIME ZONE": {
+          "UTC": "ok; receipt stale=false legacy stale=false",
+          "America/New_York": "ok; receipt stale=false legacy stale=true",
+          "America/Los_Angeles": "ok; receipt stale=false legacy stale=true",
+          "America/Phoenix": "ok; receipt stale=false legacy stale=true",
+          "Asia/Kolkata": "ok; receipt stale=false legacy stale=false",
+          "Pacific/Kiritimati": "ok; receipt stale=false legacy stale=false",
+          "Etc/GMT+12": "ok; receipt stale=false legacy stale=true",
+          "PST8PDT": "ok; receipt stale=false legacy stale=true",
+          "Asia/Tokyo": "ok; receipt stale=false legacy stale=false"
+        },
+        "set_config": {
+          "UTC": "ok; receipt stale=false legacy stale=false",
+          "America/New_York": "ok; receipt stale=false legacy stale=true",
+          "America/Los_Angeles": "ok; receipt stale=false legacy stale=true",
+          "America/Phoenix": "ok; receipt stale=false legacy stale=true",
+          "Asia/Kolkata": "ok; receipt stale=false legacy stale=false",
+          "Pacific/Kiritimati": "ok; receipt stale=false legacy stale=false",
+          "Etc/GMT+12": "ok; receipt stale=false legacy stale=true",
+          "PST8PDT": "ok; receipt stale=false legacy stale=true",
+          "Asia/Tokyo": "ok; receipt stale=false legacy stale=false"
+        },
+        "SET LOCAL in txn": {
+          "UTC": "ok; receipt stale=false legacy stale=false",
+          "America/New_York": "ok; receipt stale=false legacy stale=true",
+          "America/Los_Angeles": "ok; receipt stale=false legacy stale=true",
+          "America/Phoenix": "ok; receipt stale=false legacy stale=true",
+          "Asia/Kolkata": "ok; receipt stale=false legacy stale=false",
+          "Pacific/Kiritimati": "ok; receipt stale=false legacy stale=false",
+          "Etc/GMT+12": "ok; receipt stale=false legacy stale=true",
+          "PST8PDT": "ok; receipt stale=false legacy stale=true",
+          "Asia/Tokyo": "ok; receipt stale=false legacy stale=false"
+        }
+      }
+    },
+    "B1b negative control: the legacy createdAt comparison accepts a 200-second-old signal in at least one session time zone": {
+      "pass": true
+    },
+    "B1c startup-parameter and ALTER DATABASE time zones cannot extend the window": {
+      "pass": true,
+      "detail": {
+        "viaStartup": {
+          "America/Los_Angeles": true,
+          "Pacific/Kiritimati": true
+        },
+        "databaseLevel": {
+          "stale200": {
+            "receipt": false,
+            "legacy": true
+          },
+          "mid60": {
+            "receipt": true,
+            "legacy": true
+          },
+          "fresh0": {
+            "receipt": true,
+            "legacy": true
+          },
+          "historicalNull": {
+            "receipt": false,
+            "legacy": true
+          }
+        }
+      }
+    },
+    "B2 insert is stamped by the database at transaction start (conservative: earlier than the insert after a 2 s stall) and a supplied value is rejected": {
+      "pass": true,
+      "detail": {
+        "stamped": {
+          "receivedAt": "2026-11-02T00:22:31.629Z",
+          "ageMsAtRead": 2010
+        },
+        "supplied": "Signal.receivedAt is database-owned and cannot be supplied"
+      }
+    },
+    "B2b a hostile session time zone does not shift the stamp, and an advanced value is rejected": {
+      "pass": true,
+      "detail": {
+        "stampedUnderKiritimati": "2026-11-02T00:22:33.644Z",
+        "advanced": "Signal.receivedAt is database-owned and cannot be supplied"
+      }
+    },
+    "B3 receivedAt cannot be changed, filled in for a historical NULL row, or cleared": {
+      "pass": true,
+      "detail": {
+        "upd": "Signal.receivedAt is immutable",
+        "fill": "Signal.receivedAt is immutable",
+        "clear": "Signal.receivedAt is immutable"
+      }
+    },
+    "B4 negative control: ADD COLUMN DEFAULT now() makes a 30-day-old row look fresh; the default-less column leaves it NULL (fails closed)": {
+      "pass": true,
+      "detail": {
+        "looks_fresh": true,
+        "safe_null": true
+      }
+    },
+    "B5 interval '1 day' is session/DST dependent while a seconds interval is absolute (so the window is make_interval(secs => 120))": {
+      "pass": true,
+      "detail": {
+        "dayInNewYork": "2026-03-08T11:00:00.000Z",
+        "dayInUtc": "2026-03-08T12:00:00.000Z",
+        "secondsInNewYork": "2026-03-08T12:00:00.000Z"
+      }
+    }
+  },
+  "compat": {
+    "D5 unmarked intent lifecycle, claim, broker order, legacy fill import, activity sync and attribution run without error and never touch the fence": {
+      "pass": true,
+      "detail": {
+        "errors": [],
+        "fenceTupleWritesInTransaction": {
+          "ins": 0,
+          "upd": 0,
+          "del": 0
+        },
+        "before": {
+          "n": 34,
+          "s": 285
+        },
+        "after": {
+          "n": 34,
+          "s": 285
+        }
+      }
+    },
+    "D2 one logical lifecycle event spanning several fenced rows advances the version once per row change (strictly increasing, never skipped, not \"one per event\")": {
+      "pass": true,
+      "detail": {
+        "before": 8,
+        "after": 12
+      }
+    }
+  },
+  "consumption": {
+    "E0 NEGATIVE CONTROL: the fence-only guard (revision 4) commits a valid-looking pair next to committed BrokerOrder evidence under READ COMMITTED direct SQL": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "outcome": "INSERTED"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (BrokerOrder with the intent id) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 9,
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (BrokerOrder under ANOTHER intent carrying the marked clientOrderId (same account)) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 9,
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (BrokerActivity with the intent id and no order id) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 9,
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (claim event ADAPTER_INVOCATION_STARTED) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (claim event DISPATCH_OUTCOME_RECORDED) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (claim event BROKER_DELIVERY_UNCERTAIN) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F READ COMMITTED] evidence committed before F (claim event NOT_SENT_EVIDENCE_RECORDED (a contradictory lifecycle)) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (BrokerOrder with the intent id) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 9,
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (BrokerOrder under ANOTHER intent carrying the marked clientOrderId (same account)) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 9,
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (BrokerActivity with the intent id and no order id) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 9,
+        "outcome": "TRADINGVIEW_BROKER_EVIDENCE_EXISTS: a BrokerOrder or BrokerActivity already belongs to this intent"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (claim event ADAPTER_INVOCATION_STARTED) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (claim event DISPATCH_OUTCOME_RECORDED) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (claim event BROKER_DELIVERY_UNCERTAIN) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E1 [F SERIALIZABLE] evidence committed before F (claim event NOT_SENT_EVIDENCE_RECORDED (a contradictory lifecycle)) rejects the pair although the supplied fence version is current": {
+      "pass": true,
+      "detail": {
+        "evidenceWritten": true,
+        "fenceAtFRead": 10,
+        "outcome": "TRADINGVIEW_CONTRADICTORY_EVIDENCE: a delivery or not-sent event already exists for this claim"
+      }
+    },
+    "E2 [F READ COMMITTED] account kill switch enabled: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] account status PAUSED: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] account tradingBlocked: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] assignment entries disabled: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ASSIGNMENT_NOT_ELIGIBLE",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] entry signal receipt expired (200 s old): pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ENTRY_SIGNAL_EXPIRED",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] historical signal (receivedAt NULL) is ineligible for broker authorization: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ENTRY_SIGNAL_EXPIRED",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] accepted EXIT pending on the account cycle: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_EXIT_ACCEPTED",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] exposure claim already released: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "BROKER_DISPATCH_INTENT_NOT_EXECUTABLE: the intent or its claim is no longer executable",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] intent no longer submitting: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "BROKER_DISPATCH_INTENT_NOT_EXECUTABLE: the intent or its claim is no longer executable",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] worker claim belongs to another intent: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TradingView final dispatch evidence graph is inconsistent (worker claim)",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] frozen MI obligation drifted from the decision (authorization fingerprint): pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_MI_OBLIGATION_MISMATCH: the frozen Market Intelligence obligation does not match the decision and the account cycle",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] frozen MI obligation belongs to a different security: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_MI_OBLIGATION_MISMATCH: the frozen Market Intelligence obligation does not match the decision and the account cycle",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] TradingView authorization revoked: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_AUTHORIZATION_NOT_EFFECTIVE",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F READ COMMITTED] dispatch state version advanced: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TradingView final dispatch evidence graph is inconsistent (worker claim)",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] account kill switch enabled: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] account status PAUSED: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] account tradingBlocked: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] assignment entries disabled: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] entry signal receipt expired (200 s old): pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ENTRY_SIGNAL_EXPIRED",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] historical signal (receivedAt NULL) is ineligible for broker authorization: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TRADINGVIEW_ENTRY_SIGNAL_EXPIRED",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] accepted EXIT pending on the account cycle: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] exposure claim already released: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] intent no longer submitting: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] worker claim belongs to another intent: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "TradingView final dispatch evidence graph is inconsistent (worker claim)",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] frozen MI obligation drifted from the decision (authorization fingerprint): pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] frozen MI obligation belongs to a different security: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] TradingView authorization revoked: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2 [F SERIALIZABLE] dispatch state version advanced: pair rejected with the CURRENT fence version supplied": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E2b [F READ COMMITTED] a newer MI decision supersedes the consumed one: pair rejected (decision seeded with triggers off; its bump modeled by a fenced intent write)": {
+      "pass": true,
+      "detail": {
+        "outcome": "BROKER_DISPATCH_DECISION_SUPERSEDED: a later broker-time decision exists for this intent"
+      }
+    },
+    "E2b [F SERIALIZABLE] a newer MI decision supersedes the consumed one: pair rejected (decision seeded with triggers off; its bump modeled by a fenced intent write)": {
+      "pass": true,
+      "detail": {
+        "outcome": "40001"
+      }
+    },
+    "E3 [F READ COMMITTED] BrokerOrder in flight when F runs; the writer commits: F waits on the intent lock, then is refused (the fence moved while F waited, or the evidence check)": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "outcome": "TradingView dispatch fence version is stale or missing (supplied 8, current 9)",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E3 [F READ COMMITTED] BrokerOrder in flight when F runs; the writer rolls back: F waits on the intent lock, then commits the pair": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "outcome": "INSERTED",
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "E3 [F SERIALIZABLE] BrokerOrder in flight when F runs; the writer commits: F waits on the intent lock, then fails 40001": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "outcome": "40001",
+        "pair": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "E3 [F SERIALIZABLE] BrokerOrder in flight when F runs; the writer rolls back: F waits on the intent lock, then commits the pair": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "outcome": "INSERTED",
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "E4 [W READ COMMITTED] F commits first, a stale writer follows: pair intact, evidence recorded at a later fence version": {
+      "pass": true,
+      "detail": {
+        "first": "INSERTED",
+        "write": "ok",
+        "commit": "ok",
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "E4 [W SERIALIZABLE] F commits first, a stale writer follows: pair intact, writer aborted (40001)": {
+      "pass": true,
+      "detail": {
+        "first": "INSERTED",
+        "write": "40001",
+        "commit": "40001",
+        "pair": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "E5 [F READ COMMITTED] direct SQL with no pre-locks commits the pair; fenceVersion=v, fence=v+1 (+ later fenced writes), deadline = least(receipt+120s, authorizedAt+30s)": {
+      "pass": true,
+      "detail": {
+        "outcome": "INSERTED",
+        "v0": 8,
+        "row": {
+          "fv": 8,
+          "authorizedAt": "2026-11-02T00:22:39.431Z",
+          "authorizationDeadlineAt": "2026-11-02T00:23:09.431Z",
+          "receivedAt": "2026-11-02T00:22:39.351Z",
+          "window_s": "30.000000",
+          "slack_s": "89.920132"
+        }
+      }
+    },
+    "E5 [F SERIALIZABLE] direct SQL with no pre-locks commits the pair; fenceVersion=v, fence=v+1 (+ later fenced writes), deadline = least(receipt+120s, authorizedAt+30s)": {
+      "pass": true,
+      "detail": {
+        "outcome": "INSERTED",
+        "v0": 8,
+        "row": {
+          "fv": 8,
+          "authorizedAt": "2026-11-02T00:22:39.539Z",
+          "authorizationDeadlineAt": "2026-11-02T00:23:09.539Z",
+          "receivedAt": "2026-11-02T00:22:39.456Z",
+          "window_s": "30.000000",
+          "slack_s": "89.916952"
+        }
+      }
+    },
+    "E5b caller-supplied authorizedAt / authorizationDeadlineAt are rejected (database-stamped only)": {
+      "pass": true,
+      "detail": "authorizedAt and authorizationDeadlineAt are database-stamped and cannot be supplied"
+    }
+  },
+  "scope": {
+    "S0 the key maps every identifier shape to the marked intent only under the SAME account; LIVE and NULL never match": {
+      "pass": true,
+      "detail": {
+        "directPaper": 1,
+        "directLive": 0,
+        "directNull": 0,
+        "clientIdPaper": 1,
+        "clientIdLive": 0,
+        "brokerOrderIdPaper": 1,
+        "brokerOrderIdLive": 0,
+        "recordPaper": 1,
+        "recordLive": 0
+      }
+    },
+    "S1 a LIVE BrokerOrder sharing the marked PAPER clientOrderId is accepted by the quarantine and never bumps the PAPER fence (insert, activity by order id, activity by record id, status sync)": {
+      "pass": true,
+      "detail": {
+        "brokerOrder": [
+          true,
+          0,
+          null
+        ],
+        "activityByOrderId": [
+          true,
+          0,
+          null
+        ],
+        "activityByRecord": [
+          true,
+          0,
+          null
+        ],
+        "statusSync": [
+          true,
+          0,
+          null
+        ]
+      }
+    },
+    "S1b LIVE rows that share the PAPER clientOrderId / order ids do not block the complete guard: the PAPER pair commits": {
+      "pass": true,
+      "detail": {
+        "outcome": "INSERTED"
+      }
+    },
+    "S2 PAPER evidence by orderIntentId, by the frozen clientOrderId (under another intent), and activity by intent id are rejected by the account-scoped quarantine; the fence does not move": {
+      "pass": true,
+      "detail": {
+        "direct": "marked external signal broker evidence is quarantined in Phase 4A.2C1",
+        "byClientId": "marked external signal broker evidence is quarantined in Phase 4A.2C1",
+        "activityDirect": "marked external signal broker evidence is quarantined in Phase 4A.2C1"
+      }
+    },
+    "S3 a row naming the marked intent but carrying a LIVE or unknown account is rejected as contradictory; the PAPER fence does not move": {
+      "pass": true,
+      "detail": {
+        "boLive": "broker evidence names a marked TradingView intent but carries a different or unknown trading account",
+        "actLive": "broker evidence names a marked TradingView intent but carries a different or unknown trading account",
+        "actNull": "broker evidence names a marked TradingView intent but carries a different or unknown trading account"
+      }
+    },
+    "S4 PAPER shapes bump the fence once per matching row change (BrokerOrder by intent, by clientOrderId, activity by order id, activity by record id only); LIVE shapes never bump": {
+      "pass": true,
+      "detail": {
+        "paperDirect": {
+          "ok": true,
+          "bumps": 1
+        },
+        "paperByClientId": {
+          "ok": true,
+          "bumps": 1
+        },
+        "paperActivityByOrderId": {
+          "ok": true,
+          "bumps": 1
+        },
+        "paperActivityByRecordOnly": {
+          "ok": true,
+          "bumps": 1
+        },
+        "liveBrokerOrderSameClientId": {
+          "ok": true,
+          "bumps": 0
+        },
+        "liveActivityByOrderId": {
+          "ok": true,
+          "bumps": 0
+        },
+        "liveActivityByRecordOnly": {
+          "ok": true,
+          "bumps": 0
+        },
+        "liveActivitySameOrderIdAsPaper": {
+          "ok": true,
+          "bumps": 0
+        },
+        "attributePaperActivity": {
+          "ok": true,
+          "bumps": 1
+        },
+        "moveAttributionAway": {
+          "ok": true,
+          "bumps": 1
+        },
+        "attributeLiveActivity": {
+          "ok": true,
+          "bumps": 0
+        },
+        "liveOrderRetargetedToPaperClientId": {
+          "ok": true,
+          "bumps": 0
+        }
+      }
+    },
+    "S4b later attribution updates: attributing a PAPER activity to the marked intent bumps and moving it away bumps again (old values resolve); attributing a LIVE activity to the PAPER marked intent bumps nothing (the key does not match across accounts)": {
+      "pass": true,
+      "detail": {
+        "attribute": 1,
+        "moveAway": 1,
+        "attributeLive": {
+          "ok": true,
+          "bumps": 0
+        },
+        "liveOrderRetargetedBumps": 0
+      }
+    },
+    "S4c [quarantine enabled] later attribution of a LIVE or NULL-account activity to the marked PAPER intent is rejected as contradictory and bumps nothing": {
+      "pass": true,
+      "detail": {
+        "live": "broker evidence names a marked TradingView intent but carries a different or unknown trading account",
+        "unknown": "broker evidence names a marked TradingView intent but carries a different or unknown trading account"
+      }
+    },
+    "S5 a NULL-account activity tied to a marked intent by order id or record id is rejected (unattributable); an unrelated NULL-account activity is accepted": {
+      "pass": true,
+      "detail": {
+        "nullByOrderId": "unattributable broker evidence (no trading account) is tied to a marked TradingView intent",
+        "nullByRecord": "unattributable broker evidence (no trading account) is tied to a marked TradingView intent",
+        "nullUnrelated": true
+      }
+    }
+  },
+  "epoch": {
+    "T1 `sig.createdAt >= <timestamptz epoch>` is TimeZone-dependent in both directions (accepts a pre-epoch signal west of UTC, refuses a post-epoch signal east of UTC); the receivedAt rule gives the correct answer in all 27 zone/setter combinations": {
+      "pass": true,
+      "detail": {
+        "combos": 27,
+        "legacyAcceptedPreEpochSignalIn": 15,
+        "legacyRefusedPostEpochSignalIn": 3,
+        "receiptWrongAnswers": 0,
+        "sample": {
+          "created_naive": "2026-11-02T07:22:40.093Z",
+          "receivedAt": "2026-11-02T00:22:40.092Z",
+          "activatedAt": "2026-11-02T00:22:27.288Z"
+        }
+      }
+    },
+    "T2 a signal with a NULL receipt is ineligible for any epoch and any open window (even the epoch 1970), while the legacy createdAt comparison would admit it": {
+      "pass": true,
+      "detail": {
+        "since_epoch": false,
+        "open": false,
+        "legacy_admits": true
+      }
+    },
+    "T3 the TradingView authorization epoch and both activation epochs are database-stamped by the accepted C1 guards: with the application clock one hour slow, authorizedAt is current, while an unstamped Prisma default-now column is an hour behind (control)": {
+      "pass": true,
+      "detail": {
+        "authorizedAtBehindSeconds": 0.018828,
+        "unstampedControlBehindSeconds": 3600.002342,
+        "guardsThatStamp": [
+          "external_signal_broker_dispatch_activation_guard",
+          "external_signal_entry_authorization_guard",
+          "external_signal_execution_rollout_activation_guard"
+        ]
+      }
+    },
+    "T3b the candidate-side stamp function overwrites a supplied past or future createdAt with the database clock (Prisma always supplies one, so the value is overwritten, not rejected)": {
+      "pass": true,
+      "detail": {
+        "lagWhenSuppliedYesterday": 0.000039,
+        "lagWhenSuppliedTomorrow": 0.00003
+      }
+    },
+    "T4 the audit scan finds the database functions and service lines that compare Signal.createdAt (listed in the document)": {
+      "pass": true,
+      "detail": {
+        "databaseFunctions": [
+          "external_signal_broker_worker_claim_guard",
+          "external_signal_entry_obligation_guard"
+        ],
+        "serviceLineCount": 12
+      }
+    }
+  },
+  "epochMatrix": {
+    "acceptedPreEpoch": {
+      "SET TIME ZONE / UTC": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET TIME ZONE / Asia/Kolkata": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET TIME ZONE / Pacific/Kiritimati": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET TIME ZONE / Asia/Tokyo": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET TIME ZONE / America/New_York": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET TIME ZONE / America/Los_Angeles": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET TIME ZONE / America/Phoenix": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET TIME ZONE / Etc/GMT+12": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET TIME ZONE / PST8PDT": {
+        "legacy": true,
+        "receipt": false
+      },
+      "set_config / UTC": {
+        "legacy": false,
+        "receipt": false
+      },
+      "set_config / Asia/Kolkata": {
+        "legacy": false,
+        "receipt": false
+      },
+      "set_config / Pacific/Kiritimati": {
+        "legacy": false,
+        "receipt": false
+      },
+      "set_config / Asia/Tokyo": {
+        "legacy": false,
+        "receipt": false
+      },
+      "set_config / America/New_York": {
+        "legacy": true,
+        "receipt": false
+      },
+      "set_config / America/Los_Angeles": {
+        "legacy": true,
+        "receipt": false
+      },
+      "set_config / America/Phoenix": {
+        "legacy": true,
+        "receipt": false
+      },
+      "set_config / Etc/GMT+12": {
+        "legacy": true,
+        "receipt": false
+      },
+      "set_config / PST8PDT": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET LOCAL / UTC": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET LOCAL / Asia/Kolkata": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET LOCAL / Pacific/Kiritimati": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET LOCAL / Asia/Tokyo": {
+        "legacy": false,
+        "receipt": false
+      },
+      "SET LOCAL / America/New_York": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET LOCAL / America/Los_Angeles": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET LOCAL / America/Phoenix": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET LOCAL / Etc/GMT+12": {
+        "legacy": true,
+        "receipt": false
+      },
+      "SET LOCAL / PST8PDT": {
+        "legacy": true,
+        "receipt": false
+      }
+    },
+    "refusedPostEpochByZone": {
+      "UTC": {
+        "legacy": true,
+        "receipt": true
+      },
+      "Asia/Kolkata": {
+        "legacy": false,
+        "receipt": true
+      },
+      "Pacific/Kiritimati": {
+        "legacy": false,
+        "receipt": true
+      },
+      "Asia/Tokyo": {
+        "legacy": false,
+        "receipt": true
+      },
+      "America/New_York": {
+        "legacy": true,
+        "receipt": true
+      },
+      "America/Los_Angeles": {
+        "legacy": true,
+        "receipt": true
+      },
+      "America/Phoenix": {
+        "legacy": true,
+        "receipt": true
+      },
+      "Etc/GMT+12": {
+        "legacy": true,
+        "receipt": true
+      },
+      "PST8PDT": {
+        "legacy": true,
+        "receipt": true
+      }
+    }
+  },
+  "epochAudit": {
+    "databaseFunctions": [
+      "external_signal_broker_worker_claim_guard",
+      "external_signal_entry_obligation_guard"
+    ],
+    "serviceLines": [
+      {
+        "file": "external-signal-broker-worker.service.ts",
+        "line": 83,
+        "text": "if (Date.now() - obligation.entrySignal.createdAt.getTime() > C2_MAX_SIGNAL_AGE_MS) {"
+      },
+      {
+        "file": "external-signal-correlation.service.ts",
+        "line": 24,
+        "text": "AND state.\"activatedAt\" IS NOT NULL AND sig.\"createdAt\">=state.\"activatedAt\" AND sig.\"createdAt\">=auth.\"authorizedAt\""
+      },
+      {
+        "file": "external-signal-correlation.service.ts",
+        "line": 38,
+        "text": "for(const account of accounts){await tx.$queryRaw`SELECT id FROM \"ExternalSignalTradeCycleAccount\" WHERE id=${account.id} FOR UPDATE`;const terminal=["
+      },
+      {
+        "file": "external-signal-correlation.service.ts",
+        "line": 111,
+        "text": "if(cycle.status!=='AWAITING_ENTRY'||cycle.accountCycles.length>0||cycle.signals.length===0||cycle.signals.some(signal=>signal.event!=='EXIT_LONG'||sig"
+      },
+      {
+        "file": "external-signal-entry-admission.service.ts",
+        "line": 58,
+        "text": "if (now.getTime() - signal.createdAt.getTime() > maxAgeMs) {"
+      },
+      {
+        "file": "external-signal-operations.service.ts",
+        "line": 32,
+        "text": "return{signalId:signal.id,externalEventId:signal.externalEventId,workId:work?.id??null,workStatus:work?.status??'MISSING',acceptedAt:signal.createdAt,"
+      },
+      {
+        "file": "external-signal-operations.service.ts",
+        "line": 34,
+        "text": "function present(cycle:any,now=new Date()){const exitObligations=cycle.signals.filter((signal:any)=>signal.schemaVersion===2&&signal.event==='EXIT_LON"
+      },
+      {
+        "file": "market-policy-entry-admission.service.ts",
+        "line": 101,
+        "text": "AND sig.\"createdAt\">=state.\"activatedAt\" AND sig.\"createdAt\">=auth.\"authorizedAt\""
+      },
+      {
+        "file": "market-policy-entry-admission.service.ts",
+        "line": 122,
+        "text": "SELECT sig.\"createdAt\" AS \"signalCreatedAt\", clock_timestamp() AS \"databaseNow\""
+      },
+      {
+        "file": "subscription-catalog-migration-diagnostic.ts",
+        "line": 305,
+        "text": "const second = Math.floor(assignment.createdAt.getTime() / 1_000) * 1_000;"
+      },
+      {
+        "file": "subscription-catalog-migration-diagnostic.ts",
+        "line": 313,
+        "text": "const timestamps = batch.map((assignment) => assignment.createdAt.getTime());"
+      },
+      {
+        "file": "subscription-catalog-migration-diagnostic.ts",
+        "line": 564,
+        "text": "assignment.updatedAt.getTime() > assignment.createdAt.getTime();"
+      }
+    ]
+  },
+  "refusalLockMatrix": {
+    "current / EXIT_FIRST": {
+      "blocked": true,
+      "refusal": "40P01",
+      "exit": "ok"
+    },
+    "current / REFUSAL_FIRST": {
+      "blocked": true,
+      "refusal": "ok",
+      "exit": "ok"
+    },
+    "corrected / EXIT_FIRST": {
+      "blocked": true,
+      "refusal": "ok",
+      "exit": "ok"
+    },
+    "corrected / REFUSAL_FIRST": {
+      "blocked": true,
+      "refusal": "ok",
+      "exit": "ok"
+    }
+  },
+  "order": {
+    "O1a CURRENT refuseCandidate (update the account cycle, its trigger then locks the parent) deadlocks (40P01) against EXIT correlation when EXIT holds the cycle first": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "refusal": "40P01",
+        "exit": "ok"
+      }
+    },
+    "O1b CURRENT refuseCandidate in the other queue order (refusal first) does not deadlock: the inversion is order dependent, so it hides in tests": {
+      "pass": true,
+      "detail": {
+        "blocked": true,
+        "refusal": "ok",
+        "exit": "ok"
+      }
+    },
+    "O1c CORRECTED refuseCandidate (lock the parent cycle, then the account cycle) never deadlocks in either queue order": {
+      "pass": true,
+      "detail": {
+        "exitFirst": {
+          "blocked": true,
+          "refusal": "ok",
+          "exit": "ok"
+        },
+        "refusalFirst": {
+          "blocked": true,
+          "refusal": "ok",
+          "exit": "ok"
+        }
+      }
+    },
+    "O2 [PAIR_QUEUES_FIRST] pair (no caller pre-locks) against the real MI revoke service: no deadlock; the outcome is consistent (pair committed XOR refused; the revoke is applied, never lost)": {
+      "pass": true,
+      "detail": {
+        "pairWaitedOnAssignment": true,
+        "pair": "COMMITTED",
+        "revoke": "REVOKED",
+        "miAuthorizationStatus": "REVOKED",
+        "pairRows": {
+          "mi": 1,
+          "tv": 1
+        }
+      }
+    },
+    "O2 [REVOKE_QUEUES_FIRST] pair (no caller pre-locks) against the real MI revoke service: no deadlock; the outcome is consistent (pair committed XOR refused; the revoke is applied, never lost)": {
+      "pass": true,
+      "detail": {
+        "pairWaitedOnAssignment": true,
+        "pair": "23514 BROKER_DISPATCH_AUTHORIZATION_CHANGED: the frozen authorization is no longer effective",
+        "revoke": "REVOKED",
+        "miAuthorizationStatus": "REVOKED",
+        "pairRows": {
+          "mi": 0,
+          "tv": 0
+        }
+      }
+    },
+    "O2c NEGATIVE CONTROL [REVOKE_QUEUES_FIRST, MI-consumption lock prelude trigger disabled]: the MI consumption insert takes the MI authorization lock before the guard reaches the assignment, and the real MI revoke deadlocks with it (40P01): why the prelude trigger exists": {
+      "pass": true,
+      "detail": {
+        "pair": "40P01 deadlock detected",
+        "revoke": "REVOKED"
+      }
+    }
+  },
+  "integrity": {
+    "I1a [owner/superuser direct SQL] a fence for an unmarked intent, a version-999 insert, a direct UPDATE, DELETE and TRUNCATE are all rejected": {
+      "pass": true,
+      "detail": {
+        "unmarked": "dispatch fence rows are created only by the marked-intent creation trigger",
+        "v999OnMarkedDuplicate": "dispatch fence rows are created only by the marked-intent creation trigger",
+        "update": "dispatch fence accepts only trigger-issued +1 increments",
+        "del": "dispatch fence rows are never deleted or truncated",
+        "truncate": "dispatch fence rows are never deleted or truncated"
+      }
+    },
+    "I1a2 none of those statements changed the fence table (row count and version sum identical)": {
+      "pass": true,
+      "detail": {
+        "before": {
+          "n": 110,
+          "s": 935
+        },
+        "after": {
+          "n": 110,
+          "s": 935
+        }
+      }
+    },
+    "I1b [restricted role with plain DML grants] unmarked, version-999 and direct version-1 inserts, UPDATE, DELETE and SET session_replication_role are all rejected": {
+      "pass": true,
+      "detail": {
+        "unmarked": "dispatch fence rows are created only by the marked-intent creation trigger",
+        "v999": "dispatch fence rows are created only by the marked-intent creation trigger",
+        "v1Direct": "dispatch fence rows are created only by the marked-intent creation trigger",
+        "update": "dispatch fence accepts only trigger-issued +1 increments",
+        "del": "dispatch fence rows are never deleted or truncated",
+        "setReplicationRole": "permission denied to set parameter \"session_replication_role\""
+      }
+    },
+    "I1c a marked intent without a fence is DETECTABLE by the preflight invariant query and every later fenced write on it fails closed; with the creation trigger disabled even admission fails closed at its first fenced write": {
+      "pass": true,
+      "detail": {
+        "markedIntentsWithoutFence": 1,
+        "fencedWrite": "marked intent 122 has no dispatch fence",
+        "admissionWithCreationTriggerDisabled": "marked intent 121 has no dispatch fence"
+      }
+    },
+    "I1d the legitimate path still works under the restricted role: a marked intent inserted by it receives its fence from the creation trigger (created at 1; the admission claim insert advanced it)": {
+      "pass": true,
+      "detail": {
+        "intentId": 123
+      }
+    },
+    "I1e an unmarked intent cannot be promoted to marked by UPDATE (so the creation trigger needs no UPDATE branch)": {
+      "pass": true,
+      "detail": "OrderIntent external signal origin marker is insert-only and immutable"
+    },
+    "I2a catalog regression: on EntryExposureClaimEvent (BEFORE INSERT, ROW) the claim delivery fence fires before the not-sent guard (name order, \"C\" collation), both enabled and bound to the expected functions": {
+      "pass": true,
+      "detail": [
+        {
+          "name": "EntryExposureClaimEvent_external_signal_c2_delivery_fence",
+          "fn": "external_signal_c2_delivery_event_fence",
+          "enabled": "O"
+        },
+        {
+          "name": "EntryExposureClaimEvent_external_signal_c2_not_sent_guard",
+          "fn": "external_signal_c2_not_sent_evidence_guard",
+          "enabled": "O"
+        }
+      ]
+    },
+    "I2b with the shipped order, a not-sent insert queued behind an uncommitted ADAPTER_INVOCATION_STARTED waits at the claim lock, then is REFUSED as contradictory": {
+      "pass": true,
+      "detail": {
+        "adapterInserted": true,
+        "blocked": true,
+        "notSent": "TradingView not-sent evidence contradicts persisted dispatch or broker evidence",
+        "bothRecorded": false
+      }
+    },
+    "I2c NEGATIVE CONTROL: if the order flips (the fence trigger renamed to sort after the guard) a NOT_SENT record is committed next to ADAPTER_INVOCATION_STARTED; the catalog order check catches the flip": {
+      "pass": true,
+      "detail": {
+        "orderAfterFlip": [
+          "EntryExposureClaimEvent_external_signal_c2_not_sent_guard",
+          "EntryExposureClaimEvent_zz_external_signal_c2_delivery_fence"
+        ],
+        "flipped": {
+          "adapterInserted": true,
+          "blocked": true,
+          "notSent": "RECORDED",
+          "bothRecorded": true
+        }
+      }
+    },
+    "I2d trigger-independent alternative (the not-sent guard locks the claim itself, one added statement): the same flip no longer records NOT_SENT next to the adapter event": {
+      "pass": true,
+      "detail": {
+        "adapterInserted": true,
+        "blocked": true,
+        "notSent": "TradingView not-sent evidence contradicts persisted dispatch or broker evidence",
+        "bothRecorded": false
+      }
+    },
+    "I2e the order is restored after the controls": {
+      "pass": true
+    },
+    "I3a the overlay is visible to the C3B.1 manifest comparison: replaced functions are CHANGED and every new function and trigger is UNREVIEWED (the migration must regenerate the manifest in the same change)": {
+      "pass": true,
+      "detail": {
+        "changed": [
+          "external_signal_broker_consumption_guard()",
+          "external_signal_broker_evidence_quarantine()"
+        ],
+        "unreviewedFunctions": 15,
+        "unreviewedTriggers": 18
+      }
+    },
+    "I3b with the post-overlay catalog as the reviewed baseline the drift is empty": {
+      "pass": true,
+      "detail": {
+        "functionsChanged": [],
+        "functionsMissing": [],
+        "functionsUnreviewed": [],
+        "triggersChanged": [],
+        "triggersMissing": [],
+        "triggersUnreviewed": []
+      }
+    },
+    "I3c renamed trigger: reported missing AND unreviewed": {
+      "pass": true,
+      "detail": {
+        "missing": [
+          "EntryExposureClaimEvent/EntryExposureClaimEvent_external_signal_c2_not_sent_guard"
+        ],
+        "unreviewed": [
+          "EntryExposureClaimEvent/EntryExposureClaimEvent_external_signal_c2_not_sent_guard_x"
+        ]
+      }
+    },
+    "I3d disabled trigger: reported changed (enabled)": {
+      "pass": true,
+      "detail": [
+        [
+          "EntryExposureClaimEvent/EntryExposureClaimEvent_external_signal_c2_delivery_fence",
+          [
+            "enabled"
+          ]
+        ]
+      ]
+    },
+    "I3e trigger rebound to another function: reported changed (function)": {
+      "pass": true,
+      "detail": [
+        [
+          "EntryExposureClaimEvent/EntryExposureClaimEvent_external_signal_c2_delivery_fence",
+          [
+            "function"
+          ]
+        ]
+      ]
+    },
+    "I3f altered function body: reported changed (bodySha256)": {
+      "pass": true,
+      "detail": [
+        {
+          "function": "external_signal_c2_delivery_event_fence()",
+          "fields": [
+            "bodySha256"
+          ]
+        }
+      ]
+    },
+    "I3g every control is restored": {
+      "pass": true,
+      "detail": {
+        "functionsChanged": [],
+        "functionsMissing": [],
+        "functionsUnreviewed": [],
+        "triggersChanged": [],
+        "triggersMissing": [],
+        "triggersUnreviewed": []
+      }
+    },
+    "I3h every object proposed for CRITICAL_TRIGGERS exists in the overlay catalog": {
+      "pass": true,
+      "detail": {
+        "proposed": 13,
+        "present": 13
+      }
+    },
+    "I4 none of the new or replaced functions contains EXCEPTION WHEN others / serialization_failure (a swallowed 40001 would let the guard continue past a conflict); existing accepted functions that do are listed": {
+      "pass": true,
+      "detail": {
+        "newOrReplacedThatSwallow": [],
+        "existingWithWhenOthers": [
+          "external_signal_c2_not_sent_evidence_guard"
+        ]
+      }
+    }
+  },
+  "manifestDrift": {
+    "functionsChanged": [
+      "external_signal_broker_consumption_guard()",
+      "external_signal_broker_evidence_quarantine()"
+    ],
+    "functionsUnreviewed": [
+      "external_signal_broker_evidence_marked_intents(p_intent_id integer, p_client_order_id text, p_broker_order_id text, p_account_id integer, p_broker_order_record_id integer)",
+      "external_signal_dispatch_fence_bump()",
+      "external_signal_dispatch_fence_consumption_verify()",
+      "external_signal_dispatch_fence_create()",
+      "external_signal_dispatch_fence_guard()",
+      "external_signal_epoch_created_at_stamp()",
+      "external_signal_epoch_marked_intent_created_at_stamp()",
+      "external_signal_lock_dispatch_graph(p_intent_id integer, p_decision_id integer)",
+      "external_signal_marked_intent(p_intent_id integer)",
+      "external_signal_marked_intent_broker_evidence(p_intent_id integer)",
+      "external_signal_mi_consumption_lock_prelude()",
+      "external_signal_signal_receipt_open(p_signal_id integer, p_minimum_remaining interval)",
+      "external_signal_signal_receipt_remaining(p_signal_id integer)",
+      "external_signal_signal_received_at_guard()",
+      "external_signal_signal_received_since(p_signal_id integer, p_epoch timestamp with time zone)"
+    ],
+    "triggersChanged": [],
+    "triggersUnreviewed": [
+      "BrokerActivity/BrokerActivity_dispatch_fence_bump",
+      "BrokerOrder/BrokerOrder_dispatch_fence_bump",
+      "EntryExposureClaim/EntryExposureClaim_dispatch_fence_bump",
+      "EntryExposureClaimEvent/EntryExposureClaimEvent_dispatch_fence_bump",
+      "ExternalSignalBrokerDispatchConsumption/ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump",
+      "ExternalSignalBrokerDispatchConsumption/ExternalSignalBrokerDispatchConsumption_zz_b_fence_verify",
+      "ExternalSignalBrokerWorkerClaim/ExternalSignalBrokerWorkerClaim_dispatch_fence_bump",
+      "ExternalSignalDispatchFence/ExternalSignalDispatchFence_guard",
+      "ExternalSignalDispatchFence/ExternalSignalDispatchFence_truncate_guard",
+      "ExternalSignalTradeCycleAccount/ExternalSignalTradeCycleAccount_a_epoch_stamp",
+      "MarketPolicyBrokerDispatchConsumption/BrokerDispatchConsumption_a_lock_prelude",
+      "MarketPolicyBrokerDispatchDecision/MarketPolicyBrokerDispatchDecision_dispatch_fence_bump",
+      "MarketPolicyBrokerUnenforcedDispatch/MarketPolicyBrokerUnenforcedDispatch_dispatch_fence_bump",
+      "OrderIntent/OrderIntent_a_epoch_stamp",
+      "OrderIntent/OrderIntent_dispatch_fence_bump",
+      "OrderIntent/OrderIntent_dispatch_fence_create",
+      "OrderIntentBrokerOpportunityEvent/OrderIntentBrokerOpportunityEvent_dispatch_fence_bump",
+      "Signal/Signal_received_at_guard"
+    ],
+    "triggersMissing": []
+  },
+  "proposedPreflightOrderInvariant": {
+    "sql": "SELECT c.relname AS \"table\", array_agg(t.tgname::text ORDER BY t.tgname COLLATE \"C\") AS fire_order FROM pg_trigger t JOIN pg_class c ON c.oid=t.tgrelid WHERE NOT t.tgisinternal AND c.relname='EntryExposureClaimEvent' AND (t.tgtype & 2)<>0 AND (t.tgtype & 4)<>0 GROUP BY 1",
+    "expectedBefore": [
+      [
+        "EntryExposureClaimEvent_external_signal_c2_delivery_fence",
+        "EntryExposureClaimEvent_external_signal_c2_not_sent_guard"
+      ]
+    ]
+  },
+  "network": {
+    "no broker request was attempted": {
+      "pass": true,
+      "detail": []
+    }
+  }
+}

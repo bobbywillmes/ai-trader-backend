@@ -80,8 +80,10 @@ try {
   // A real Market Intelligence authorization (policy, enrollment and grant through the production services) is attached to
   // the graph's assignment AFTER admission, with the runtime rollout left inactive so intent creation needs no obligation.
   // The ALLOWED decision row itself is seeded with triggers off (the repository's own C3A seeds do the same); every
-  // consumption, fence and release below then runs with all production triggers enabled. Seeding the decision with no
-  // obligation also confirms the section 1.1 finding: the database does not require an MI obligation on a marked intent.
+  // consumption, fence and release below then runs with all production triggers enabled. CORRECTED in revision 5: this seed cites
+  // a literal obligation id and creates no obligation row, which only works because the BrokerDispatchDecision_obligation_check CHECK
+  // needs a non-NULL id and the foreign-key and validation triggers are skipped with the rest. An ALLOWED decision is NOT consumable
+  // without a frozen Market Intelligence obligation (section 1.1); revision 5 seeds a real obligation row (c3b2-r5-common.ts).
   const policy = await import('../../src/services/strategy-market-policy.service.js');
   const enrollment = await import('../../src/services/assignment-market-policy-enrollment.service.js');
   const enforcement = await import('../../src/services/assignment-market-policy-enforcement-authorization.service.js');

@@ -1,0 +1,354 @@
+{
+  "server": "17.11 (Debian 17.11-1.pgdg13+2)",
+  "examples": [
+    {
+      "label": "raw $queryRaw, server raises 40001",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40001",
+            "originalMessage": "raised serialization",
+            "kind": "TransactionWriteConflict"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$queryRaw()` invocation: | Raw query failed. Code: `40001`. Message: `raised serialization`",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "raw $queryRaw, server raises 40P01",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40P01",
+            "originalMessage": "raised deadlock",
+            "kind": "postgres",
+            "code": "40P01",
+            "severity": "ERROR",
+            "message": "raised deadlock"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$queryRaw()` invocation: | Raw query failed. Code: `40P01`. Message: `raised deadlock`",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "raw $executeRaw, server raises 40001",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40001",
+            "originalMessage": "raised serialization",
+            "kind": "TransactionWriteConflict"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$executeRaw()` invocation: | Raw query failed. Code: `40001`. Message: `raised serialization`",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "raw, application raise P0001 whose MESSAGE contains \"40001\" and \"deadlock detected\"",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "P0001",
+            "originalMessage": "could not serialize access (SQLSTATE 40001) deadlock detected 40P01",
+            "kind": "postgres",
+            "code": "P0001",
+            "severity": "ERROR",
+            "message": "could not serialize access (SQLSTATE 40001) deadlock detected 40P01"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$queryRaw()` invocation: | Raw query failed. Code: `P0001`. Message: `could not serialize access (SQLSTATE 40001) deadlock detected 40P01`",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "raw, unique violation 23505",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "23505",
+            "originalMessage": "duplicate key value violates unique constraint \"User_email_key\"",
+            "kind": "UniqueConstraintViolation",
+            "constraint": {
+              "fields": "[depth]"
+            }
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$executeRaw()` invocation: | Raw query failed. Code: `23505`. Message: `duplicate key value violates unique constraint \"User_email_key\"`",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "raw, lock_timeout 55P03",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "55P03",
+            "originalMessage": "canceling statement due to lock timeout",
+            "kind": "postgres",
+            "code": "55P03",
+            "severity": "ERROR",
+            "message": "canceling statement due to lock timeout"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$queryRaw()` invocation: | Raw query failed. Code: `55P03`. Message: `canceling statement due to lock timeout`",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "model create, BEFORE INSERT trigger raises 40001",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2034",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "modelName": "SystemEvent",
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40001",
+            "originalMessage": "trigger says serialization",
+            "kind": "TransactionWriteConflict"
+          }
+        }
+      },
+      "messageHead": "→ 66 await capture('model create, BEFORE INSERT trigger raises 40001', () => prisma.systemEvent.create( | Transaction failed due to a write conflict or a deadlock. Please retry your transaction",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "model create, BEFORE INSERT trigger raises 40P01",
+      "ctor": "DriverAdapterError",
+      "isPrismaKnown": false,
+      "name": "DriverAdapterError",
+      "cause": {
+        "originalCode": "40P01",
+        "originalMessage": "trigger says deadlock",
+        "kind": "postgres",
+        "code": "40P01",
+        "severity": "ERROR",
+        "message": "trigger says deadlock"
+      },
+      "messageHead": "trigger says deadlock",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "model create, trigger raises P0001 with SQLSTATE text in the message only",
+      "ctor": "DriverAdapterError",
+      "isPrismaKnown": false,
+      "name": "DriverAdapterError",
+      "cause": {
+        "originalCode": "P0001",
+        "originalMessage": "could not serialize access due to concurrent update (SQLSTATE 40001) deadlock detected 40P01",
+        "kind": "postgres",
+        "code": "P0001",
+        "severity": "ERROR",
+        "message": "could not serialize access due to concurrent update (SQLSTATE 40001) deadlock detected 40P01"
+      },
+      "messageHead": "could not serialize access due to concurrent update (SQLSTATE 40001) deadlock detected 40P01",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "raw INSERT, trigger raises 40001",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40001",
+            "originalMessage": "trigger says serialization",
+            "kind": "TransactionWriteConflict"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$executeRaw()` invocation: | Raw query failed. Code: `40001`. Message: `trigger says serialization`",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "interactive Serializable tx, statement raises 40001",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40001",
+            "originalMessage": "raised serialization",
+            "kind": "TransactionWriteConflict"
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$queryRaw()` invocation: | Raw query failed. Code: `40001`. Message: `raised serialization`",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "interactive Serializable tx, trigger-raised 40001 through a model write",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2034",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "modelName": "SystemEvent",
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40001",
+            "originalMessage": "trigger says serialization",
+            "kind": "TransactionWriteConflict"
+          }
+        }
+      },
+      "messageHead": "→ 72 await capture('interactive Serializable tx, trigger-raised 40001 through a model write', () => prisma.$transaction(async tx => { await tx.systemEvent.create( | Transaction failed due to a write conflict or a deadloc",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "REAL write-skew serialization failure (two interactive Serializable transactions)",
+      "ctor": "DriverAdapterError",
+      "isPrismaKnown": false,
+      "name": "DriverAdapterError",
+      "cause": {
+        "originalCode": "40001",
+        "originalMessage": "could not serialize access due to read/write dependencies among transactions",
+        "kind": "TransactionWriteConflict"
+      },
+      "messageHead": "TransactionWriteConflict",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "REAL deadlock 40P01 (two interactive transactions, READ COMMITTED)",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "name": "DriverAdapterError",
+          "cause": {
+            "originalCode": "40P01",
+            "originalMessage": "deadlock detected",
+            "kind": "postgres",
+            "code": "40P01",
+            "severity": "ERROR",
+            "message": "deadlock detected",
+            "detail": "Process 549 waits for ShareLock on transaction 5622; blocked by process 548.\nProcess 548 waits for ShareLock on transaction 5621; blocked by process 549.",
+            "hint": "See server log for query details."
+          }
+        }
+      },
+      "messageHead": "Invalid `prisma.$queryRaw()` invocation: | Raw query failed. Code: `40P01`. Message: `deadlock detected`",
+      "classifiedRetryable": true,
+      "expectedRetryable": true
+    },
+    {
+      "label": "backend terminated mid-transaction (57P01)",
+      "ctor": "Error",
+      "isPrismaKnown": false,
+      "name": "Error",
+      "messageHead": "Client has encountered a connection error and is not queryable",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "plain Error whose message names 40001",
+      "ctor": "Error",
+      "isPrismaKnown": false,
+      "name": "Error",
+      "messageHead": "ERROR: could not serialize access due to read/write dependencies among transactions (SQLSTATE 40001)",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "P2010 constructed with SQLSTATE 40001 in its MESSAGE only (no structured field)",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {},
+      "messageHead": "Raw query failed. Code: `40001`. Message: `ERROR: could not serialize access`",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "P2010 whose driverAdapterError.cause lacks originalCode (message text only)",
+      "ctor": "PrismaClientKnownRequestError",
+      "isPrismaKnown": true,
+      "prismaCode": "P2010",
+      "name": "PrismaClientKnownRequestError",
+      "meta": {
+        "driverAdapterError": {
+          "cause": {
+            "originalMessage": "ERROR: 40001 serialization"
+          }
+        }
+      },
+      "messageHead": "x",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    },
+    {
+      "label": "constructed lookalike with code 40001 (not a pg DatabaseError)",
+      "ctor": "Error",
+      "isPrismaKnown": false,
+      "prismaCode": "40001",
+      "name": "DatabaseError",
+      "messageHead": "fake",
+      "classifiedRetryable": false,
+      "expectedRetryable": false
+    }
+  ],
+  "summary": {
+    "cases": 19,
+    "retryable": 10,
+    "notRetryable": 9,
+    "misclassified": []
+  }
+}
