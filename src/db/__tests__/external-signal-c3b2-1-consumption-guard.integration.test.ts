@@ -1,7 +1,7 @@
 import 'dotenv/config';
 import { randomUUID } from 'node:crypto';
 import { createHash } from 'node:crypto';
-import { Client } from 'pg';
+import { Client, DatabaseError } from 'pg';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import { createDisposablePostgresDatabase, type DisposablePostgresDatabase } from './disposable-postgres.js';
 import { createTradingViewGraphFixture } from './tradingview-graph.fixture.js';
@@ -709,11 +709,45 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       expect(['NOT_AUTHORIZED_BY_THIS_ATTEMPT', 'AMBIGUOUS']).toContain((error as { attemptOutcome?: string }).attemptOutcome);
       expect(await claimReleased(g.claimId)).toBe(false);
       d2.go();
-      const result = await f2.then(value => ({ value }), error => ({ error }));
-      // F2's own decision may have been superseded by the failed attempt's persisted failure record; either way at most one pair exists,
-      // F2 reports only its own attempt, and nothing was released.
-      if ('error' in result) expectAttemptScoped(result.error, 'NOT_AUTHORIZED_BY_THIS_ATTEMPT'); else expect(result.value.outcome).toBe('AUTHORIZED');
-      expect((await counts(g.intentId)).tv).toBeLessThanOrEqual(1);
+      expect((await f2).outcome).toBe('AUTHORIZED');
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('afterDecision hook failure: a plain Error is attempt-scoped NOT_AUTHORIZED_BY_THIS_ATTEMPT with no pair and no release', async () => {
+      const g = await ready('hook-plain-error', { decision: false });
+      const failed = await svc.worker.finalizeTradingViewDispatch(g.intentId, { afterDecision: async () => { throw new Error('simulated hook failure'); } }).then(value => ({ value }), error => ({ error }));
+      expect('error' in failed, 'a failed hook must not authorize').toBe(true);
+      expectAttemptScoped((failed as { error: unknown }).error, 'NOT_AUTHORIZED_BY_THIS_ATTEMPT');
+      expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+      await noNotSentSignals(g.intentId);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('afterDecision hook failure: a genuine pg DatabaseError 08006 is AMBIGUOUS with no release', async () => {
+      const g = await ready('hook-08006', { decision: false });
+      const connectionError = Object.assign(new DatabaseError('connection failure', 0, 'error'), { code: '08006' });
+      const failed = await svc.worker.finalizeTradingViewDispatch(g.intentId, { afterDecision: async () => { throw connectionError; } }).then(value => ({ value }), error => ({ error }));
+      expect('error' in failed, 'a connection-class hook failure must not authorize').toBe(true);
+      expectAttemptScoped((failed as { error: unknown }).error, 'AMBIGUOUS');
+      expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+      await noNotSentSignals(g.intentId);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('afterDecision hook failure after another finalizer committed the pair returns ALREADY_AUTHORIZED without duplicate consumption', async () => {
+      const g = await ready('hook-already-authorized', { decision: false });
+      const result = await svc.worker.finalizeTradingViewDispatch(g.intentId, {
+        afterDecision: async () => {
+          expect((await svc.worker.finalizeTradingViewDispatch(g.intentId)).outcome).toBe('AUTHORIZED');
+          throw new Error('simulated hook failure after sibling commit');
+        },
+      });
+      expect(result.outcome).toBe('ALREADY_AUTHORIZED');
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
       expect(await claimReleased(g.claimId)).toBe(false);
       expect(fetchSpy).not.toHaveBeenCalled();
     }, 180_000);

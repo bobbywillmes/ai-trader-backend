@@ -437,7 +437,14 @@ export async function finalizeTradingViewDispatch(orderIntentId: number, options
     // D failing is this attempt's failure only; a pending sibling may still commit. Not intent-level proof.
     throw normalizeFinalizerFailure(error);
   }
-  await options.afterDecision?.(decision);
+  try {
+    await options.afterDecision?.(decision);
+  } catch (error) {
+    const durable = await readCommittedPair(db, orderIntentId).catch(readError => { throw new TradingViewFinalizationAmbiguousError({ hookError: error, readError }); });
+    if (durable) return durable;
+    // Hook failure is this attempt's failure only; missing consumption is not intent-level non-send proof.
+    throw normalizeFinalizerFailure(error);
+  }
   let lastError: unknown;
   for (let attempt = 0; attempt <= SERIALIZATION_RETRIES; attempt += 1) {
     try {
