@@ -43,6 +43,7 @@ import { createSystemEvent } from './system-event.service.js';
 export const MARKET_POLICY_BROKER_TIME_ENFORCEMENT_VERSION = 'MARKET_POLICY_BROKER_TIME_ENFORCEMENT_V1' as const;
 export const MARKET_POLICY_BROKER_DISPATCH_WINDOW_MS = 30_000;
 const PREPARATION_TRANSACTION = { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, timeout: 15_000, maxWait: 10_000 } as const;
+const PREPARATION_LOCK_TIMEOUT_MS = 5_000;
 const NON_ENFORCED_DISPOSITIONS = new Set<MarketPolicyEnforcementDisposition>(['NEVER_AUTHORIZED', 'OWNER_REVOKED', 'OWNER_OPTED_OUT', 'NOT_APPLICABLE_LIVE']);
 const UNENFORCED_DISPATCH_BASES = new Set<string>(['NEVER_AUTHORIZED', 'OWNER_REVOKED', 'OWNER_OPTED_OUT']);
 
@@ -209,6 +210,9 @@ function authorizationEvidence(authorization: AuthorizationEvidenceSource | null
  */
 async function prepareObligatedDecision(db: PrismaClient, request: EntryBrokerDispatchRequest, obligationId: number, evaluator: MarketPolicyEvaluator): Promise<DecisionResult> {
   return db.$transaction(async tx => {
+    // Bound every database lock in D. The authorization clock is sampled only after all
+    // locks, so waiting can consume but never extend the original evidence window.
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '${PREPARATION_LOCK_TIMEOUT_MS}ms'`);
     const rollout = await lockMarketPolicyEnforcementRollout(tx);
     const obligation = await tx.orderIntentMarketPolicyEnforcementObligation.findUnique({ where: { id: obligationId } });
     if (!obligation || obligation.orderIntentId !== request.orderIntentId) throw new BrokerDispatchTechnicalError('OBLIGATION_LOAD', new Error('Frozen obligation does not belong to the OrderIntent.'));
@@ -219,6 +223,12 @@ async function prepareObligatedDecision(db: PrismaClient, request: EntryBrokerDi
       throw new BrokerDispatchTechnicalError('AUTHORIZATION_RESOLUTION', error);
     }
     await tx.$queryRaw`SELECT pg_advisory_xact_lock(hashtextextended(${`entry-exposure:${obligation.tradingAccountId}:${obligation.securityId}`}, 0))::text`;
+
+    // D must own intent (then claim) before an INSERT whose trigger advances the
+    // dispatch fence. FOR UPDATE is intentional: FOR KEY SHARE does not conflict with
+    // ordinary non-key intent updates used by lifecycle/recovery writers.
+    await tx.$queryRaw`SELECT id FROM "OrderIntent" WHERE id=${request.orderIntentId} FOR UPDATE`;
+    await tx.$queryRaw`SELECT id FROM "EntryExposureClaim" WHERE "orderIntentId"=${request.orderIntentId} FOR UPDATE`;
 
     const intent = await tx.orderIntent.findUniqueOrThrow({
       where: { id: request.orderIntentId },
@@ -564,19 +574,26 @@ export async function insertMarketPolicyDispatchConsumption(
   decision: MarketPolicyDispatchDecision,
   request: EntryBrokerDispatchRequest,
   brokerPostOpportunityId: number | null,
+  semantics = 'DISPATCH_STARTED_AFTER_COMMIT; NOT_PROOF_OF_BROKER_RECEIPT',
 ) {
-  // A single-statement transaction; PostgreSQL rechecks the window and the exact frozen authority
-  // with a fresh clock and stamps consumedAt. No transaction is held across the Alpaca request.
+  // PostgreSQL rechecks the window and exact frozen authority with a fresh clock and
+  // stamps consumedAt. TradingView F supplies authorization-only semantics.
   return tx.marketPolicyBrokerDispatchConsumption.create({
     data: {
       decisionId: decision.decisionId, orderIntentId: request.orderIntentId, clientOrderId: decision.clientOrderId, brokerPostOpportunityId,
-      evidenceJson: json({ dispatchExpiresAt: decision.dispatchExpiresAt, semantics: 'DISPATCH_STARTED_AFTER_COMMIT; NOT_PROOF_OF_BROKER_RECEIPT' }),
+      evidenceJson: json({ dispatchExpiresAt: decision.dispatchExpiresAt, semantics }),
     },
   });
 }
 
 async function consumeDecision(db: PrismaClient, decision: DecisionResult, request: EntryBrokerDispatchRequest, brokerPostOpportunityId: number | null) {
-  await db.$transaction(tx => insertMarketPolicyDispatchConsumption(tx, decision, request, brokerPostOpportunityId));
+  // Preserve the accepted legacy single-statement path and its Prisma client defaults.
+  await db.marketPolicyBrokerDispatchConsumption.create({
+    data: {
+      decisionId: decision.decisionId, orderIntentId: request.orderIntentId, clientOrderId: decision.clientOrderId, brokerPostOpportunityId,
+      evidenceJson: json({ dispatchExpiresAt: decision.dispatchExpiresAt, semantics: 'DISPATCH_STARTED_AFTER_COMMIT; NOT_PROOF_OF_BROKER_RECEIPT' }),
+    },
+  });
 }
 
 function consumptionRefusalCode(error: unknown) {
@@ -607,9 +624,14 @@ export async function prepareObligatedBrokerDecision(
 ) {
   const intent = await loadDispatchIntent(db, request.orderIntentId);
   if (intent.obligationId !== obligationId) {
-    throw await technicalRefusal(db, request, intent, new BrokerDispatchTechnicalError('OBLIGATION_LOAD', new Error('Frozen obligation does not belong to the OrderIntent.')));
+    throw new BrokerDispatchTechnicalError('OBLIGATION_LOAD', new Error('Frozen obligation does not belong to the OrderIntent.'));
   }
-  return prepareObligated(db, request, intent, evaluator);
+  // The paired TradingView caller reconciles concurrent durable authorization itself.
+  // Do not emit legacy no-send technical evidence: a competing F may already have
+  // committed. Genuine policy denials still persist their decision and warning.
+  const decision = await prepareObligatedDecision(db, request, obligationId, evaluator);
+  if (decision.outcome !== 'ALLOWED') throw await denialRefusal(request, decision);
+  return decision;
 }
 
 /**

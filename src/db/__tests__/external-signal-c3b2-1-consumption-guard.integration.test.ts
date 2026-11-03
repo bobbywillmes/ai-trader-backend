@@ -237,9 +237,10 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
     }, 180_000);
 
-    it('lets exactly one competing finalizer commit and recovers the loser from the durable pair', async () => {
+    it('lets exactly one of three competing finalizers commit without false technical-failure evidence or post-pair fence movement', async () => {
       const g = await ready('service-competing', { decision: false });
       const settled = await Promise.allSettled([
+        svc.worker.finalizeTradingViewDispatch(g.intentId),
         svc.worker.finalizeTradingViewDispatch(g.intentId),
         svc.worker.finalizeTradingViewDispatch(g.intentId),
       ]);
@@ -247,6 +248,41 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       const values = settled.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof svc.worker.finalizeTradingViewDispatch>>> => result.status === 'fulfilled').map(result => result.value);
       expect(new Set(values.map(value => value.tradingViewConsumptionId)).size).toBe(1);
       expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect((await db.query(`SELECT count(*)::int n FROM "MarketPolicyBrokerDispatchDecision" WHERE "orderIntentId"=$1 AND (outcome='TECHNICAL_FAILURE' OR "dispatchDisposition"='NOT_SENT_TECHNICAL_FAILURE')`, [g.intentId])).rows[0].n).toBe(0);
+      expect((await db.query(`SELECT count(*)::int n FROM "SystemEvent" WHERE "entityType"='orderIntent' AND "entityId"=$1 AND type='MARKET_POLICY_BROKER_DISPATCH_TECHNICAL_FAILURE'`, [g.intentId])).rows[0].n).toBe(0);
+      const fence = await fenceNow(g.intentId);
+      await Promise.all([svc.worker.finalizeTradingViewDispatch(g.intentId), svc.worker.finalizeTradingViewDispatch(g.intentId)]);
+      expect(await fenceNow(g.intentId)).toBe(fence);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('blocks a duplicate reread behind an uncommitted pair and returns that pair after commit', async () => {
+      const g = await ready('service-uncommitted-pair', { decision: false });
+      let release!: () => void;
+      let entered!: () => void;
+      const inside = new Promise<void>(resolve => { entered = resolve; });
+      const gate = new Promise<void>(resolve => { release = resolve; });
+      const first = svc.worker.finalizeTradingViewDispatch(g.intentId, { beforeCommit: async () => { entered(); await gate; } });
+      await inside;
+      const base = await waiters();
+      const second = svc.worker.finalizeTradingViewDispatch(g.intentId);
+      await untilWaiters(base + 1, 'duplicate reread queued at the rollout synchronization boundary');
+      release();
+      const [a, b] = await Promise.all([first, second]);
+      expect(a.tradingViewConsumptionId).toBe(b.tradingViewConsumptionId);
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('keeps a committed pair readable after account and execution authorization changes and uses authorization-only MI semantics', async () => {
+      const g = await ready('service-pair-lifecycle', { decision: false });
+      const first = await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      await svc.authority.revokeExternalSignalEntryExecutionAuthorization(paperId, g.target.assignmentId, g.target.authorizationId, 'post-pair idempotency proof', ownerId);
+      await db.query(`UPDATE "TradingAccount" SET status='PAUSED',"tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]);
+      const again = await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      expect(again).toMatchObject({ outcome: 'ALREADY_AUTHORIZED', tradingViewConsumptionId: first.tradingViewConsumptionId, marketPolicyConsumptionId: first.marketPolicyConsumptionId });
+      const evidence = (await db.query(`SELECT "evidenceJson" FROM "MarketPolicyBrokerDispatchConsumption" WHERE id=$1`, [first.marketPolicyConsumptionId])).rows[0].evidenceJson;
+      expect(evidence.semantics).toBe('PAIRED_TRADINGVIEW_AUTHORIZATION_ONLY; NO_BROKER_REQUEST; C3C_SEND_PERMIT_REQUIRED');
       expect(fetchSpy).not.toHaveBeenCalled();
     }, 180_000);
 

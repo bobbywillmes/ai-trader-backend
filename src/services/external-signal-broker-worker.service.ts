@@ -319,6 +319,12 @@ async function loadFinalizerPrecheck(db: Db, orderIntentId: number): Promise<Fin
 
 async function readCommittedPair(db: Db, orderIntentId: number): Promise<TradingViewFinalAuthorization | null> {
   return db.$transaction(async tx => {
+    // This is F's first lock. Taking the same boundary before reading means an F that has
+    // started but has not reached the fence cannot later commit behind an authoritative
+    // missing-pair conclusion. A timeout/connection failure escapes and is AMBIGUOUS.
+    await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+    await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = '10s'`);
+    await tx.$executeRaw`SELECT pg_advisory_xact_lock(hashtext('external-signal-execution-rollout')::bigint)`;
     const rows = await tx.$queryRaw<Array<TradingViewFinalAuthorization & { decisionId: number }>>`
       SELECT t.id AS "tradingViewConsumptionId", m.id AS "marketPolicyConsumptionId", m."decisionId",
         t."orderIntentId", t."authorizedAt", t."authorizationDeadlineAt", t."fenceVersion"
@@ -337,7 +343,7 @@ async function readCommittedPair(db: Db, orderIntentId: number): Promise<Trading
       throw new Error('TRADINGVIEW_COMMITTED_PAIR_CHANGED');
     }
     return { ...pair, outcome: 'ALREADY_AUTHORIZED' as const };
-  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted, maxWait: 7_500, timeout: 12_500 });
 }
 
 function finalizationRefusal(error: unknown) {
@@ -348,8 +354,16 @@ function finalizationRefusal(error: unknown) {
 }
 
 function potentiallyLostTransactionAcknowledgement(error: unknown) {
-  if (error instanceof Prisma.PrismaClientKnownRequestError) return ['P1001', 'P1002', 'P1017'].includes(error.code);
-  if (error instanceof DriverAdapterError) return typeof record(error.cause)?.originalCode !== 'string';
+  if (error instanceof Prisma.PrismaClientKnownRequestError) {
+    if (['P1001', 'P1002', 'P1017'].includes(error.code)) return true;
+    const state = sqlStateFromPrismaError(error);
+    return state?.startsWith('08') === true || state?.startsWith('57P0') === true;
+  }
+  if (error instanceof DriverAdapterError) {
+    const state = record(error.cause)?.originalCode;
+    return typeof state !== 'string' || state.startsWith('08') || state.startsWith('57P0');
+  }
+  if (error instanceof DatabaseError && (error.code?.startsWith('08') || error.code?.startsWith('57P0'))) return true;
   return /connection (?:terminated|closed|lost)|socket|ECONNRESET|EPIPE/i.test(errorMessage(error));
 }
 
@@ -395,7 +409,13 @@ export async function finalizeTradingViewDispatch(orderIntentId: number, options
         await tx.$executeRaw`SELECT external_signal_lock_dispatch_graph(${orderIntentId}, ${decision.decisionId})`;
         const [fence] = await tx.$queryRaw<Array<{ version: bigint }>>`SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=${orderIntentId} FOR UPDATE`;
         if (!fence) throw new Error('TRADINGVIEW_DISPATCH_FENCE_MISSING');
-        const mi = await insertMarketPolicyDispatchConsumption(tx, decision, request, brokerPostOpportunityId);
+        const mi = await insertMarketPolicyDispatchConsumption(
+          tx,
+          decision,
+          request,
+          brokerPostOpportunityId,
+          'PAIRED_TRADINGVIEW_AUTHORIZATION_ONLY; NO_BROKER_REQUEST; C3C_SEND_PERMIT_REQUIRED',
+        );
         const inserted = await tx.$queryRaw<Array<Omit<TradingViewFinalAuthorization, 'outcome' | 'marketPolicyConsumptionId' | 'orderIntentId'>>>(Prisma.sql`
           INSERT INTO "ExternalSignalBrokerDispatchConsumption"
             ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId",
