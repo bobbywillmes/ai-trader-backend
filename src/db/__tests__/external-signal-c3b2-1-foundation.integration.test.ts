@@ -454,7 +454,7 @@ const fenceOf = async (c: Client, intentId: number) => Number((await c.query(`SE
 
   // -------------------------------------------------------------------------------------------------------------
   describe('inert infrastructure: nothing in production writes a TradingView consumption or reaches a broker', () => {
-    it('has no production source that inserts the TradingView consumption or finalizes dispatch', async () => {
+    it('keeps the test-only finalizer isolated from every runtime caller', async () => {
       const { execFileSync } = await import('node:child_process');
       const out = execFileSync(process.execPath, ['-e', `
         const fs = require('node:fs'); const path = require('node:path');
@@ -464,10 +464,10 @@ const fenceOf = async (c: Client, intentId: number) => Number((await c.query(`SE
           if (e.isDirectory()) { if (e.name !== '__tests__' && e.name !== 'node_modules') walk(p); continue; }
           if (!/\\.ts$/.test(e.name) || /\\.test\\.ts$/.test(e.name) || /database-security-/.test(e.name)) continue;
           const text = fs.readFileSync(p, 'utf8');
-          if (/INSERT INTO "ExternalSignalBrokerDispatchConsumption"|externalSignalBrokerDispatchConsumption\\.(create|createMany|upsert)|finalizeTradingViewDispatch/.test(text)) hits.push(p);
+          if (/INSERT INTO "ExternalSignalBrokerDispatchConsumption"|externalSignalBrokerDispatchConsumption\\.(create|createMany|upsert)|finalizeTradingViewDispatch/.test(text)) hits.push(p.replaceAll('\\\\','/'));
         } })('src');
         process.stdout.write(JSON.stringify(hits));`], { encoding: 'utf8' });
-      expect(JSON.parse(out)).toEqual([]);
+      expect((JSON.parse(out) as string[]).map(value => value.replaceAll('\\', '/'))).toEqual(['src/services/external-signal-broker-worker.service.ts']);
     });
 
     it('never supplies receivedAt from the ingestion service', async () => {

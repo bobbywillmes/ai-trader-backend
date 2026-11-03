@@ -1,6 +1,6 @@
 # TradingView Phase 4A.2C3B.2: final-dispatch transaction contract
 
-Status: **design, revision 5. C3B.2-0 (lock-order corrections, section 12) is accepted and migrated to persistent development (108 migrations). C3B.2-1 (the database safety foundation: receipt clock, dispatch fence, evidence identity, complete consumption guard, section 13) is implemented locally and awaiting independent review; nothing else in this document is implemented.** C3B.1 is independently accepted and its migration is applied to persistent development;
+Status: **design, revision 5. C3B.2-0 and C3B.2-1 are accepted and migrated to persistent development (109 migrations). C3B.2-2 adds the atomic paired-finalization service on that accepted schema and is awaiting independent acceptance. It remains test-only, default-off, and has no runtime caller.** C3B.1 is independently accepted and its migration is applied to persistent development;
 it is broker-inert and adds no consumption writer, scheduler entry, broker adapter call or POST. Implementation of C3B.2 waits for review of this contract. No broker call is authorized in any checkpoint covered by this document.
 
 Revision 2 corrected the first draft after an independent PostgreSQL 16/17 audit. Revision 3 removed the false claim that a deferred constraint trigger is a commit-time guarantee and introduced the dispatch fence.

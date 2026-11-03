@@ -57,6 +57,8 @@ export type EntryBrokerDispatchRequest = {
 
 export type BrokerDispatchDependencies = { db?: PrismaClient; evaluator?: MarketPolicyEvaluator };
 
+export type MarketPolicyDispatchDecision = DecisionResult;
+
 /**
  * Raised when the broker-time guard refuses a new POST. Nothing was dispatched: the stable-ID lookup
  * confirmed absence and the adapter was never invoked, so this is a definite non-send.
@@ -146,6 +148,7 @@ type DispatchIntent = {
   clientOrderId: string | null;
   environment: string | null;
   obligationId: number | null;
+  externalSignalAccountCycleId: number | null;
 };
 
 type DecisionResult = {
@@ -165,6 +168,7 @@ async function loadDispatchIntent(db: PrismaClient, orderIntentId: number): Prom
     where: { id: orderIntentId },
     select: {
       id: true, tradingAccountId: true, tradingAccountSubscriptionId: true, clientOrderId: true,
+      externalSignalAccountCycleId: true,
       tradingAccount: { select: { environment: true } }, marketPolicyEnforcementObligation: { select: { id: true } },
     },
   });
@@ -173,6 +177,7 @@ async function loadDispatchIntent(db: PrismaClient, orderIntentId: number): Prom
     id: intent.id, tradingAccountId: intent.tradingAccountId, tradingAccountSubscriptionId: intent.tradingAccountSubscriptionId,
     clientOrderId: intent.clientOrderId, environment: intent.tradingAccount?.environment ?? null,
     obligationId: intent.marketPolicyEnforcementObligation?.id ?? null,
+    externalSignalAccountCycleId: intent.externalSignalAccountCycleId,
   };
 }
 
@@ -554,15 +559,24 @@ async function denialRefusal(request: EntryBrokerDispatchRequest, decision: Deci
   return new MarketPolicyBrokerDispatchRefusedError({ outcome: decision.outcome, reasonCode: decision.reasonCode, decisionId: decision.decisionId });
 }
 
-async function consumeDecision(db: PrismaClient, decision: DecisionResult, request: EntryBrokerDispatchRequest, brokerPostOpportunityId: number | null) {
+export async function insertMarketPolicyDispatchConsumption(
+  tx: Prisma.TransactionClient,
+  decision: MarketPolicyDispatchDecision,
+  request: EntryBrokerDispatchRequest,
+  brokerPostOpportunityId: number | null,
+) {
   // A single-statement transaction; PostgreSQL rechecks the window and the exact frozen authority
   // with a fresh clock and stamps consumedAt. No transaction is held across the Alpaca request.
-  await db.marketPolicyBrokerDispatchConsumption.create({
+  return tx.marketPolicyBrokerDispatchConsumption.create({
     data: {
       decisionId: decision.decisionId, orderIntentId: request.orderIntentId, clientOrderId: decision.clientOrderId, brokerPostOpportunityId,
       evidenceJson: json({ dispatchExpiresAt: decision.dispatchExpiresAt, semantics: 'DISPATCH_STARTED_AFTER_COMMIT; NOT_PROOF_OF_BROKER_RECEIPT' }),
     },
   });
+}
+
+async function consumeDecision(db: PrismaClient, decision: DecisionResult, request: EntryBrokerDispatchRequest, brokerPostOpportunityId: number | null) {
+  await db.$transaction(tx => insertMarketPolicyDispatchConsumption(tx, decision, request, brokerPostOpportunityId));
 }
 
 function consumptionRefusalCode(error: unknown) {
@@ -584,6 +598,20 @@ async function prepareObligated(db: PrismaClient, request: EntryBrokerDispatchRe
   return decision;
 }
 
+/** Test-only reusable decision phase for the TradingView paired finalizer. */
+export async function prepareObligatedBrokerDecision(
+  db: PrismaClient,
+  request: EntryBrokerDispatchRequest,
+  obligationId: number,
+  evaluator: MarketPolicyEvaluator = evaluateStrategyMarketEligibility,
+) {
+  const intent = await loadDispatchIntent(db, request.orderIntentId);
+  if (intent.obligationId !== obligationId) {
+    throw await technicalRefusal(db, request, intent, new BrokerDispatchTechnicalError('OBLIGATION_LOAD', new Error('Frozen obligation does not belong to the OrderIntent.')));
+  }
+  return prepareObligated(db, request, intent, evaluator);
+}
+
 /**
  * The single broker-time guard for every new entry BUY POST. The caller invokes it only after the
  * stable client-order-ID lookup confirmed absence, and calls `authorizeDispatch` as the last step
@@ -597,6 +625,12 @@ export async function prepareEntryBrokerDispatch(request: EntryBrokerDispatchReq
     intent = await loadDispatchIntent(db, request.orderIntentId);
   } catch (error) {
     throw await technicalRefusal(db, request, null, new BrokerDispatchTechnicalError('INTENT_LOAD', error));
+  }
+  if (intent.externalSignalAccountCycleId !== null) {
+    throw await technicalRefusal(db, request, intent, new BrokerDispatchTechnicalError(
+      'TRADINGVIEW_REQUIRES_PAIRED_CONSUMPTION',
+      new Error('Marked TradingView intents must use the atomic paired finalizer.'),
+    ));
   }
   // Obligations are PAPER-only by construction. LIVE accounts have no Market Intelligence authority.
   if (intent.environment !== 'PAPER') return notApplicable('NOT_APPLICABLE_LIVE');

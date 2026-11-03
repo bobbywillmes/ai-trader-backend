@@ -43,6 +43,21 @@ For a complete backend run that avoids cross-file contention between legacy test
 using the same real account advisory locks, use `npm test -- --no-file-parallelism`.
 Run PostgreSQL integrity tests separately with `RUN_DATABASE_INTEGRITY_TESTS=1`
 and `npm test -- src/db/__tests__` (PowerShell: `$env:RUN_DATABASE_INTEGRITY_TESTS='1'`).
+
+The complete database-gated run uses all five repository gates:
+
+```text
+RUN_DATABASE_INTEGRITY_TESTS=1
+RUN_ENTRY_EXPOSURE_PRISMA_TESTS=1
+RUN_LIFECYCLE_EVIDENCE_INVENTORY_TESTS=1
+RUN_POSITION_LIFECYCLE_PROVENANCE_TESTS=1
+RUN_RESTRICTED_ROLE_TESTS=1
+```
+
+Phase 4A.2C3B.2 paired-finalization tests remain disposable-database only. They migrate a fresh
+database, create real TradingView admission and Market Intelligence evidence, and never call a
+broker transport. `finalizeTradingViewDispatch` is test-only and must not be imported by runtime
+schedulers, API routes, webhook ingestion, or the ordinary C2 worker tick.
 These database tests create isolated temporary schemas. External-signal coverage
 includes evaluation concurrency, terminal/gate immutability, ownership backfill,
 position matching and savepoint recovery without execution tables.

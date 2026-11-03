@@ -10,6 +10,13 @@ import { appendNotSentEvidence, ADAPTER_MARKER_PROTOCOL, type NotSentProducer } 
 import { releaseUnsubmittedOrRouteToRecovery } from './entry-dispatch-recovery.service.js';
 import { observeTradingViewDeliveryUncertaintyForIntent } from './external-signal-delivery-attention.service.js';
 import { lockRowsInOrder } from './external-signal-lock-order.js';
+import {
+  insertMarketPolicyDispatchConsumption,
+  prepareObligatedBrokerDecision,
+  type EntryBrokerDispatchRequest,
+  type MarketPolicyDispatchDecision,
+} from './market-policy-broker-dispatch.service.js';
+import type { MarketPolicyEvaluator } from './market-policy-entry-admission.service.js';
 
 type Db = PrismaClient;
 const C2_REFUSAL = 'TRADINGVIEW_C2_BROKER_DISPATCH_UNAVAILABLE';
@@ -242,4 +249,207 @@ export async function recoverTradingViewC2Claim(orderIntentId: number, options: 
     throw error;
   }
   return { outcome: 'DEFINITE_NOT_SENT' as const };
+}
+
+export type TradingViewFinalAuthorization = {
+  outcome: 'AUTHORIZED' | 'ALREADY_AUTHORIZED';
+  orderIntentId: number;
+  marketPolicyConsumptionId: number;
+  tradingViewConsumptionId: number;
+  authorizedAt: Date;
+  authorizationDeadlineAt: Date;
+  fenceVersion: bigint;
+};
+
+export class TradingViewFinalizationRefusedError extends Error {
+  readonly code = 'TRADINGVIEW_FINALIZATION_REFUSED' as const;
+  readonly deliveryClassification = 'DEFINITELY_NOT_SENT' as const;
+  constructor(readonly reasonCode: string, diagnostic?: string) {
+    super(`${reasonCode}${diagnostic ? `: ${diagnostic}` : ''}`);
+    this.name = 'TradingViewFinalizationRefusedError';
+  }
+}
+
+export class TradingViewFinalizationAmbiguousError extends Error {
+  readonly code = 'TRADINGVIEW_FINALIZATION_OUTCOME_AMBIGUOUS' as const;
+  readonly deliveryClassification = 'AMBIGUOUS_UNTIL_DURABLE_STATE_RECHECK' as const;
+  constructor(readonly underlying: unknown) {
+    super('The paired-finalization outcome is ambiguous until committed consumption can be re-read. Exposure must remain owned.');
+    this.name = 'TradingViewFinalizationAmbiguousError';
+  }
+}
+
+type FinalizerPrecheck = {
+  orderIntentId: number;
+  tradingAccountId: number;
+  symbol: string;
+  clientOrderId: string;
+  executionObligationId: number;
+  marketPolicyObligationId: number;
+  workerClaimId: number;
+  accountCycleId: number;
+  executionAuthorizationId: number;
+  rolloutGenerationId: number;
+  dispatchStateVersion: number;
+  fenceVersion: bigint;
+};
+
+async function loadFinalizerPrecheck(db: Db, orderIntentId: number): Promise<FinalizerPrecheck> {
+  const rows = await db.$queryRaw<FinalizerPrecheck[]>`
+    SELECT i.id AS "orderIntentId", i."tradingAccountId", i.symbol, i."clientOrderId",
+      eo.id AS "executionObligationId", mo.id AS "marketPolicyObligationId", wc.id AS "workerClaimId",
+      eo."accountCycleId", eo."authorizationId" AS "executionAuthorizationId", eo."rolloutGenerationId",
+      wc."dispatchStateVersion", f.version AS "fenceVersion"
+    FROM "OrderIntent" i
+    JOIN "ExternalSignalEntryExecutionObligation" eo ON eo."orderIntentId"=i.id
+    JOIN "OrderIntentMarketPolicyEnforcementObligation" mo ON mo."orderIntentId"=i.id
+    JOIN "ExternalSignalBrokerWorkerClaim" wc ON wc."orderIntentId"=i.id
+    JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=i.id
+    JOIN "ExternalSignalTradeCycleAccount" ac ON ac.id=eo."accountCycleId"
+    JOIN "Signal" s ON s.id=eo."entrySignalId"
+    JOIN "ExternalSignalDispatchFence" f ON f."orderIntentId"=i.id
+    WHERE i.id=${orderIntentId} AND i.status='submitting' AND i.side='buy' AND i.source='tradingview'
+      AND ec.status='ENTRY_SUBMITTING' AND ec."releasedAt" IS NULL AND ec."trackedPositionId" IS NULL
+      AND ac."pendingExitAcceptedAt" IS NULL AND ac."terminalAt" IS NULL
+      AND external_signal_signal_receipt_open(s.id, interval '5 seconds')`;
+  const row = rows[0];
+  if (!row) throw new TradingViewFinalizationRefusedError('TRADINGVIEW_FINALIZATION_PRECHECK_FAILED');
+  return row;
+}
+
+async function readCommittedPair(db: Db, orderIntentId: number): Promise<TradingViewFinalAuthorization | null> {
+  return db.$transaction(async tx => {
+    const rows = await tx.$queryRaw<Array<TradingViewFinalAuthorization & { decisionId: number }>>`
+      SELECT t.id AS "tradingViewConsumptionId", m.id AS "marketPolicyConsumptionId", m."decisionId",
+        t."orderIntentId", t."authorizedAt", t."authorizationDeadlineAt", t."fenceVersion"
+      FROM "ExternalSignalBrokerDispatchConsumption" t
+      JOIN "MarketPolicyBrokerDispatchConsumption" m ON m.id=t."marketPolicyDispatchConsumptionId"
+      WHERE t."orderIntentId"=${orderIntentId}`;
+    const pair = rows[0];
+    if (!pair) return null;
+    await tx.$executeRaw`SELECT external_signal_lock_dispatch_graph(${orderIntentId}, ${pair.decisionId})`;
+    const [verified] = await tx.$queryRaw<Array<{ tv: number; mi: number; deadline: Date }>>`
+      SELECT t.id AS tv, m.id AS mi, t."authorizationDeadlineAt" AS deadline
+      FROM "ExternalSignalBrokerDispatchConsumption" t
+      JOIN "MarketPolicyBrokerDispatchConsumption" m ON m.id=t."marketPolicyDispatchConsumptionId"
+      WHERE t."orderIntentId"=${orderIntentId} FOR SHARE OF t,m`;
+    if (!verified || verified.tv !== pair.tradingViewConsumptionId || verified.mi !== pair.marketPolicyConsumptionId || verified.deadline.getTime() !== pair.authorizationDeadlineAt.getTime()) {
+      throw new Error('TRADINGVIEW_COMMITTED_PAIR_CHANGED');
+    }
+    return { ...pair, outcome: 'ALREADY_AUTHORIZED' as const };
+  }, { isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted });
+}
+
+function finalizationRefusal(error: unknown) {
+  let diagnostic = errorMessage(error);
+  try { diagnostic += JSON.stringify(error); } catch { /* diagnostic only */ }
+  const reason = diagnostic.match(/TRADINGVIEW_[A-Z0-9_]+|BROKER_DISPATCH_[A-Z0-9_]+/)?.[0] ?? 'TRADINGVIEW_FINALIZATION_FAILED';
+  return new TradingViewFinalizationRefusedError(reason, diagnostic.slice(0, 300));
+}
+
+function potentiallyLostTransactionAcknowledgement(error: unknown) {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) return ['P1001', 'P1002', 'P1017'].includes(error.code);
+  if (error instanceof DriverAdapterError) return typeof record(error.cause)?.originalCode !== 'string';
+  return /connection (?:terminated|closed|lost)|socket|ECONNRESET|EPIPE/i.test(errorMessage(error));
+}
+
+export type TradingViewFinalizerOptions = {
+  db?: Db;
+  evaluator?: MarketPolicyEvaluator;
+  brokerPostOpportunityId?: number | null;
+  /** Test seams only. They never perform broker I/O. */
+  afterDecision?: (decision: MarketPolicyDispatchDecision) => Promise<void>;
+  beforeCommit?: () => Promise<void>;
+  afterCommit?: (authorization: TradingViewFinalAuthorization) => Promise<void>;
+};
+
+/**
+ * Test-only C3B.2 paired final authorization. No scheduler, route, webhook or ordinary worker calls it.
+ * A committed result is permission to attempt a future dispatch, never evidence of a broker request.
+ */
+export async function finalizeTradingViewDispatch(orderIntentId: number, options: TradingViewFinalizerOptions = {}): Promise<TradingViewFinalAuthorization> {
+  const db = options.db ?? prisma;
+  const brokerPostOpportunityId = options.brokerPostOpportunityId ?? null;
+  const existing = await readCommittedPair(db, orderIntentId);
+  if (existing) return existing;
+  const precheck = await loadFinalizerPrecheck(db, orderIntentId);
+  const request: EntryBrokerDispatchRequest = {
+    orderIntentId, tradingAccountId: precheck.tradingAccountId, symbol: precheck.symbol, clientOrderId: precheck.clientOrderId,
+  };
+
+  let decision: MarketPolicyDispatchDecision;
+  try {
+    decision = await prepareObligatedBrokerDecision(db, request, precheck.marketPolicyObligationId, options.evaluator);
+  } catch (error) {
+    const durable = await readCommittedPair(db, orderIntentId).catch(readError => { throw new TradingViewFinalizationAmbiguousError({ decisionError: error, readError }); });
+    if (durable) return durable;
+    throw error;
+  }
+  await options.afterDecision?.(decision);
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= SERIALIZATION_RETRIES; attempt += 1) {
+    try {
+      const authorization = await db.$transaction(async tx => {
+        await tx.$executeRawUnsafe(`SET LOCAL lock_timeout = '5s'`);
+        await tx.$executeRawUnsafe(`SET LOCAL idle_in_transaction_session_timeout = '15s'`);
+        await tx.$executeRaw`SELECT external_signal_lock_dispatch_graph(${orderIntentId}, ${decision.decisionId})`;
+        const [fence] = await tx.$queryRaw<Array<{ version: bigint }>>`SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=${orderIntentId} FOR UPDATE`;
+        if (!fence) throw new Error('TRADINGVIEW_DISPATCH_FENCE_MISSING');
+        const mi = await insertMarketPolicyDispatchConsumption(tx, decision, request, brokerPostOpportunityId);
+        const inserted = await tx.$queryRaw<Array<Omit<TradingViewFinalAuthorization, 'outcome' | 'marketPolicyConsumptionId' | 'orderIntentId'>>>(Prisma.sql`
+          INSERT INTO "ExternalSignalBrokerDispatchConsumption"
+            ("orderIntentId","executionObligationId","workerClaimId","marketPolicyDispatchConsumptionId",
+             "rolloutGenerationId","executionAuthorizationId","dispatchStateVersion","clientOrderId",
+             "brokerPostOpportunityId","fenceVersion","evidenceJson")
+          VALUES (${orderIntentId},${precheck.executionObligationId},${precheck.workerClaimId},${mi.id},
+             ${precheck.rolloutGenerationId},${precheck.executionAuthorizationId},${precheck.dispatchStateVersion},${precheck.clientOrderId},
+             ${brokerPostOpportunityId},${fence.version},${JSON.stringify({ semantics: 'PAIRED_PERMISSION_TO_ATTEMPT_ONLY; NO_BROKER_REQUEST' })}::jsonb)
+          RETURNING id AS "tradingViewConsumptionId","authorizedAt","authorizationDeadlineAt","fenceVersion"`);
+        const tv = inserted[0];
+        if (!tv) throw new Error('TRADINGVIEW_CONSUMPTION_INSERT_MISSING');
+        const [pair] = await tx.$queryRaw<Array<{ fence: bigint; mi: number; deadline: Date }>>`
+          SELECT f.version AS fence, t."marketPolicyDispatchConsumptionId" AS mi, t."authorizationDeadlineAt" AS deadline
+          FROM "ExternalSignalBrokerDispatchConsumption" t
+          JOIN "ExternalSignalDispatchFence" f ON f."orderIntentId"=t."orderIntentId"
+          WHERE t.id=${tv.tradingViewConsumptionId}`;
+        if (!pair || pair.mi !== mi.id || pair.fence !== fence.version + 1n || pair.deadline.getTime() !== tv.authorizationDeadlineAt.getTime()) {
+          throw new Error('TRADINGVIEW_PAIRED_AUTHORIZATION_VERIFICATION_FAILED');
+        }
+        const [deadline] = await tx.$queryRaw<Array<{ open: boolean }>>`
+          SELECT "authorizationDeadlineAt" - clock_timestamp() >= interval '2 seconds' AS open
+          FROM "ExternalSignalBrokerDispatchConsumption" WHERE id=${tv.tradingViewConsumptionId}`;
+        if (deadline?.open !== true) throw new Error('TRADINGVIEW_AUTHORIZATION_DEADLINE_CLOSED');
+        await options.beforeCommit?.();
+        return { outcome: 'AUTHORIZED' as const, orderIntentId, marketPolicyConsumptionId: mi.id, ...tv };
+      }, { isolationLevel: Prisma.TransactionIsolationLevel.Serializable, maxWait: 10_000, timeout: 20_000 });
+      try { await options.afterCommit?.(authorization); } catch (error) {
+        const durable = await readCommittedPair(db, orderIntentId);
+        if (durable) return durable;
+        throw error;
+      }
+      const durable = await readCommittedPair(db, orderIntentId);
+      if (!durable) throw new Error('TRADINGVIEW_COMMIT_ACKNOWLEDGED_WITHOUT_DURABLE_PAIR');
+      return { ...durable, outcome: 'AUTHORIZED' };
+    } catch (error) {
+      lastError = error;
+      let durable: TradingViewFinalAuthorization | null;
+      try { durable = await readCommittedPair(db, orderIntentId); }
+      catch (readError) { throw new TradingViewFinalizationAmbiguousError({ transactionError: error, readError }); }
+      if (durable) return durable;
+      if (!retryableConcurrencyFailure(error) || attempt >= SERIALIZATION_RETRIES) break;
+      // A failed SERIALIZABLE transaction is never reused. A new decision keeps D and F freshness bounded.
+      const fresh = await loadFinalizerPrecheck(db, orderIntentId);
+      try {
+        decision = await prepareObligatedBrokerDecision(db, request, fresh.marketPolicyObligationId, options.evaluator);
+      } catch (decisionError) {
+        let committed: TradingViewFinalAuthorization | null;
+        try { committed = await readCommittedPair(db, orderIntentId); }
+        catch (readError) { throw new TradingViewFinalizationAmbiguousError({ decisionError, readError }); }
+        if (committed) return committed;
+        throw decisionError;
+      }
+    }
+  }
+  if (potentiallyLostTransactionAcknowledgement(lastError)) throw new TradingViewFinalizationAmbiguousError(lastError);
+  throw finalizationRefusal(lastError);
 }

@@ -100,9 +100,9 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
     return result;
   }
   async function decide(g: Ready) {
-    const prepared = await svc.dispatch.prepareEntryBrokerDispatch({ orderIntentId: g.intentId, tradingAccountId: paperId, symbol: g.target.symbol, clientOrderId: g.clientOrderId });
-    expect(prepared).toMatchObject({ enforcement: 'FROZEN_OBLIGATION' });
-    g.decisionId = (prepared as unknown as { decisionId: number }).decisionId;
+    const obligation = await svc.prisma.orderIntentMarketPolicyEnforcementObligation.findUniqueOrThrow({ where: { orderIntentId: g.intentId } });
+    const prepared = await svc.dispatch.prepareObligatedBrokerDecision(svc.prisma, { orderIntentId: g.intentId, tradingAccountId: paperId, symbol: g.target.symbol, clientOrderId: g.clientOrderId }, obligation.id);
+    g.decisionId = prepared.decisionId;
     return g.decisionId;
   }
 
@@ -211,6 +211,53 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
 
   // =============================================================================================================
   describe('the legitimate pair', () => {
+    it('uses the real test-only finalizer to commit one atomic pair and recover duplicates or a lost commit acknowledgement', async () => {
+      const g = await ready('service-finalizer', { decision: false });
+      const before = await fenceNow(g.intentId);
+      const first = await svc.worker.finalizeTradingViewDispatch(g.intentId, {
+        db: svc.prisma,
+        afterCommit: async () => { throw new Error('SIMULATED_LOST_COMMIT_ACKNOWLEDGEMENT'); },
+      });
+      expect(first).toMatchObject({ outcome: 'ALREADY_AUTHORIZED', orderIntentId: g.intentId });
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      // D persists a new decision (+1) and F's TradingView consumption performs the one post-pair bump (+1).
+      expect(await fenceNow(g.intentId)).toBe(before + 2);
+      const duplicate = await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      expect(duplicate).toMatchObject({ outcome: 'ALREADY_AUTHORIZED', tradingViewConsumptionId: first.tradingViewConsumptionId, marketPolicyConsumptionId: first.marketPolicyConsumptionId });
+      expect(duplicate.authorizationDeadlineAt).toEqual(first.authorizationDeadlineAt);
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('rejects the standalone Market Intelligence entry point for a marked TradingView intent before preparing a decision', async () => {
+      const g = await ready('standalone-refused', { decision: false });
+      await expect(svc.dispatch.prepareEntryBrokerDispatch({ orderIntentId: g.intentId, tradingAccountId: paperId, symbol: g.target.symbol, clientOrderId: g.clientOrderId }))
+        .rejects.toMatchObject({ reasonCode: 'TECHNICAL_FAILURE_TRADINGVIEW_REQUIRES_PAIRED_CONSUMPTION', deliveryClassification: 'DEFINITELY_NOT_SENT' });
+      expect((await db.query(`SELECT count(*)::int n FROM "MarketPolicyBrokerDispatchDecision" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(1);
+      expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
+    }, 180_000);
+
+    it('lets exactly one competing finalizer commit and recovers the loser from the durable pair', async () => {
+      const g = await ready('service-competing', { decision: false });
+      const settled = await Promise.allSettled([
+        svc.worker.finalizeTradingViewDispatch(g.intentId),
+        svc.worker.finalizeTradingViewDispatch(g.intentId),
+      ]);
+      expect(settled.every(result => result.status === 'fulfilled'), settled.map(result => result.status === 'rejected' ? message(result.reason) : result.value.outcome).join(', ')).toBe(true);
+      const values = settled.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof svc.worker.finalizeTradingViewDispatch>>> => result.status === 'fulfilled').map(result => result.value);
+      expect(new Set(values.map(value => value.tradingViewConsumptionId)).size).toBe(1);
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('refuses a current account pause in F and rolls back both consumptions', async () => {
+      const g = await ready('service-paused', { decision: false });
+      await db.query(`UPDATE "TradingAccount" SET status='PAUSED',"tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]);
+      await expect(svc.worker.finalizeTradingViewDispatch(g.intentId)).rejects.toMatchObject({ reasonCode: 'TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE' });
+      expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
     it.each(['READ COMMITTED', 'SERIALIZABLE'] as const)('commits under %s with no caller pre-locks; fenceVersion is the validated pre-consumption version and the fence moves once, after the pair', async isolation => {
       const g = await ready(`pair-${isolation}`);
       const result = await attemptPair(g, { isolation });

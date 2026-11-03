@@ -665,8 +665,10 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
       await db.query(`ALTER TABLE "OrderIntent" ENABLE TRIGGER "OrderIntent_external_signal_dispatch_quarantine"`);
       await db.query('COMMIT');
     } catch (error) { await db.query('ROLLBACK'); throw error; }
-    const prepared = await (await import('../../services/market-policy-broker-dispatch.service.js')).prepareEntryBrokerDispatch({ orderIntentId: validWorkerClaim.intentId, tradingAccountId: paperId, symbol: 'EX2', clientOrderId: validWorkerClaim.clientOrderId });
-    expect(prepared).toMatchObject({ enforcement: 'FROZEN_OBLIGATION', applicability: 'FROZEN_OBLIGATION' });
+    const dispatchService = await import('../../services/market-policy-broker-dispatch.service.js');
+    const { prisma } = await import('../prisma.js');
+    const marketPolicyObligation = await prisma.orderIntentMarketPolicyEnforcementObligation.findUniqueOrThrow({ where: { orderIntentId: validWorkerClaim.intentId } });
+    const prepared = await dispatchService.prepareObligatedBrokerDecision(prisma, { orderIntentId: validWorkerClaim.intentId, tradingAccountId: paperId, symbol: 'EX2', clientOrderId: validWorkerClaim.clientOrderId }, marketPolicyObligation.id);
     // The fixture signal is database-stamped at insertion and the guard needs a receipt with at least five seconds of its 120 left. Fail with
     // a legible message, not a guard error, if a very slow environment let it age out.
     expect((await db.query(`SELECT external_signal_signal_receipt_open(o."entrySignalId", interval '20 seconds') AS open FROM "ExternalSignalEntryExecutionObligation" o WHERE o.id=$1`, [validWorkerClaim.obligationId])).rows[0].open, 'fixture signal receipt is too old for the paired-consumption fixture').toBe(true);
