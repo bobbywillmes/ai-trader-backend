@@ -261,18 +261,28 @@ export type TradingViewFinalAuthorization = {
   fenceVersion: bigint;
 };
 
+/**
+ * Attempt-scoped result of one finalizer invocation. It deliberately carries no broker `deliveryClassification`:
+ * a failed attempt says nothing about the intent, because another finalizer that completed decision phase D may
+ * still commit its pair later. Neither error is release evidence; only C2 not-sent and C3C terminalization
+ * (independent database authority) can release exposure.
+ */
+export type TradingViewFinalizerAttemptOutcome = 'NOT_AUTHORIZED_BY_THIS_ATTEMPT' | 'AMBIGUOUS';
+
 export class TradingViewFinalizationRefusedError extends Error {
   readonly code = 'TRADINGVIEW_FINALIZATION_REFUSED' as const;
-  readonly deliveryClassification = 'DEFINITELY_NOT_SENT' as const;
-  constructor(readonly reasonCode: string, diagnostic?: string) {
-    super(`${reasonCode}${diagnostic ? `: ${diagnostic}` : ''}`);
+  readonly attemptOutcome = 'NOT_AUTHORIZED_BY_THIS_ATTEMPT' as const;
+  readonly intentLevelNotSentProof = false as const;
+  constructor(readonly reasonCode: string, diagnostic?: string, options?: { cause?: unknown }) {
+    super(`${reasonCode}${diagnostic ? `: ${diagnostic}` : ''}`, options);
     this.name = 'TradingViewFinalizationRefusedError';
   }
 }
 
 export class TradingViewFinalizationAmbiguousError extends Error {
   readonly code = 'TRADINGVIEW_FINALIZATION_OUTCOME_AMBIGUOUS' as const;
-  readonly deliveryClassification = 'AMBIGUOUS_UNTIL_DURABLE_STATE_RECHECK' as const;
+  readonly attemptOutcome = 'AMBIGUOUS' as const;
+  readonly intentLevelNotSentProof = false as const;
   constructor(readonly underlying: unknown) {
     super('The paired-finalization outcome is ambiguous until committed consumption can be re-read. Exposure must remain owned.');
     this.name = 'TradingViewFinalizationAmbiguousError';
@@ -349,8 +359,34 @@ async function readCommittedPair(db: Db, orderIntentId: number): Promise<Trading
 function finalizationRefusal(error: unknown) {
   let diagnostic = errorMessage(error);
   try { diagnostic += JSON.stringify(error); } catch { /* diagnostic only */ }
-  const reason = diagnostic.match(/TRADINGVIEW_[A-Z0-9_]+|BROKER_DISPATCH_[A-Z0-9_]+/)?.[0] ?? 'TRADINGVIEW_FINALIZATION_FAILED';
-  return new TradingViewFinalizationRefusedError(reason, diagnostic.slice(0, 300));
+  const structured = record(error) && typeof record(error)?.reasonCode === 'string' ? String(record(error)?.reasonCode) : null;
+  const state = structuredSqlState(error);
+  const stateReason = state === '55P03' ? 'TRADINGVIEW_FINALIZATION_LOCK_TIMEOUT'
+    : state === '40001' || state === '40P01' || (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2034') ? 'TRADINGVIEW_FINALIZATION_CONCURRENCY_EXHAUSTED' : null;
+  const reason = diagnostic.match(/TRADINGVIEW_[A-Z0-9_]+|BROKER_DISPATCH_[A-Z0-9_]+/)?.[0] ?? structured ?? stateReason ?? 'TRADINGVIEW_FINALIZATION_FAILED';
+  return new TradingViewFinalizationRefusedError(reason, diagnostic.slice(0, 300), { cause: error });
+}
+
+/** Trusted structured SQLSTATE only (class identity plus adapter/driver fields); never parsed from message text. */
+function structuredSqlState(error: unknown): string | null {
+  if (error instanceof Prisma.PrismaClientKnownRequestError) return sqlStateFromPrismaError(error);
+  if (error instanceof DriverAdapterError) {
+    const state = record(error.cause)?.originalCode;
+    return typeof state === 'string' ? state : null;
+  }
+  if (error instanceof DatabaseError) return error.code ?? null;
+  return null;
+}
+
+/**
+ * Every exit of the finalizer funnels through here so callers see exactly two failure shapes. Unresolved
+ * connection/database uncertainty is AMBIGUOUS; everything else is an attempt-scoped refusal. Neither is
+ * intent-level evidence, because this invocation cannot see whether another attempt will still commit.
+ */
+function normalizeFinalizerFailure(error: unknown) {
+  if (error instanceof TradingViewFinalizationRefusedError || error instanceof TradingViewFinalizationAmbiguousError) return error;
+  if (potentiallyLostTransactionAcknowledgement(error)) return new TradingViewFinalizationAmbiguousError(error);
+  return finalizationRefusal(error);
 }
 
 function potentiallyLostTransactionAcknowledgement(error: unknown) {
@@ -384,9 +420,10 @@ export type TradingViewFinalizerOptions = {
 export async function finalizeTradingViewDispatch(orderIntentId: number, options: TradingViewFinalizerOptions = {}): Promise<TradingViewFinalAuthorization> {
   const db = options.db ?? prisma;
   const brokerPostOpportunityId = options.brokerPostOpportunityId ?? null;
-  const existing = await readCommittedPair(db, orderIntentId);
+  // A failed idempotency reread cannot establish whether a pair is committed or in flight: AMBIGUOUS.
+  const existing = await readCommittedPair(db, orderIntentId).catch(readError => { throw new TradingViewFinalizationAmbiguousError({ initialReadError: readError }); });
   if (existing) return existing;
-  const precheck = await loadFinalizerPrecheck(db, orderIntentId);
+  const precheck = await loadFinalizerPrecheck(db, orderIntentId).catch(error => { throw normalizeFinalizerFailure(error); });
   const request: EntryBrokerDispatchRequest = {
     orderIntentId, tradingAccountId: precheck.tradingAccountId, symbol: precheck.symbol, clientOrderId: precheck.clientOrderId,
   };
@@ -397,7 +434,8 @@ export async function finalizeTradingViewDispatch(orderIntentId: number, options
   } catch (error) {
     const durable = await readCommittedPair(db, orderIntentId).catch(readError => { throw new TradingViewFinalizationAmbiguousError({ decisionError: error, readError }); });
     if (durable) return durable;
-    throw error;
+    // D failing is this attempt's failure only; a pending sibling may still commit. Not intent-level proof.
+    throw normalizeFinalizerFailure(error);
   }
   await options.afterDecision?.(decision);
   let lastError: unknown;
@@ -448,7 +486,7 @@ export async function finalizeTradingViewDispatch(orderIntentId: number, options
         throw error;
       }
       const durable = await readCommittedPair(db, orderIntentId);
-      if (!durable) throw new Error('TRADINGVIEW_COMMIT_ACKNOWLEDGED_WITHOUT_DURABLE_PAIR');
+      if (!durable) throw new TradingViewFinalizationAmbiguousError(new Error('TRADINGVIEW_COMMIT_ACKNOWLEDGED_WITHOUT_DURABLE_PAIR'));
       return { ...durable, outcome: 'AUTHORIZED' };
     } catch (error) {
       lastError = error;
@@ -458,7 +496,7 @@ export async function finalizeTradingViewDispatch(orderIntentId: number, options
       if (durable) return durable;
       if (!retryableConcurrencyFailure(error) || attempt >= SERIALIZATION_RETRIES) break;
       // A failed SERIALIZABLE transaction is never reused. A new decision keeps D and F freshness bounded.
-      const fresh = await loadFinalizerPrecheck(db, orderIntentId);
+      const fresh = await loadFinalizerPrecheck(db, orderIntentId).catch(precheckError => { throw normalizeFinalizerFailure(precheckError); });
       try {
         decision = await prepareObligatedBrokerDecision(db, request, fresh.marketPolicyObligationId, options.evaluator);
       } catch (decisionError) {
@@ -466,10 +504,9 @@ export async function finalizeTradingViewDispatch(orderIntentId: number, options
         try { committed = await readCommittedPair(db, orderIntentId); }
         catch (readError) { throw new TradingViewFinalizationAmbiguousError({ decisionError, readError }); }
         if (committed) return committed;
-        throw decisionError;
+        throw normalizeFinalizerFailure(decisionError);
       }
     }
   }
-  if (potentiallyLostTransactionAcknowledgement(lastError)) throw new TradingViewFinalizationAmbiguousError(lastError);
-  throw finalizationRefusal(lastError);
+  throw normalizeFinalizerFailure(lastError);
 }

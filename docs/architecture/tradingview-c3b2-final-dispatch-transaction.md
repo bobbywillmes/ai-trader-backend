@@ -1856,3 +1856,21 @@ Sender-asserted `signalTime`/`barTime` remain observational: the 120-second rule
 * The paired-consumption fixtures write raw SQL; the Prisma model requires the three new columns although the database stamps two of them. C3B.2-2 must insert with SQL that omits them.
 * Historical signals have `receivedAt NULL` permanently; a signal accepted shortly before migration is refused at admission (safe direction).
 * Not applied to persistent development; the new migration needs the drain procedure in the runbook.
+
+## C3B.2-2: attempt-scoped finalizer outcomes
+
+A finalizer failure is `NOT_AUTHORIZED_BY_THIS_ATTEMPT` (`TradingViewFinalizationRefusedError`) or `AMBIGUOUS`
+(`TradingViewFinalizationAmbiguousError`); both carry `intentLevelNotSentProof = false` and no broker
+`deliveryClassification`. A locked reread that finds no pair cannot prove that no other D-phase attempt will still commit,
+so neither outcome is release evidence. Only C2 not-sent and future C3C terminalization can release exposure.
+`ALREADY_AUTHORIZED` is returned only for a durable committed pair.
+
+Normalization: an initial or in-flight reread failure, a lost commit acknowledgement and connection-class SQLSTATEs
+(08xxx, 57P0x, P1001/P1002/P1017) are `AMBIGUOUS`; everything else (including D-phase 55P03/40P01 and exhausted
+retries) is a refusal. SQLSTATE comes only from structured fields, never from message text.
+
+Remaining LOW items for C3B.3/C3C:
+- Any new writer that advances the dispatch fence for a marked intent must lock its OrderIntent first (delivery
+  evidence, claim-event-plus-update). Test the PostgreSQL foreign-key lock behaviour when these writers exist.
+- Measure global rollout advisory-lock contention before enabling scheduling; fail-closed is acceptable while observer-only.
+- A raw error whose class is not recognized is classified as a refusal (not ambiguous) unless it is connection-class.

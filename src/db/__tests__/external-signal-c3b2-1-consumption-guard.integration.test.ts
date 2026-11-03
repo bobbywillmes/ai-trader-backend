@@ -654,4 +654,127 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       expect(Math.abs(row.db_now.getTime() - row.receivedAt.getTime())).toBeLessThan(60_000);
     }, 120_000);
   });
+
+  // =============================================================================================================
+  // C3B.2-2: a finalizer attempt reports what THIS attempt did. It never claims an intent-level non-send, because
+  // another finalizer that completed decision phase D may still commit. Real services through the PrismaPg adapter.
+  describe('attempt-scoped finalizer outcomes (Hermes N1e)', () => {
+    const gate = () => { let open!: () => void; const reached = new Promise<void>(resolve => { open = resolve; }); let go!: () => void; const wait = new Promise<void>(resolve => { go = resolve; }); return { reached, open, wait, go }; };
+    const claimReleased = async (claimId: number) => (await db.query(`SELECT "releasedAt" IS NOT NULL AS released FROM "EntryExposureClaim" WHERE id=$1`, [claimId])).rows[0].released as boolean;
+    const noNotSentSignals = async (intentId: number) => {
+      expect((await db.query(`SELECT count(*)::int n FROM "SystemEvent" WHERE "entityType"='orderIntent' AND "entityId"=$1 AND type='MARKET_POLICY_BROKER_DISPATCH_TECHNICAL_FAILURE'`, [intentId])).rows[0].n).toBe(0);
+      expect((await db.query(`SELECT count(*)::int n FROM "EntryExposureClaimEvent" e JOIN "EntryExposureClaim" c ON c.id=e."claimId" WHERE c."orderIntentId"=$1 AND e."eventType"='NOT_SENT_EVIDENCE_RECORDED' AND e."evidenceJson"->>'producer' <> 'WORKER_PRE_BOUNDARY_FAILURE'`, [intentId])).rows[0].n).toBe(0);
+    };
+    const expectAttemptScoped = (error: unknown, outcome: 'NOT_AUTHORIZED_BY_THIS_ATTEMPT' | 'AMBIGUOUS') => {
+      expect(error).toMatchObject({ attemptOutcome: outcome, intentLevelNotSentProof: false });
+      expect(error).not.toHaveProperty('deliveryClassification');
+    };
+
+    it('N1e: a superseded F1 reports NOT_AUTHORIZED_BY_THIS_ATTEMPT while F2 still commits the one pair and nothing is released', async () => {
+      const g = await ready('n1e-superseded', { decision: false });
+      const d1 = gate(), d2 = gate();
+      const f1 = svc.worker.finalizeTradingViewDispatch(g.intentId, { afterDecision: async () => { d1.open(); await d1.wait; } }).then(value => ({ value }), error => ({ error }));
+      await d1.reached;
+      const f2 = svc.worker.finalizeTradingViewDispatch(g.intentId, { afterDecision: async () => { d2.open(); await d2.wait; } });
+      await d2.reached; // F2's decision is newer: F1's is now superseded, and F2 has not reached F.
+      d1.go();
+      const first = await f1;
+      expect('error' in first, 'F1 must not authorize on a superseded decision').toBe(true);
+      expectAttemptScoped((first as { error: unknown }).error, 'NOT_AUTHORIZED_BY_THIS_ATTEMPT');
+      expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+      // The gap between D and F is allowed; between the failed F1 and the pending F2 the database guards still refuse any release.
+      await expect(db.query(`UPDATE "EntryExposureClaim" SET status='RELEASED',"releasedAt"=now(),"releaseReason"='attempt result is not release evidence' WHERE id=$1`, [g.claimId])).rejects.toThrow(/release|released/i);
+      expect(await claimReleased(g.claimId)).toBe(false);
+      d2.go();
+      const authorized = await f2;
+      expect(authorized.outcome).toBe('AUTHORIZED');
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+      await noNotSentSignals(g.intentId);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('D-phase failure: a failed attempt makes no intent-level claim and the other eligible attempt still commits', async () => {
+      const g = await ready('d-phase-failure', { decision: false });
+      const d2 = gate();
+      const failing = (() => { throw Object.assign(new Error('simulated D-phase lock timeout'), { code: '55P03' }); }) as never;
+      const f2 = svc.worker.finalizeTradingViewDispatch(g.intentId, { afterDecision: async () => { d2.open(); await d2.wait; } });
+      await d2.reached;
+      const failed = await svc.worker.finalizeTradingViewDispatch(g.intentId, { evaluator: failing }).then(value => ({ value }), error => ({ error }));
+      expect('error' in failed, 'the D-phase failure must not authorize').toBe(true);
+      const error = (failed as { error: unknown }).error;
+      expect(error).toMatchObject({ intentLevelNotSentProof: false });
+      expect(error).not.toHaveProperty('deliveryClassification');
+      expect(['NOT_AUTHORIZED_BY_THIS_ATTEMPT', 'AMBIGUOUS']).toContain((error as { attemptOutcome?: string }).attemptOutcome);
+      expect(await claimReleased(g.claimId)).toBe(false);
+      d2.go();
+      const result = await f2.then(value => ({ value }), error => ({ error }));
+      // F2's own decision may have been superseded by the failed attempt's persisted failure record; either way at most one pair exists,
+      // F2 reports only its own attempt, and nothing was released.
+      if ('error' in result) expectAttemptScoped(result.error, 'NOT_AUTHORIZED_BY_THIS_ATTEMPT'); else expect(result.value.outcome).toBe('AUTHORIZED');
+      expect((await counts(g.intentId)).tv).toBeLessThanOrEqual(1);
+      expect(await claimReleased(g.claimId)).toBe(false);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 180_000);
+
+    it('in-flight F: a reread that times out behind a held rollout lock is AMBIGUOUS, and F1 then commits safely', async () => {
+      const g = await ready('in-flight-f', { decision: false });
+      const inside = gate(); const hold = gate();
+      const f1 = svc.worker.finalizeTradingViewDispatch(g.intentId, { beforeCommit: async () => { inside.open(); await hold.wait; } });
+      await inside.reached;
+      const f2 = await svc.worker.finalizeTradingViewDispatch(g.intentId).then(value => ({ value }), error => ({ error }));
+      expect('error' in f2, 'F2 must not claim an outcome it cannot read').toBe(true);
+      expectAttemptScoped((f2 as { error: unknown }).error, 'AMBIGUOUS');
+      expect(await claimReleased(g.claimId)).toBe(false);
+      hold.go();
+      expect((await f1).outcome).toBe('AUTHORIZED');
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+    }, 180_000);
+
+    it('in-flight F that rolls back leaves no pair, and the ambiguous reader still holds no release authority', async () => {
+      const g = await ready('in-flight-rollback', { decision: false });
+      const inside = gate(); const hold = gate();
+      const f1 = svc.worker.finalizeTradingViewDispatch(g.intentId, { beforeCommit: async () => { inside.open(); await hold.wait; throw new Error('SIMULATED_F1_ROLLBACK'); } }).then(value => ({ value }), error => ({ error }));
+      await inside.reached;
+      const f2 = await svc.worker.finalizeTradingViewDispatch(g.intentId).then(value => ({ value }), error => ({ error }));
+      expectAttemptScoped((f2 as { error: unknown }).error, 'AMBIGUOUS');
+      hold.go();
+      const rolledBack = await f1;
+      expect('error' in rolledBack).toBe(true);
+      expect(await counts(g.intentId)).toEqual({ tv: 0, mi: 0 });
+      expect(await claimReleased(g.claimId)).toBe(false);
+    }, 180_000);
+
+    it('two concurrent finalizers produce exactly one pair, no false technical-failure evidence and no fence movement after authorization', async () => {
+      const g = await ready('two-finalizers', { decision: false });
+      const settled = await Promise.allSettled([svc.worker.finalizeTradingViewDispatch(g.intentId), svc.worker.finalizeTradingViewDispatch(g.intentId)]);
+      expect(settled.every(result => result.status === 'fulfilled'), settled.map(result => result.status === 'rejected' ? message(result.reason) : result.value.outcome).join(', ')).toBe(true);
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+      await noNotSentSignals(g.intentId);
+      const fence = await fenceNow(g.intentId);
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      expect(await fenceNow(g.intentId)).toBe(fence);
+      expect(await claimReleased(g.claimId)).toBe(false);
+    }, 180_000);
+
+    it('keeps a committed pair readable after Market Intelligence authorization revoke', async () => {
+      const g = await ready('pair-after-mi-revoke', { decision: false });
+      const first = await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      await svc.enforcement.revokeAssignmentMarketPolicyEnforcementAuthorization(paperId, g.target.assignmentId, { authorizationId: g.mi.authorizationId, reason: 'post-pair MI revoke' }, ownerId);
+      const again = await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      expect(again).toMatchObject({ outcome: 'ALREADY_AUTHORIZED', tradingViewConsumptionId: first.tradingViewConsumptionId });
+      expect(await counts(g.intentId)).toEqual({ tv: 1, mi: 1 });
+    }, 180_000);
+
+    it('normalizes a precheck failure to an attempt-scoped refusal that carries no delivery classification', async () => {
+      const g = await ready('precheck-refusal', { decision: false });
+      await db.query(`UPDATE "TradingAccount" SET status='PAUSED',"tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]);
+      const error = await svc.worker.finalizeTradingViewDispatch(g.intentId).catch(caught => caught);
+      expectAttemptScoped(error, 'NOT_AUTHORIZED_BY_THIS_ATTEMPT');
+      expect(error).toBeInstanceOf(svc.worker.TradingViewFinalizationRefusedError);
+      expect(await claimReleased(g.claimId)).toBe(false);
+    }, 180_000);
+  });
 });
