@@ -3,6 +3,8 @@ import {
   EXTERNAL_SIGNAL_EXECUTION_CAPABILITIES,
   classifyExecutionLifecycle,
   classifySourceExecutionLifecycle,
+  readinessScope,
+  assignmentAuthorityState,
   projectExternalSignalExecutionLifecycle,
 } from './external-signal-execution-lifecycle-projection.service.js';
 
@@ -99,5 +101,30 @@ describe('external signal execution lifecycle read boundary', () => {
     expect(projected.recovery).toMatchObject({ authoritativeReconciliationRequired: true, unresolvedAuthoritativeOnlyCount: 1, activeAttentionCount: 1, activeOperationalAttention: [{ id: 17 }], operationalAttentionMetadata: { returned: 1, total: 101, truncated: true } });
     expect(result.accountCycles[1]).toMatchObject({ lifecycle: { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED' }, evidence: { exposure: { held: false, status: 'RELEASED' } } });
     expect(query).toHaveBeenCalledTimes(6);
+  });
+  it('LOW-1: retained exposure reason is derived from exposure state even when a committed pair coexists', async () => {
+    const base = { accountCycleId: 30, accountCycleStatus: 'TERMINAL_NO_EXPOSURE', environment: 'PAPER', signalEvent: 'ENTRY_LONG', correlationWorkStatus: 'COMPLETED', orderIntentId: 7, orderIntentStatus: 'blocked', orderIntentSide: 'buy', executionObligationId: 8, marketIntelligenceObligationId: 9, exposureClaimId: 10, exposureReleasedAt: null, workerClaimId: 11, tradingViewConsumptionId: 12, marketIntelligenceConsumptionId: 13 };
+    const run = async (rows: Record<string, unknown>[]) => projectExternalSignalExecutionLifecycle(4, rows.map(row => row.accountCycleId as number), { $queryRaw: vi.fn().mockResolvedValueOnce([{ observedAt: new Date() }]).mockResolvedValueOnce(rows).mockResolvedValue([]) } as never);
+    const result = await run([{ ...base, exposureStatus: 'UNRESOLVED' }, { ...base, accountCycleId: 31, exposureStatus: 'HELD' }]);
+    expect(result.accountCycles[0]!.lifecycle.reasonCode).toBe('TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED');
+    expect(result.accountCycles[0]!.recovery).toMatchObject({ retainedExposureReviewRequired: true, retainedExposureReasonCode: 'TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE' });
+    expect(result.accountCycles[1]!.recovery).toMatchObject({ retainedExposureReviewRequired: true, retainedExposureReasonCode: 'TERMINAL_LIFECYCLE_WITH_RETAINED_EXPOSURE' });
+    const released = await run([{ ...base, exposureStatus: 'RELEASED', exposureReleasedAt: new Date() }]);
+    expect(released.accountCycles[0]!.recovery).toMatchObject({ retainedExposureReviewRequired: false, retainedExposureReasonCode: null });
+  });
+  it('LOW-2: readiness scope never defaults a missing intent to PAPER BUY', () => {
+    expect(readinessScope('PAPER', null, null)).toBe('NOT_APPLICABLE_NO_INTENT');
+    expect(readinessScope('PAPER', null, 'buy')).toBe('NOT_APPLICABLE_NO_INTENT');
+    expect(readinessScope('PAPER', 7, 'BUY')).toBe('PAPER_BUY');
+    expect(readinessScope('PAPER', 7, 'sell')).toBe('OUT_OF_SCOPE');
+    expect(readinessScope('PAPER', 7, null)).toBe('OUT_OF_SCOPE');
+    expect(readinessScope('LIVE', 7, 'buy')).toBe('OUT_OF_SCOPE');
+  });
+  it('distinguishes not-yet-frozen authority from frozen-but-ineffective, diagnostically only', () => {
+    expect(assignmentAuthorityState(null, false)).toBe('NOT_YET_FROZEN');
+    expect(assignmentAuthorityState(null, true)).toBe('NOT_YET_FROZEN');
+    expect(assignmentAuthorityState(5, false)).toBe('FROZEN_NOT_EFFECTIVE');
+    expect(assignmentAuthorityState(5, null)).toBe('FROZEN_NOT_EFFECTIVE');
+    expect(assignmentAuthorityState(5, true)).toBe('FROZEN_EFFECTIVE');
   });
 });

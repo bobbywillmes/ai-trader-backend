@@ -79,6 +79,19 @@ type RelatedRow = Record<string, unknown> & { accountCycleId: number; totalCount
 const dateIso = (value: unknown) => value instanceof Date ? value.toISOString() : value;
 const presentRow = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, dateIso(value)]));
 
+export type ReadinessScope = 'PAPER_BUY' | 'NOT_APPLICABLE_NO_INTENT' | 'OUT_OF_SCOPE';
+/** LOW-2: a missing OrderIntent is never presumed to be a BUY. PAPER_BUY requires an actual marked BUY intent. */
+export function readinessScope(environment: unknown, orderIntentId: unknown, orderIntentSide: unknown): ReadinessScope {
+  if (orderIntentId == null) return 'NOT_APPLICABLE_NO_INTENT';
+  return environment === 'PAPER' && String(orderIntentSide ?? '').toLowerCase() === 'buy' ? 'PAPER_BUY' : 'OUT_OF_SCOPE';
+}
+export type AssignmentAuthorityState = 'NOT_YET_FROZEN' | 'FROZEN_EFFECTIVE' | 'FROZEN_NOT_EFFECTIVE';
+/** Diagnostic only; never confers execution eligibility. */
+export function assignmentAuthorityState(executionObligationId: unknown, effective: unknown): AssignmentAuthorityState {
+  if (executionObligationId == null) return 'NOT_YET_FROZEN';
+  return effective === true ? 'FROZEN_EFFECTIVE' : 'FROZEN_NOT_EFFECTIVE';
+}
+
 export async function projectExternalSignalExecutionLifecycle(sourceCycleId: number, accountCycleIds: number[], db: Db = prisma) {
   const [clock] = await db.$queryRaw<Array<{ observedAt: Date }>>(Prisma.sql`SELECT clock_timestamp() AS "observedAt"`);
   const observedAt = clock?.observedAt ?? new Date();
@@ -174,16 +187,19 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
       const exposureReleased = value.exposureReleasedAt != null || value.exposureStatus === 'RELEASED';
       const terminalLifecycle = ['blocked', 'failed', 'canceled'].includes(String(value.orderIntentStatus ?? '')) || ['BLOCKED', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(String(value.accountCycleStatus));
       const retainedExposureReviewRequired = terminalLifecycle && value.exposureClaimId != null && !exposureReleased;
+      // LOW-1: derived from the retained exposure itself, never copied from the lifecycle stage reason.
+      const retainedExposureReasonCode = retainedExposureReviewRequired ? (value.exposureStatus === 'UNRESOLVED' ? 'TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE' : 'TERMINAL_LIFECYCLE_WITH_RETAINED_EXPOSURE') : null;
       return {
         accountCycleId: row.accountCycleId,
         lifecycle,
         readiness: {
-          scope: value.environment === 'PAPER' && String(value.orderIntentSide ?? 'buy').toLowerCase() === 'buy' ? 'PAPER_BUY' : 'OUT_OF_SCOPE',
+          scope: readinessScope(value.environment, value.orderIntentId, value.orderIntentSide),
           frozenGeneration: { id: value.frozenGenerationId ?? null, generation: value.frozenGeneration ?? null, enabled: value.frozenGenerationEnabled ?? null, authorityMode: value.frozenGenerationAuthorityMode ?? null, effectiveAt: dateIso(value.frozenGenerationEffectiveAt) ?? null },
           rolloutRelationship: { activeExecutionGenerationId: value.activeExecutionGenerationId ?? null, activeDispatchGenerationId: value.activeDispatchGenerationId ?? null, matchesExecution: value.frozenGenerationId != null && value.frozenGenerationId === value.activeExecutionGenerationId, matchesDispatch: value.frozenGenerationId != null && value.frozenGenerationId === value.activeDispatchGenerationId },
           executionState: { version: value.executionStateVersion ?? null, activatedAt: dateIso(value.executionActivatedAt) ?? null },
           dispatchState: { version: value.dispatchStateVersion ?? null, activatedAt: dateIso(value.dispatchActivatedAt) ?? null },
           effectiveAssignmentAuthority: value.effectiveFrozenAssignmentAuthority ?? false,
+          assignmentAuthorityState: assignmentAuthorityState(value.executionObligationId, value.effectiveFrozenAssignmentAuthority),
           accountOperational: value.accountOperational ?? false,
           assignmentOperational: value.assignmentOperational ?? false,
           receipt: { signalId: value.entrySignalId ?? null, receivedAt: dateIso(value.signalReceivedAt) ?? null, freshness: value.receiptFreshness ?? 'MISSING' },
@@ -202,7 +218,7 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
           exposureEvents: claimEventHistory.records,
           exposureEventsMetadata: claimEventHistory.metadata,
         },
-        recovery: { retainedExposureReviewRequired, retainedExposureReasonCode: retainedExposureReviewRequired ? lifecycle.reasonCode : null, authoritativeReconciliationRequired: attentionHistory.authoritativeOnlyCount > 0, unresolvedAuthoritativeOnlyCount: attentionHistory.authoritativeOnlyCount, activeAttentionCount: attentionHistory.activeCount, activeOperationalAttention: attentionHistory.records.filter(item => item.status !== 'RESOLVED'), activeOperationalAttentionMetadata: { returned: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length, total: attentionHistory.activeCount, truncated: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length < attentionHistory.activeCount }, operationalAttention: attentionHistory.records, operationalAttentionMetadata: attentionHistory.metadata },
+        recovery: { retainedExposureReviewRequired, retainedExposureReasonCode, authoritativeReconciliationRequired: attentionHistory.authoritativeOnlyCount > 0, unresolvedAuthoritativeOnlyCount: attentionHistory.authoritativeOnlyCount, activeAttentionCount: attentionHistory.activeCount, activeOperationalAttention: attentionHistory.records.filter(item => item.status !== 'RESOLVED'), activeOperationalAttentionMetadata: { returned: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length, total: attentionHistory.activeCount, truncated: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length < attentionHistory.activeCount }, operationalAttention: attentionHistory.records, operationalAttentionMetadata: attentionHistory.metadata },
       };
     }),
   };

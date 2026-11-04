@@ -552,3 +552,67 @@ execution authority, active C2 ownership, committed authorization and unavailabl
 execution. Credential readiness, and the individual account/assignment readiness
 components, are likewise not represented by the current aggregate `accountOperational`
 field and remain explicit follow-up work.
+
+## C3B.3-2 Operations UI semantics (implemented)
+
+The External Signals Operations tab now renders the C3B.3-1 `executionLifecycle`
+projection. It is a read-only observability surface; no execution, release, retry,
+acknowledge or reconciliation control exists. The only mutation in the tab remains the
+controlled correlation-work requeue. The frontend validates the projection shape at
+runtime (`lifecycle.ts`) and matches lifecycle entries to account cycles strictly by
+`accountCycleId`; malformed, missing, duplicate or unmatched entries are surfaced, never
+guessed from array position or symbol.
+
+**Boundary wording.** The blanket "SHADOW ONLY / authority NONE" text is replaced by
+boundary-specific statements: historical SHADOW correlation and reservation evidence
+remains SHADOW; TradingView PAPER ENTRY authority may be configured (and configuration is
+not proof of a send); durable C2 claims and final-authorization evidence may exist;
+runtime finalization scheduling is unavailable before C3C; broker POST is unavailable;
+TradingView SELL and LIVE are unavailable; accepted EXIT correlation is not a broker SELL.
+`shadowOnly` / `actualExecutionAuthority` remain in the API for compatibility and are not
+used as universal truth.
+
+**Seven distinct states** are shown per account cycle and never collapsed: authority
+configured, C2 worker claimed (historical evidence independent of the current stage),
+paired authorization committed ("Authorization committed — broker send not established"),
+broker send permission established (always "not established" pre-C3C), broker adapter
+invoked ("not reported" — the pre-C3C projection has no such field), broker
+order/activity observed (direct-linked only), and exposure settled or reconciliation
+required. Absent broker records are never presented as non-delivery proof.
+
+**Recovery warnings.** `retainedExposureReviewRequired` (terminal intent/account cycle
+with a held, unreleased exposure claim) renders a prominent warning identifying account,
+intent, claim, status and diagnostic reason, and states the lifecycle is not safely
+terminal. `authoritativeReconciliationRequired` renders a separate warning with the
+unresolved AUTHORITATIVE_ONLY count, active attention and resolution policy. Neither
+offers a release path from the page. Detailed evidence (identity, readiness,
+authorization, exposure and claim events, broker evidence, attention) is in collapsed
+sections with visible "Showing N of M records." truncation notices (bounded at 100).
+
+**Retained-exposure reason codes.** `recovery.retainedExposureReasonCode` is now derived
+from the exposure state itself, independent of the lifecycle-stage reason:
+`TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE` when the held claim is `UNRESOLVED`,
+otherwise `TERMINAL_LIFECYCLE_WITH_RETAINED_EXPOSURE`; `null` when review is not required.
+Terminalization coexisting with a committed pair therefore still reports held/UNRESOLVED
+exposure even though the stage reason is `TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED`.
+
+**Additive backend diagnostics.** `readiness.scope` gains `NOT_APPLICABLE_NO_INTENT`; a
+missing OrderIntent is no longer defaulted to BUY, and `PAPER_BUY` requires an actual
+marked BUY intent. `readiness.assignmentAuthorityState` (`NOT_YET_FROZEN`,
+`FROZEN_EFFECTIVE`, `FROZEN_NOT_EFFECTIVE`) distinguishes authority not yet frozen into an
+execution obligation from frozen-but-ineffective authority. The existing boolean
+`effectiveAssignmentAuthority` is unchanged. Both fields are diagnostic only and cannot
+confer execution eligibility.
+
+**Still hard-disabled before C3C.** No runtime path imports or calls
+`finalizeTradingViewDispatch()` or `processTradingViewOrderIntentForC2()`; no scheduler,
+observer or worker job was added; no broker dispatch, activation control, exposure-release
+endpoint, SELL/LIVE execution, migration or role change was introduced.
+
+**Carry-forward (not implemented).** Canonical broker-evidence attribution (client order
+ID, BrokerOrder identity, broker order ID, contradictory-account reporting) and the
+indexed Operational Attention association plan remain C3C prerequisites. Credential
+readiness and per-component account/assignment readiness remain unrepresented by the
+aggregate `accountOperational` field. The remaining accepted LOW findings from C3B.3-1
+stay open; a C3C-era projection must add real adapter-invocation and send-permission
+fields before the UI can display them.
