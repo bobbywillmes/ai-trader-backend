@@ -44,6 +44,18 @@ describe('external signal execution lifecycle classification', () => {
     expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'submitting', workerClaimId: null })).toMatchObject({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE' });
     expect(classifyExecutionLifecycle({ ...base, tradingViewConsumptionId: 12, marketIntelligenceConsumptionId: 13, exposureStatus: 'RELEASED', exposureReleasedAt: new Date() })).toEqual({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'AUTHORIZATION_COMMITTED_WITH_RELEASED_EXPOSURE' });
   });
+  it('fails closed for terminal work retaining exposure, terminal authorization, and nonterminal released exposure', () => {
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'blocked', workerClaimId: 11, exposureStatus: 'ENTRY_SUBMITTING' }))
+      .toEqual({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'TERMINAL_LIFECYCLE_WITH_RETAINED_EXPOSURE' });
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'failed', exposureStatus: 'UNRESOLVED' }))
+      .toEqual({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE' });
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'blocked', tradingViewConsumptionId: 12, marketIntelligenceConsumptionId: 13 }))
+      .toEqual({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED' });
+    expect(classifyExecutionLifecycle({ ...base, exposureStatus: 'RELEASED', exposureReleasedAt: new Date() }))
+      .toEqual({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'NONTERMINAL_LIFECYCLE_WITH_RELEASED_EXPOSURE' });
+    expect(classifyExecutionLifecycle({ ...base, accountCycleStatus: 'BLOCKED', orderIntentId: null, orderIntentStatus: null, executionObligationId: null, marketIntelligenceObligationId: null, exposureClaimId: null, exposureStatus: null }))
+      .toEqual({ stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: 'ACCOUNT_CYCLE_BLOCKED' });
+  });
 });
 
 describe('external signal execution lifecycle read boundary', () => {

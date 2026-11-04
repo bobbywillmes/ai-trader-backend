@@ -51,10 +51,16 @@ export function classifyExecutionLifecycle(input: LifecycleClassificationInput):
   const pairCount = Number(input.tradingViewConsumptionId != null) + Number(input.marketIntelligenceConsumptionId != null);
   if (pairCount === 1) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'ATOMIC_AUTHORIZATION_PAIR_INCOMPLETE' };
   const exposureReleased = input.exposureReleasedAt != null || input.exposureStatus === 'RELEASED';
+  const terminalIntent = input.orderIntentId != null && ['blocked', 'failed', 'canceled'].includes(input.orderIntentStatus ?? '');
+  const terminalAccountCycle = ['BLOCKED', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(input.accountCycleStatus);
+  const exposureHeld = input.exposureClaimId != null && !exposureReleased;
+  if (pairCount === 2 && (terminalIntent || terminalAccountCycle)) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED' };
   if (pairCount === 2 && exposureReleased) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'AUTHORIZATION_COMMITTED_WITH_RELEASED_EXPOSURE' };
   if (input.workerClaimId != null && input.orderIntentId == null) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'WORKER_CLAIM_WITHOUT_INTENT' };
-  if (input.orderIntentId != null && ['blocked', 'failed', 'canceled'].includes(input.orderIntentStatus ?? '')) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: `ORDER_INTENT_${input.orderIntentStatus!.toUpperCase()}` };
-  if (exposureReleased || ['BLOCKED', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(input.accountCycleStatus)) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: exposureReleased ? 'EXPOSURE_RELEASED' : `ACCOUNT_CYCLE_${input.accountCycleStatus}` };
+  if ((terminalIntent || terminalAccountCycle) && exposureHeld) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: input.exposureStatus === 'UNRESOLVED' ? 'TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE' : 'TERMINAL_LIFECYCLE_WITH_RETAINED_EXPOSURE' };
+  if (terminalIntent) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: `ORDER_INTENT_${input.orderIntentStatus!.toUpperCase()}` };
+  if (terminalAccountCycle) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: `ACCOUNT_CYCLE_${input.accountCycleStatus}` };
+  if (exposureReleased) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'NONTERMINAL_LIFECYCLE_WITH_RELEASED_EXPOSURE' };
   if (input.orderIntentId != null && ['submitted', 'accepted', 'partially_filled', 'filled'].includes(input.orderIntentStatus ?? '')) return { stage: 'POST_SUBMISSION_BROKER_LIFECYCLE', reasonCode: `ORDER_INTENT_${input.orderIntentStatus!.toUpperCase()}` };
   if (input.orderIntentId != null && (!input.executionObligationId || !input.marketIntelligenceObligationId || !input.exposureClaimId)) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'MARKED_INTENT_REQUIRED_EVIDENCE_INCOMPLETE' };
   if (pairCount === 2) return { stage: 'AUTHORIZATION_COMMITTED', reasonCode: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' };
@@ -165,6 +171,9 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
       });
       const claimEventHistory = related(claimEvents, row.accountCycleId), brokerOrderHistory = related(brokerOrders, row.accountCycleId), brokerActivityHistory = related(brokerActivities, row.accountCycleId), attentionHistory = related(attentions, row.accountCycleId);
       const authorizationPairPresent = value.tradingViewConsumptionId != null && value.marketIntelligenceConsumptionId != null;
+      const exposureReleased = value.exposureReleasedAt != null || value.exposureStatus === 'RELEASED';
+      const terminalLifecycle = ['blocked', 'failed', 'canceled'].includes(String(value.orderIntentStatus ?? '')) || ['BLOCKED', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(String(value.accountCycleStatus));
+      const retainedExposureReviewRequired = terminalLifecycle && value.exposureClaimId != null && !exposureReleased;
       return {
         accountCycleId: row.accountCycleId,
         lifecycle,
@@ -193,7 +202,7 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
           exposureEvents: claimEventHistory.records,
           exposureEventsMetadata: claimEventHistory.metadata,
         },
-        recovery: { authoritativeReconciliationRequired: attentionHistory.authoritativeOnlyCount > 0, unresolvedAuthoritativeOnlyCount: attentionHistory.authoritativeOnlyCount, activeAttentionCount: attentionHistory.activeCount, activeOperationalAttention: attentionHistory.records.filter(item => item.status !== 'RESOLVED'), activeOperationalAttentionMetadata: { returned: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length, total: attentionHistory.activeCount, truncated: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length < attentionHistory.activeCount }, operationalAttention: attentionHistory.records, operationalAttentionMetadata: attentionHistory.metadata },
+        recovery: { retainedExposureReviewRequired, retainedExposureReasonCode: retainedExposureReviewRequired ? lifecycle.reasonCode : null, authoritativeReconciliationRequired: attentionHistory.authoritativeOnlyCount > 0, unresolvedAuthoritativeOnlyCount: attentionHistory.authoritativeOnlyCount, activeAttentionCount: attentionHistory.activeCount, activeOperationalAttention: attentionHistory.records.filter(item => item.status !== 'RESOLVED'), activeOperationalAttentionMetadata: { returned: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length, total: attentionHistory.activeCount, truncated: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length < attentionHistory.activeCount }, operationalAttention: attentionHistory.records, operationalAttentionMetadata: attentionHistory.metadata },
       };
     }),
   };
