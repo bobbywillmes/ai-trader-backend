@@ -117,6 +117,19 @@ describe('external signal owner management and read routes', () => {
     mocks.externalSignalCorrelationWork.findUniqueOrThrow.mockRejectedValue(new Prisma.PrismaClientKnownRequestError('missing',{code:'P2025',clientVersion:'7'}));
     expect((await fetch(`${baseUrl}/correlation-work/999/requeue`,{method:'POST',headers,body:JSON.stringify({confirm:true})})).status).toBe(404);
   });
+  it('serves a read-only operation detail without creating lifecycle evidence', async () => {
+    mocks.externalSignalTradeCycle.findUnique.mockResolvedValue({
+      id: 44, status: 'ENTRY_RECEIVED', terminalReasonCode: null, accountCycles: [], correlationDecisions: [],
+      signals: [{ id: 45, schemaVersion: 2, event: 'ENTRY_LONG', correlationWork: { id: 46, status: 'PENDING', createdAt: new Date('2026-11-04T18:00:00Z'), leaseExpiresAt: null } }],
+    });
+    mocks.$queryRaw.mockResolvedValueOnce([{ observedAt: new Date('2026-11-04T18:00:00Z') }]);
+    const response = await fetch(`${baseUrl}/operations/44`, { headers });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({ executionLifecycle: { sourceLifecycle: { stage: 'CORRELATION_IN_PROGRESS' }, accountCycles: [], capabilities: { brokerPost: 'UNAVAILABLE_PRE_C3C' } } });
+    expect(mocks.systemEvent.create).not.toHaveBeenCalled();
+    expect(mocks.externalSignalCorrelationWork.update).not.toHaveBeenCalled();
+    expect(mocks.$queryRaw).toHaveBeenCalledTimes(1);
+  });
   it('allows an owner session and validates pagination bounds', async () => {
     mocks.session.mockResolvedValue({ user: { id: 1, platformRole: 'SYSTEM_OWNER' } });
     expect((await fetch(`${baseUrl}/signals`, { headers: { authorization: 'Bearer session' } })).status).toBe(200);
