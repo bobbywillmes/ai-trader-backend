@@ -16,6 +16,7 @@ export type ExecutionLifecycleStage =
   | 'PENDING_MARKED_INTENT'
   | 'C2_WORKER_CLAIMED'
   | 'AUTHORIZATION_COMMITTED'
+  | 'POST_SUBMISSION_BROKER_LIFECYCLE'
   | 'BLOCKED_EXPIRED_OR_TERMINALIZED'
   | 'NOT_AN_EXECUTION_CANDIDATE'
   | 'MISSING_OR_INCONSISTENT_EVIDENCE';
@@ -30,6 +31,8 @@ export type LifecycleClassificationInput = {
   executionObligationId: number | null;
   marketIntelligenceObligationId: number | null;
   exposureClaimId: number | null;
+  exposureStatus: string | null;
+  exposureReleasedAt: Date | string | null;
   workerClaimId: number | null;
   tradingViewConsumptionId: number | null;
   marketIntelligenceConsumptionId: number | null;
@@ -45,22 +48,27 @@ export function classifySourceExecutionLifecycle(input: { entrySignalPresent: bo
 export function classifyExecutionLifecycle(input: LifecycleClassificationInput): { stage: ExecutionLifecycleStage; reasonCode: string } {
   if (input.environment !== 'PAPER' || input.signalEvent !== 'ENTRY_LONG') return { stage: 'NOT_AN_EXECUTION_CANDIDATE', reasonCode: input.environment !== 'PAPER' ? 'NON_PAPER_ACCOUNT' : 'NON_ENTRY_SIGNAL' };
   if (input.correlationWorkStatus && input.correlationWorkStatus !== 'COMPLETED') return { stage: 'CORRELATION_IN_PROGRESS', reasonCode: `CORRELATION_${input.correlationWorkStatus}` };
-  if (input.accountCycleStatus === 'ENTRY_ADMISSION_PENDING' && input.orderIntentId == null) return { stage: 'ADMISSION_AWAITING_PROCESSING', reasonCode: 'DURABLE_ACCOUNT_CYCLE_ADMISSION_PENDING' };
-  if (input.accountCycleStatus === 'ENTRY_ROUTE_PENDING' || input.accountCycleStatus === 'ENTRY_SHADOW_ALLOWED' || input.accountCycleStatus === 'ENTRY_SUPPRESSED_BY_EXIT') return { stage: 'NOT_AN_EXECUTION_CANDIDATE', reasonCode: input.accountCycleStatus };
   const pairCount = Number(input.tradingViewConsumptionId != null) + Number(input.marketIntelligenceConsumptionId != null);
   if (pairCount === 1) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'ATOMIC_AUTHORIZATION_PAIR_INCOMPLETE' };
-  if (input.orderIntentId != null && (!input.executionObligationId || !input.marketIntelligenceObligationId || !input.exposureClaimId)) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'MARKED_INTENT_REQUIRED_EVIDENCE_INCOMPLETE' };
+  const exposureReleased = input.exposureReleasedAt != null || input.exposureStatus === 'RELEASED';
+  if (pairCount === 2 && exposureReleased) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'AUTHORIZATION_COMMITTED_WITH_RELEASED_EXPOSURE' };
   if (input.workerClaimId != null && input.orderIntentId == null) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'WORKER_CLAIM_WITHOUT_INTENT' };
+  if (input.orderIntentId != null && ['blocked', 'failed', 'canceled'].includes(input.orderIntentStatus ?? '')) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: `ORDER_INTENT_${input.orderIntentStatus!.toUpperCase()}` };
+  if (exposureReleased || ['BLOCKED', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(input.accountCycleStatus)) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: exposureReleased ? 'EXPOSURE_RELEASED' : `ACCOUNT_CYCLE_${input.accountCycleStatus}` };
+  if (input.orderIntentId != null && ['submitted', 'accepted', 'partially_filled', 'filled'].includes(input.orderIntentStatus ?? '')) return { stage: 'POST_SUBMISSION_BROKER_LIFECYCLE', reasonCode: `ORDER_INTENT_${input.orderIntentStatus!.toUpperCase()}` };
+  if (input.orderIntentId != null && (!input.executionObligationId || !input.marketIntelligenceObligationId || !input.exposureClaimId)) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'MARKED_INTENT_REQUIRED_EVIDENCE_INCOMPLETE' };
   if (pairCount === 2) return { stage: 'AUTHORIZATION_COMMITTED', reasonCode: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' };
-  if (input.workerClaimId != null) return { stage: 'C2_WORKER_CLAIMED', reasonCode: 'C2_WORKER_CLAIM_PRESENT' };
-  if (input.orderIntentId != null && ['blocked', 'failed', 'canceled', 'filled'].includes(input.orderIntentStatus ?? '')) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: `ORDER_INTENT_${input.orderIntentStatus!.toUpperCase()}` };
-  if (input.orderIntentId != null) return { stage: 'PENDING_MARKED_INTENT', reasonCode: 'MARKED_INTENT_AWAITING_C2_OWNERSHIP' };
-  if (['BLOCKED', 'TERMINAL_NO_EXPOSURE', 'TERMINAL_CLOSED'].includes(input.accountCycleStatus)) return { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED', reasonCode: `ACCOUNT_CYCLE_${input.accountCycleStatus}` };
+  if (input.workerClaimId != null && input.orderIntentStatus === 'submitting' && !exposureReleased) return { stage: 'C2_WORKER_CLAIMED', reasonCode: 'ACTIVE_C2_OWNERSHIP' };
+  if (input.orderIntentStatus === 'submitting') return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'SUBMITTING_WITHOUT_ACTIVE_C2_OWNERSHIP' };
+  if (input.orderIntentId != null && ['received', 'pending'].includes(input.orderIntentStatus ?? '')) return { stage: 'PENDING_MARKED_INTENT', reasonCode: 'MARKED_INTENT_AWAITING_C2_OWNERSHIP' };
+  if (input.orderIntentId != null) return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'UNSUPPORTED_ORDER_INTENT_STATUS' };
+  if (input.accountCycleStatus === 'ENTRY_EXECUTION_PROSPECTIVE') return { stage: 'ADMISSION_AWAITING_PROCESSING', reasonCode: 'DURABLE_EXECUTION_PROSPECTIVE_ADMISSION' };
+  if (['ENTRY_ADMISSION_PENDING', 'ENTRY_SHADOW_ALLOWED', 'ENTRY_SUPPRESSED_BY_EXIT', 'ENTRY_ROUTE_PENDING', 'EXIT_PENDING'].includes(input.accountCycleStatus)) return { stage: 'NOT_AN_EXECUTION_CANDIDATE', reasonCode: input.accountCycleStatus };
   return { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'EXECUTION_PROSPECTIVE_EVIDENCE_MISSING' };
 }
 
 type CoreRow = Record<string, unknown> & { accountCycleId: number; environment: string; accountCycleStatus: string };
-type RelatedRow = Record<string, unknown> & { accountCycleId: number };
+type RelatedRow = Record<string, unknown> & { accountCycleId: number; totalCount?: bigint | number; activeCount?: bigint | number; authoritativeOnlyCount?: bigint | number };
 
 const dateIso = (value: unknown) => value instanceof Date ? value.toISOString() : value;
 const presentRow = (row: Record<string, unknown>) => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, dateIso(value)]));
@@ -128,13 +136,18 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
       LEFT JOIN "ExternalSignalBrokerDispatchState" bds ON bds.id=1
       WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})
       ORDER BY ac.id`),
-    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", e.id, e."eventType", e."createdAt", e."evidenceJson", row_number() OVER (PARTITION BY ac.id ORDER BY e.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=oi.id JOIN "EntryExposureClaimEvent" e ON e."claimId"=ec.id WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
-    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", bo.id, bo."brokerOrderId", bo."clientOrderId", bo.side, bo.status, bo."createdAt", bo."updatedAt", row_number() OVER (PARTITION BY ac.id ORDER BY bo.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "BrokerOrder" bo ON bo."orderIntentId"=oi.id AND bo."tradingAccountId"=ac."tradingAccountId" WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
-    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", ba.id, ba."activityId", ba."activityType", ba."activityCategory", ba."orderId", ba."transactionTime", ba."createdAt", row_number() OVER (PARTITION BY ac.id ORDER BY ba.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "BrokerActivity" ba ON ba."orderIntentId"=oi.id AND ba."tradingAccountId"=ac."tradingAccountId" WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
-    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", oa.id, oa.code, oa.source, oa.status::text, oa.severity::text, oa.title, oa."resolutionPolicy"::text, oa."firstObservedAt", oa."lastObservedAt", oa."resolvedAt", row_number() OVER (PARTITION BY ac.id ORDER BY oa.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "OperationalAttention" oa ON oa."tradingAccountId"=ac."tradingAccountId" AND (oa."orderIntentId"=oi.id OR oa."brokerOrderId" IN (SELECT bo.id FROM "BrokerOrder" bo WHERE bo."orderIntentId"=oi.id AND bo."tradingAccountId"=ac."tradingAccountId")) WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
+    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", e.id, e."eventType", e."createdAt", e."evidenceJson", count(*) OVER (PARTITION BY ac.id) AS "totalCount", row_number() OVER (PARTITION BY ac.id ORDER BY e.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "EntryExposureClaim" ec ON ec."orderIntentId"=oi.id JOIN "EntryExposureClaimEvent" e ON e."claimId"=ec.id WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
+    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", bo.id, bo."brokerOrderId", bo."clientOrderId", bo.side, bo.status, bo."createdAt", bo."updatedAt", count(*) OVER (PARTITION BY ac.id) AS "totalCount", row_number() OVER (PARTITION BY ac.id ORDER BY bo.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "BrokerOrder" bo ON bo."orderIntentId"=oi.id AND bo."tradingAccountId"=ac."tradingAccountId" WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
+    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT ac.id AS "accountCycleId", ba.id, ba."activityId", ba."activityType", ba."activityCategory", ba."orderId", ba."transactionTime", ba."createdAt", count(*) OVER (PARTITION BY ac.id) AS "totalCount", row_number() OVER (PARTITION BY ac.id ORDER BY ba.id DESC) AS rn FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "BrokerActivity" ba ON ba."orderIntentId"=oi.id AND ba."tradingAccountId"=ac."tradingAccountId" WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) q WHERE rn<=100 ORDER BY "accountCycleId",id`),
+    db.$queryRaw<RelatedRow[]>(Prisma.sql`SELECT * FROM (SELECT associated.*, count(*) OVER (PARTITION BY "accountCycleId") AS "totalCount", count(*) FILTER (WHERE status<>'RESOLVED') OVER (PARTITION BY "accountCycleId") AS "activeCount", count(*) FILTER (WHERE status<>'RESOLVED' AND "resolutionPolicy"='AUTHORITATIVE_ONLY') OVER (PARTITION BY "accountCycleId") AS "authoritativeOnlyCount", row_number() OVER (PARTITION BY "accountCycleId" ORDER BY (status<>'RESOLVED') DESC,id DESC) AS rn FROM (SELECT ac.id AS "accountCycleId", oa.id, oa.code, oa.source, oa.status::text, oa.severity::text, oa.title, oa."resolutionPolicy"::text, oa."firstObservedAt", oa."lastObservedAt", oa."resolvedAt" FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "OperationalAttention" oa ON oa."tradingAccountId"=ac."tradingAccountId" AND oa."orderIntentId"=oi.id WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)}) UNION SELECT ac.id, oa.id, oa.code, oa.source, oa.status::text, oa.severity::text, oa.title, oa."resolutionPolicy"::text, oa."firstObservedAt", oa."lastObservedAt", oa."resolvedAt" FROM "ExternalSignalTradeCycleAccount" ac JOIN "OrderIntent" oi ON oi."externalSignalAccountCycleId"=ac.id JOIN "BrokerOrder" bo ON bo."orderIntentId"=oi.id AND bo."tradingAccountId"=ac."tradingAccountId" JOIN "OperationalAttention" oa ON oa."tradingAccountId"=ac."tradingAccountId" AND oa."brokerOrderId"=bo.id WHERE ac."externalSignalTradeCycleId"=${sourceCycleId} AND ac.id IN (${Prisma.join(ids)})) associated) q WHERE rn<=100 ORDER BY "accountCycleId",rn`),
   ]);
 
-  const grouped = (rows: RelatedRow[], accountCycleId: number) => rows.filter(row => row.accountCycleId === accountCycleId).map(({ accountCycleId: _id, rn: _rank, ...row }) => presentRow(row));
+  const related = (rows: RelatedRow[], accountCycleId: number) => {
+    const selected = rows.filter(row => row.accountCycleId === accountCycleId);
+    const total = Number(selected[0]?.totalCount ?? selected.length);
+    const records = selected.map(({ accountCycleId: _id, rn: _rank, totalCount: _total, activeCount: _active, authoritativeOnlyCount: _authoritative, ...row }) => presentRow(row));
+    return { records, metadata: { returned: records.length, total, truncated: records.length < total }, activeCount: Number(selected[0]?.activeCount ?? 0), authoritativeOnlyCount: Number(selected[0]?.authoritativeOnlyCount ?? 0) };
+  };
   return {
     observedAt: observedAt.toISOString(),
     readinessMayChangeAfterObservation: true,
@@ -146,10 +159,11 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
         correlationWorkStatus: value.correlationWorkStatus == null ? null : String(value.correlationWorkStatus), orderIntentId: value.orderIntentId as number | null,
         orderIntentStatus: value.orderIntentStatus == null ? null : String(value.orderIntentStatus), executionObligationId: value.executionObligationId as number | null,
         marketIntelligenceObligationId: value.marketIntelligenceObligationId as number | null, exposureClaimId: value.exposureClaimId as number | null,
+        exposureStatus: value.exposureStatus == null ? null : String(value.exposureStatus), exposureReleasedAt: value.exposureReleasedAt as Date | null,
         workerClaimId: value.workerClaimId as number | null, tradingViewConsumptionId: value.tradingViewConsumptionId as number | null,
         marketIntelligenceConsumptionId: value.marketIntelligenceConsumptionId as number | null,
       });
-      const brokerOrderRows = grouped(brokerOrders, row.accountCycleId), brokerActivityRows = grouped(brokerActivities, row.accountCycleId), attentionRows = grouped(attentions, row.accountCycleId);
+      const claimEventHistory = related(claimEvents, row.accountCycleId), brokerOrderHistory = related(brokerOrders, row.accountCycleId), brokerActivityHistory = related(brokerActivities, row.accountCycleId), attentionHistory = related(attentions, row.accountCycleId);
       const authorizationPairPresent = value.tradingViewConsumptionId != null && value.marketIntelligenceConsumptionId != null;
       return {
         accountCycleId: row.accountCycleId,
@@ -175,10 +189,11 @@ export async function projectExternalSignalExecutionLifecycle(sourceCycleId: num
           workerClaim: value.workerClaimId == null ? null : { id: value.workerClaimId, claimedAt: dateIso(value.claimedAt), dispatchStateVersion: value.claimedDispatchStateVersion },
           authorization: { pairPresent: authorizationPairPresent, status: authorizationPairPresent ? 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' : 'NOT_COMMITTED', expired: value.authorizationDeadlineStatus === 'EXPIRED', tradingViewConsumption: value.tradingViewConsumptionId == null ? null : { id: value.tradingViewConsumptionId, authorizedAt: dateIso(value.authorizedAt), deadlineAt: dateIso(value.authorizationDeadlineAt), consumedAt: dateIso(value.tradingViewConsumedAt) }, marketIntelligenceConsumption: value.marketIntelligenceConsumptionId == null ? null : { id: value.marketIntelligenceConsumptionId, consumedAt: dateIso(value.marketIntelligenceConsumedAt) } },
           brokerSendPermissionEstablished: false,
-          broker: { orderEvidencePresent: brokerOrderRows.length > 0, activityEvidencePresent: brokerActivityRows.length > 0, orders: brokerOrderRows, activities: brokerActivityRows },
-          exposureEvents: grouped(claimEvents, row.accountCycleId),
+          broker: { attributionProvenance: 'DIRECT_LINKED_EVIDENCE_ONLY_PRE_C3C', absenceIsAuthoritativeNonDeliveryProof: false, orderEvidencePresent: brokerOrderHistory.metadata.total > 0, activityEvidencePresent: brokerActivityHistory.metadata.total > 0, orders: brokerOrderHistory.records, ordersMetadata: brokerOrderHistory.metadata, activities: brokerActivityHistory.records, activitiesMetadata: brokerActivityHistory.metadata },
+          exposureEvents: claimEventHistory.records,
+          exposureEventsMetadata: claimEventHistory.metadata,
         },
-        recovery: { authoritativeReconciliationRequired: attentionRows.some(item => item.status !== 'RESOLVED' && item.resolutionPolicy === 'AUTHORITATIVE_ONLY'), activeOperationalAttention: attentionRows.filter(item => item.status !== 'RESOLVED'), operationalAttention: attentionRows },
+        recovery: { authoritativeReconciliationRequired: attentionHistory.authoritativeOnlyCount > 0, unresolvedAuthoritativeOnlyCount: attentionHistory.authoritativeOnlyCount, activeAttentionCount: attentionHistory.activeCount, activeOperationalAttention: attentionHistory.records.filter(item => item.status !== 'RESOLVED'), activeOperationalAttentionMetadata: { returned: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length, total: attentionHistory.activeCount, truncated: attentionHistory.records.filter(item => item.status !== 'RESOLVED').length < attentionHistory.activeCount }, operationalAttention: attentionHistory.records, operationalAttentionMetadata: attentionHistory.metadata },
       };
     }),
   };

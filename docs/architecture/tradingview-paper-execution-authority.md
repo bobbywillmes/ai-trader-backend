@@ -527,3 +527,28 @@ The corrected, pre-persistence C1 migration SHA-256 is
 under the acceptance condition that every earlier C1 migration body remained unapplied to all
 persistent databases; an environment that applied an earlier checksum requires a separately
 reviewed forward correction rather than checksum replacement.
+
+## C3B.3-1 Operations projection limits and carry-forward prerequisites
+
+The owner-only execution-lifecycle projection is diagnostic and read-only. It reports
+current lifecycle state ahead of retained historical worker-claim evidence, calculates
+unresolved authoritative-reconciliation truth independently from bounded display
+history, and marks every capped collection with returned, total and truncated counts.
+Its observation time precedes several independent reads, so the response is explicitly
+point-in-time evidence whose readiness can change after observation; it is not an atomic
+snapshot and must not acquire global execution locks to appear atomic.
+
+Before C3C changes the marked-intent quarantine, canonical broker-evidence attribution
+must associate account-scoped evidence through direct OrderIntent links, client order ID,
+BrokerOrder identity and broker order ID, and must report contradictory-account matches.
+Until then the projection labels broker evidence `DIRECT_LINKED_EVIDENCE_ONLY_PRE_C3C`;
+absence of those direct links is never proof of non-delivery. C3C must also provide an
+indexed plan for the complete Operational Attention association paths.
+
+C3B.3-2 must replace the legacy Operations UI's blanket SHADOW-only wording. The existing
+`shadowOnly` and `actualExecutionAuthority` fields remain unchanged for compatibility in
+C3B.3-1; clients must eventually distinguish historical SHADOW correlation, configured
+execution authority, active C2 ownership, committed authorization and unavailable broker
+execution. Credential readiness, and the individual account/assignment readiness
+components, are likewise not represented by the current aggregate `accountOperational`
+field and remain explicit follow-up work.

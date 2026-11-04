@@ -9,7 +9,7 @@ import {
 const base = {
   accountCycleStatus: 'ENTRY_INTENT_CREATED', environment: 'PAPER', signalEvent: 'ENTRY_LONG', correlationWorkStatus: 'COMPLETED',
   orderIntentId: 7, orderIntentStatus: 'pending', executionObligationId: 8, marketIntelligenceObligationId: 9,
-  exposureClaimId: 10, workerClaimId: null, tradingViewConsumptionId: null, marketIntelligenceConsumptionId: null,
+  exposureClaimId: 10, exposureStatus: 'ENTRY_PENDING', exposureReleasedAt: null, workerClaimId: null, tradingViewConsumptionId: null, marketIntelligenceConsumptionId: null,
 };
 
 describe('external signal execution lifecycle classification', () => {
@@ -18,12 +18,13 @@ describe('external signal execution lifecycle classification', () => {
     expect(classifySourceExecutionLifecycle({ entrySignalPresent: true, correlationWorkStatus: 'COMPLETED', accountCycleCount: 0 })).toEqual({ stage: 'NOT_AN_EXECUTION_CANDIDATE', reasonCode: 'NO_ELIGIBLE_ACCOUNT_ROUTE' });
   });
   it('requires durable account-cycle evidence for admission pending', () => {
-    expect(classifyExecutionLifecycle({ ...base, accountCycleStatus: 'ENTRY_ADMISSION_PENDING', orderIntentId: null, orderIntentStatus: null, executionObligationId: null, marketIntelligenceObligationId: null, exposureClaimId: null })).toMatchObject({ stage: 'ADMISSION_AWAITING_PROCESSING' });
+    expect(classifyExecutionLifecycle({ ...base, accountCycleStatus: 'ENTRY_EXECUTION_PROSPECTIVE', orderIntentId: null, orderIntentStatus: null, executionObligationId: null, marketIntelligenceObligationId: null, exposureClaimId: null, exposureStatus: null })).toMatchObject({ stage: 'ADMISSION_AWAITING_PROCESSING' });
+    expect(classifyExecutionLifecycle({ ...base, accountCycleStatus: 'ENTRY_ADMISSION_PENDING', orderIntentId: null, orderIntentStatus: null, executionObligationId: null, marketIntelligenceObligationId: null, exposureClaimId: null, exposureStatus: null })).toMatchObject({ stage: 'NOT_AN_EXECUTION_CANDIDATE' });
     expect(classifySourceExecutionLifecycle({ entrySignalPresent: true, correlationWorkStatus: 'COMPLETED', accountCycleCount: 0 })).not.toMatchObject({ stage: 'ADMISSION_AWAITING_PROCESSING' });
   });
   it('projects a pending marked PAPER BUY separately from C2 ownership', () => {
     expect(classifyExecutionLifecycle(base)).toEqual({ stage: 'PENDING_MARKED_INTENT', reasonCode: 'MARKED_INTENT_AWAITING_C2_OWNERSHIP' });
-    expect(classifyExecutionLifecycle({ ...base, workerClaimId: 11 })).toMatchObject({ stage: 'C2_WORKER_CLAIMED' });
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'submitting', workerClaimId: 11 })).toMatchObject({ stage: 'C2_WORKER_CLAIMED' });
   });
   it('labels an atomic pair as authorization only, including after its deadline', () => {
     expect(classifyExecutionLifecycle({ ...base, workerClaimId: 11, tradingViewConsumptionId: 12, marketIntelligenceConsumptionId: 13 }))
@@ -37,8 +38,11 @@ describe('external signal execution lifecycle classification', () => {
     expect(classifyExecutionLifecycle({ ...base, environment, signalEvent })).toMatchObject({ stage: 'NOT_AN_EXECUTION_CANDIDATE' });
   });
   it('classifies blocked and released terminal work without treating it as pending', () => {
-    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'blocked' })).toMatchObject({ stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED' });
-    expect(classifyExecutionLifecycle({ ...base, accountCycleStatus: 'TERMINAL_NO_EXPOSURE', orderIntentId: null, orderIntentStatus: null, executionObligationId: null, marketIntelligenceObligationId: null, exposureClaimId: null })).toMatchObject({ stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED' });
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'blocked', workerClaimId: 11, exposureStatus: 'RELEASED', exposureReleasedAt: new Date() })).toMatchObject({ stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED' });
+    expect(classifyExecutionLifecycle({ ...base, accountCycleStatus: 'TERMINAL_NO_EXPOSURE', orderIntentId: null, orderIntentStatus: null, executionObligationId: null, marketIntelligenceObligationId: null, exposureClaimId: null, exposureStatus: null })).toMatchObject({ stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED' });
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'accepted', workerClaimId: null })).toMatchObject({ stage: 'POST_SUBMISSION_BROKER_LIFECYCLE' });
+    expect(classifyExecutionLifecycle({ ...base, orderIntentStatus: 'submitting', workerClaimId: null })).toMatchObject({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE' });
+    expect(classifyExecutionLifecycle({ ...base, tradingViewConsumptionId: 12, marketIntelligenceConsumptionId: 13, exposureStatus: 'RELEASED', exposureReleasedAt: new Date() })).toEqual({ stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: 'AUTHORIZATION_COMMITTED_WITH_RELEASED_EXPOSURE' });
   });
 });
 
@@ -66,7 +70,7 @@ describe('external signal execution lifecycle read boundary', () => {
       signalReceivedAt: null, receiptFreshness: 'HISTORICAL_NULL_RECEIPT', effectiveFrozenAssignmentAuthority: false,
       accountOperational: false, assignmentOperational: false,
     };
-    const attention = { accountCycleId: 20, id: 17, status: 'OPEN', resolutionPolicy: 'AUTHORITATIVE_ONLY' };
+    const attention = { accountCycleId: 20, id: 17, status: 'OPEN', resolutionPolicy: 'AUTHORITATIVE_ONLY', totalCount: 101n, activeCount: 1n, authoritativeOnlyCount: 1n };
     const released = { ...core, accountCycleId: 21, accountCycleStatus: 'TERMINAL_NO_EXPOSURE', orderIntentStatus: 'blocked', workerClaimId: null, tradingViewConsumptionId: null, marketIntelligenceConsumptionId: null, authorizationDeadlineStatus: 'NOT_COMMITTED', exposureStatus: 'RELEASED', exposureReleasedAt: new Date('2026-11-04T17:58:00Z') };
     const query = vi.fn()
       .mockResolvedValueOnce([{ observedAt: new Date('2026-11-04T18:00:00Z') }])
@@ -80,7 +84,7 @@ describe('external signal execution lifecycle read boundary', () => {
     expect(projected.lifecycle).toEqual({ stage: 'AUTHORIZATION_COMMITTED', reasonCode: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' });
     expect(projected.readiness).toMatchObject({ receipt: { receivedAt: null, freshness: 'HISTORICAL_NULL_RECEIPT' }, effectiveAssignmentAuthority: false, accountOperational: false, authorizationDeadlineStatus: 'EXPIRED' });
     expect(projected.evidence).toMatchObject({ authorization: { pairPresent: true, expired: true, status: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' }, brokerSendPermissionEstablished: false, exposure: { held: true }, broker: { orderEvidencePresent: true, activityEvidencePresent: true } });
-    expect(projected.recovery).toMatchObject({ authoritativeReconciliationRequired: true, activeOperationalAttention: [{ id: 17 }] });
+    expect(projected.recovery).toMatchObject({ authoritativeReconciliationRequired: true, unresolvedAuthoritativeOnlyCount: 1, activeAttentionCount: 1, activeOperationalAttention: [{ id: 17 }], operationalAttentionMetadata: { returned: 1, total: 101, truncated: true } });
     expect(result.accountCycles[1]).toMatchObject({ lifecycle: { stage: 'BLOCKED_EXPIRED_OR_TERMINALIZED' }, evidence: { exposure: { held: false, status: 'RELEASED' } } });
     expect(query).toHaveBeenCalledTimes(6);
   });

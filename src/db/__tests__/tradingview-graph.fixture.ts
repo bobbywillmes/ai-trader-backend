@@ -6,28 +6,32 @@ import type { Client } from 'pg';
  * triggers and authority services. Call only after process.env.DATABASE_URL names a disposable database.
  */
 export async function createTradingViewGraphFixture(db: Client) {
-  const ownerId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ('tv-graph-owner@test','SYSTEM_OWNER',true,now(),now()) RETURNING id`)).rows[0].id as number;
-  const strategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ('tv-graph','TV graph',true,now(),now()) RETURNING id`)).rows[0].id as number;
-  const exitId = (await db.query(`INSERT INTO "ExitProfile" (key,name,"exitMode","takeProfitBehavior",enabled,"createdAt","updatedAt") VALUES ('tv-graph','TV graph','fixed','limit',true,now(),now()) RETURNING id`)).rows[0].id as number;
+  const fixtureKey = `tv-graph-${randomUUID()}`;
+  const ownerId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ($1,'SYSTEM_OWNER',true,now(),now()) RETURNING id`, [`${fixtureKey}@test`])).rows[0].id as number;
+  const strategyId = (await db.query(`INSERT INTO "Strategy" (key,name,enabled,"createdAt","updatedAt") VALUES ($1,'TV graph',true,now(),now()) RETURNING id`, [fixtureKey])).rows[0].id as number;
+  const exitId = (await db.query(`INSERT INTO "ExitProfile" (key,name,"exitMode","takeProfitBehavior",enabled,"createdAt","updatedAt") VALUES ($1,'TV graph','fixed','limit',true,now(),now()) RETURNING id`, [fixtureKey])).rows[0].id as number;
   const paperId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","tradingBlocked","createdAt","updatedAt") VALUES ($1,'TV graph paper','PAPER','ACTIVE',true,false,false,now(),now()) RETURNING id`, [ownerId])).rows[0].id as number;
   await db.query(`INSERT INTO "TradingAccountCredential" ("tradingAccountId",status,"apiKeyCiphertext","apiSecretCiphertext","keyFingerprint","verifiedAt","createdAt","updatedAt") VALUES ($1,'ACTIVE','test','test',$2,now(),now(),now())`, [paperId, 'f'.repeat(64)]);
-  const sourceId = (await db.query(`INSERT INTO "ExternalSignalSource" (name,provider,enabled,"authMethod","webhookKeyHash","createdAt","updatedAt") VALUES ('TV','TRADINGVIEW',true,'URL_TOKEN',$1,now(),now()) RETURNING id`, ['a'.repeat(64)])).rows[0].id as number;
+  const sourceId = (await db.query(`INSERT INTO "ExternalSignalSource" (name,provider,enabled,"authMethod","webhookKeyHash","createdAt","updatedAt") VALUES ($1,'TRADINGVIEW',true,'URL_TOKEN',$2,now(),now()) RETURNING id`, [fixtureKey, randomUUID().replaceAll('-', '').padEnd(64, 'a')])).rows[0].id as number;
   const bindingId = (await db.query(`INSERT INTO "StrategySignalBinding" ("signalSourceId","strategyId","externalStrategyKey",enabled,"createdAt","updatedAt") VALUES ($1,$2,'tv-graph',true,now(),now()) RETURNING id`, [sourceId, strategyId])).rows[0].id as number;
   const revisionId = (await db.query(`INSERT INTO "StrategySignalRevision" ("strategySignalBindingId",revision,status,"authorityMode","createdAt","activatedAt") VALUES ($1,1,'ACTIVE','TRADE_ELIGIBLE',now(),now()) RETURNING id`, [bindingId])).rows[0].id as number;
-  await db.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration" (direction,generation,enabled,"authorityMode","configurationJson","configurationFingerprint","effectiveAt") VALUES ('ENTRY',1,true,'SHADOW','{}',$1,now())`, ['b'.repeat(64)]);
+  const rolloutCount = Number((await db.query(`SELECT count(*)::int AS n FROM "ExternalSignalExecutionRolloutGeneration" WHERE direction='ENTRY'`)).rows[0].n);
+  if (rolloutCount === 0) await db.query(`INSERT INTO "ExternalSignalExecutionRolloutGeneration" (direction,generation,enabled,"authorityMode","configurationJson","configurationFingerprint","effectiveAt") VALUES ('ENTRY',1,true,'SHADOW','{}',$1,now())`, [randomUUID().replaceAll('-', '').padEnd(64, 'b')]);
   const authority = await import('../../services/external-signal-execution-authority.service.js');
-  const executeGenerationId = (await authority.createExternalSignalExecuteGeneration({ configuration: {}, reason: 'Isolated TradingView graph epoch' }, ownerId)).id;
-  await authority.changeExternalSignalExecutionRollout(executeGenerationId, 'ACTIVATE', 'Activate isolated TradingView graph epoch', ownerId);
-  const dispatchVersion = (await authority.changeExternalSignalBrokerDispatchState(executeGenerationId, 'ACTIVATE', 'Exercise inert worker claims', ownerId)).stateVersion;
+  const activeExecution = (await db.query(`SELECT "activeRolloutGenerationId" AS id FROM "ExternalSignalExecutionRolloutState" WHERE id=1`)).rows[0]?.id as number | null;
+  const executeGenerationId = activeExecution ?? (await authority.createExternalSignalExecuteGeneration({ configuration: {}, reason: 'Isolated TradingView graph epoch' }, ownerId)).id;
+  if (activeExecution == null) await authority.changeExternalSignalExecutionRollout(executeGenerationId, 'ACTIVATE', 'Activate isolated TradingView graph epoch', ownerId);
+  const dispatchState = (await db.query(`SELECT version,"activeRolloutGenerationId" AS id FROM "ExternalSignalBrokerDispatchState" WHERE id=1`)).rows[0] as { version: number; id: number | null };
+  const dispatchVersion = dispatchState.id === executeGenerationId ? dispatchState.version : (await authority.changeExternalSignalBrokerDispatchState(executeGenerationId, 'ACTIVATE', 'Exercise inert worker claims', ownerId)).stateVersion;
   let sequence = 0;
 
   async function createTarget(options: { grant?: boolean } = {}) {
     sequence += 1;
-    const symbol = `TV${sequence}`;
+    const symbol = `T${fixtureKey.slice(-6).toUpperCase()}${sequence}`;
     const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ($1,$1,true,'STOCK',now(),now()) RETURNING id`, [symbol])).rows[0].id as number;
-    const subscriptionId = (await db.query(`INSERT INTO "Subscription" (key,name,symbol,enabled,"strategyId","exitProfileId","securityId","createdAt","updatedAt") VALUES ($1,$1,$2,true,$3,$4,$5,now(),now()) RETURNING id`, [`tv-graph-${sequence}`, symbol, strategyId, exitId, securityId])).rows[0].id as number;
+    const subscriptionId = (await db.query(`INSERT INTO "Subscription" (key,name,symbol,enabled,"strategyId","exitProfileId","securityId","createdAt","updatedAt") VALUES ($1,$1,$2,true,$3,$4,$5,now(),now()) RETURNING id`, [`${fixtureKey}-${sequence}`, symbol, strategyId, exitId, securityId])).rows[0].id as number;
     const assignmentId = (await db.query(`INSERT INTO "TradingAccountSubscription" ("tradingAccountId","subscriptionId",enabled,"entriesEnabled","exitsEnabled","sizingType","fixedQty","createdAt","updatedAt") VALUES ($1,$2,true,true,true,'FIXED_QTY',1,now(),now()) RETURNING id`, [paperId, subscriptionId])).rows[0].id as number;
-    const allocationId = (await db.query(`INSERT INTO "TradingAccountAllocation" ("tradingAccountId",key,name,enabled,"maxAllocatedNotional","maxPositionNotional","createdAt","updatedAt") VALUES ($1,$2,$2,true,10000,1000,now(),now()) RETURNING id`, [paperId, `tv-graph-${sequence}`])).rows[0].id as number;
+    const allocationId = (await db.query(`INSERT INTO "TradingAccountAllocation" ("tradingAccountId",key,name,enabled,"maxAllocatedNotional","maxPositionNotional","createdAt","updatedAt") VALUES ($1,$2,$2,true,10000,1000,now(),now()) RETURNING id`, [paperId, `${fixtureKey}-${sequence}`])).rows[0].id as number;
     await db.query(`UPDATE "TradingAccountSubscription" SET "allocationId"=$2 WHERE id=$1`, [assignmentId, allocationId]);
     const grant = options.grant === false ? null : await authority.grantExternalSignalEntryExecutionAuthorization(paperId, assignmentId, { rolloutGenerationId: executeGenerationId, strategySignalBindingId: bindingId, expectedStrategySignalRevisionId: revisionId, expectedSecurityId: securityId, reason: 'Authorize isolated graph target' }, ownerId);
     return { symbol, securityId, subscriptionId, assignmentId, authorizationId: grant?.id as number };
@@ -90,5 +94,5 @@ export async function createTradingViewGraphFixture(db: Client) {
     } catch (error) { await db.query('ROLLBACK'); throw error; }
   }
 
-  return { ownerId, paperId, strategyId, sourceId, bindingId, revisionId, executeGenerationId, createTarget, prospective, admit, workerClaim };
+  return { ownerId, paperId, strategyId, sourceId, bindingId, revisionId, executeGenerationId, createTarget, buildCycle, prospective, admit, workerClaim };
 }
