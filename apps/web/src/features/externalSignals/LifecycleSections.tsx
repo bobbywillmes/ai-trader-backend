@@ -7,7 +7,8 @@ import type { AccountCycleLifecycle, ExecutionLifecycle, OperationsCycle, Trunca
 type AccountCycle = OperationsCycle['accountCycles'][number];
 const show = (value: unknown, fallback = 'none') => value === null || value === undefined || value === '' ? fallback : String(value);
 const yesNo = (value: boolean) => value ? 'yes' : 'no';
-const Line = ({ label, children }: { label: string; children: ReactNode }) => <Text size="xs">{label}: {children}</Text>;
+const wrap = { overflowWrap: 'anywhere' } as const;
+const Line = ({ label, children }: { label: string; children: ReactNode }) => <Text size="xs" style={wrap}>{label}: {children}</Text>;
 
 /** Boundary-specific replacement for the former blanket "SHADOW ONLY / authority NONE" statement. */
 export function ExecutionBoundaryNotice({ compact = false }: { compact?: boolean }) {
@@ -25,8 +26,8 @@ export function ExecutionBoundaryNotice({ compact = false }: { compact?: boolean
 function Disclosure({ title, summary, children }: { title: string; summary?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return <Stack gap={4}>
-    <Button variant="subtle" size="compact-sm" justify="flex-start" aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '▾' : '▸'} {title}{summary ? ` · ${summary}` : ''}</Button>
-    {open && <Stack gap={4} pl="sm">{children}</Stack>}
+    <Button variant="subtle" size="compact-sm" justify="flex-start" h="auto" style={{ whiteSpace: 'normal', ...wrap }} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '▾' : '▸'} {title}{summary ? ` · ${summary}` : ''}</Button>
+    {open && <Stack gap={4} pl="sm" style={{ minWidth: 0 }}>{children}</Stack>}
   </Stack>;
 }
 const Truncation = ({ meta }: { meta: TruncationMetadata }) => <Text size="xs" c={meta.truncated ? 'orange' : 'dimmed'} role={meta.truncated ? 'status' : undefined}>{truncationNotice(meta)}</Text>;
@@ -35,19 +36,26 @@ function Ladder({ item, hasIntent }: { item: AccountCycleLifecycle; hasIntent: b
   const { readiness, evidence, recovery } = item, stage = item.lifecycle.stage, pair = evidence.authorization;
   const brokerOrders = evidence.broker.ordersMetadata.total, brokerActivities = evidence.broker.activitiesMetadata.total;
   const frozen = readiness.assignmentAuthorityState;
-  const authority = frozen === 'NOT_YET_FROZEN' ? 'Not yet frozen into an obligation' : frozen === 'FROZEN_NOT_EFFECTIVE' ? 'Frozen, but no longer effective' : frozen === 'FROZEN_EFFECTIVE' ? 'Frozen and currently effective' : readiness.effectiveAssignmentAuthority ? 'Effective (frozen state not reported)' : 'Not effective or not reported';
+  const authority = stage === 'NOT_AN_EXECUTION_CANDIDATE' ? 'Not applicable' : frozen === 'NOT_YET_FROZEN' ? 'Not yet frozen into an obligation' : frozen === 'FROZEN_NOT_EFFECTIVE' ? 'Frozen, but no longer effective' : frozen === 'FROZEN_EFFECTIVE' ? 'Frozen and currently effective' : readiness.effectiveAssignmentAuthority ? 'Effective (frozen state not reported)' : 'Not effective or not reported';
   const exposure = !evidence.exposure ? absence(stage) : evidence.exposure.held ? `Held (${evidence.exposure.status})${recovery.retainedExposureReviewRequired ? ' — review required' : ''}` : `Settled (${evidence.exposure.status}, released ${stamp(evidence.exposure.releasedAt)})`;
   const steps: Array<[string, string]> = [
     ['1. Execution authority configured', `${authority}. Configuration only; not a send.`],
     ['2. C2 worker claimed', evidence.workerClaim ? `Claim #${evidence.workerClaim.id} recorded ${stamp(evidence.workerClaim.claimedAt)} (historical evidence)` : hasIntent ? 'No worker claim recorded' : absence(stage)],
-    ['3. Paired final authorization committed', pair.pairPresent ? `Authorization committed — broker send not established.${pair.expired ? ' Deadline has passed.' : ''}` : pair.tradingViewConsumption || pair.marketIntelligenceConsumption ? 'Incomplete pair — inconsistent evidence' : absence(stage)],
+    ['3. Paired final authorization committed', authorizationText(pair)],
     ['4. Broker send permission established', evidence.brokerSendPermissionEstablished ? 'Established' : 'Not established'],
     ['5. Broker adapter invoked', 'Not reported by the pre-C3C projection'],
     ['6. Broker order/activity observed', brokerOrders + brokerActivities > 0 ? `${brokerOrders} direct-linked order(s), ${brokerActivities} activity record(s)` : 'None directly linked (absence is not proof of non-delivery)'],
     ['7. Exposure settled or reconciliation required', recovery.authoritativeReconciliationRequired ? `${exposure}; authoritative reconciliation required` : exposure],
   ];
-  return <Stack gap={2} aria-label="Execution state ladder">{steps.map(([name, value]) => <Text key={name} size="xs">{`${name} — ${value}`}</Text>)}</Stack>;
+  return <Stack gap={2} aria-label="Execution state ladder">{steps.map(([name, value]) => <Text key={name} size="xs" style={wrap}>{`${name} — ${value}`}</Text>)}</Stack>;
 }
+
+const authorizationText = (pair: AccountCycleLifecycle['evidence']['authorization']) => {
+  const count = Number(pair.tradingViewConsumption !== null) + Number(pair.marketIntelligenceConsumption !== null);
+  if (count === 0) return 'Authorization not committed.';
+  if (count === 1) return 'Incomplete authorization pair — inconsistent evidence.';
+  return pair.expired ? 'Historical authorization committed; deadline expired; broker send not established.' : 'Authorization committed — broker send not established.';
+};
 
 function Recovery({ item, account }: { item: AccountCycleLifecycle; account: AccountCycle }) {
   const { recovery, evidence } = item;
@@ -62,7 +70,7 @@ function Recovery({ item, account }: { item: AccountCycleLifecycle; account: Acc
     </Stack></Alert>}
     {recovery.authoritativeReconciliationRequired && <Alert color="orange" title="Authoritative reconciliation required" data-testid="authoritative-reconciliation-warning"><Stack gap={2}>
       <Text size="sm">Unresolved authoritative-only attention: {recovery.unresolvedAuthoritativeOnlyCount} (active attention records: {recovery.activeAttentionCount}).</Text>
-      {recovery.activeOperationalAttention.map(attention => <Line key={String(attention.id)} label={`Attention #${attention.id}`}>{show(attention.code)} · {show(attention.severity)} · {attention.status} · resolution policy {show(attention.resolutionPolicy)}</Line>)}
+      {recovery.activeOperationalAttention.filter(attention => attention.resolutionPolicy === 'AUTHORITATIVE_ONLY').map(attention => <Line key={String(attention.id)} label={`Attention #${attention.id}`}>{show(attention.code)} · {show(attention.severity)} · {attention.status} · resolution policy {show(attention.resolutionPolicy)}</Line>)}
       <Truncation meta={recovery.activeOperationalAttentionMetadata} />
       <Text size="xs" c="dimmed">Only authoritative broker evidence can resolve this. Nothing on this page releases or reconciles exposure.</Text>
     </Stack></Alert>}
@@ -72,9 +80,9 @@ function Recovery({ item, account }: { item: AccountCycleLifecycle; account: Acc
 function AccountLifecycle({ item, account }: { item: AccountCycleLifecycle; account: AccountCycle }) {
   const { readiness: r, evidence: e, recovery } = item, stage = item.lifecycle.stage, pair = e.authorization, hasIntent = e.orderIntent !== null;
   return <Stack gap="xs" mt="xs" data-testid={`lifecycle-${account.id}`}>
-    <Group gap="xs">
+    <Group gap="xs" align="flex-start" wrap="wrap">
       <Badge color={stageColor(stage)}>{stageLabel(stage)}</Badge>
-      <Badge variant="outline" color="gray">{item.lifecycle.reasonCode}</Badge>
+      <Text size="xs" c="dimmed" style={wrap}>Reason: {item.lifecycle.reasonCode}</Text>
       <Badge variant="light" color="gray">Scope {r.scope === 'NOT_APPLICABLE_NO_INTENT' ? 'not applicable (no intent)' : r.scope}</Badge>
     </Group>
     <Group gap="xs">
@@ -108,7 +116,7 @@ function AccountLifecycle({ item, account }: { item: AccountCycleLifecycle; acco
       <Line label="Complete pair">{yesNo(pair.pairPresent)}{pair.expired ? ' · deadline expired' : ''}</Line>
       <Line label="Execution obligation">{e.executionObligation ? `#${e.executionObligation.id} · frozen ${stamp(e.executionObligation.createdAt)}` : absence(stage)}</Line>
       <Line label="Market Intelligence obligation">{e.marketIntelligenceObligation ? `#${e.marketIntelligenceObligation.id} · valid until ${stamp(e.marketIntelligenceObligation.validUntil)}` : absence(stage)}</Line>
-      <Text size="xs" c="dimmed">Authorization committed — broker send not established.</Text>
+      <Text size="xs" c="dimmed" style={wrap}>{authorizationText(pair)}</Text>
     </Disclosure>
     <Disclosure title="Exposure claim" summary={e.exposure ? `#${e.exposure.id} ${e.exposure.status}` : absence(stage)}>
       {e.exposure
@@ -150,8 +158,17 @@ export function ExecutionLifecycleSummary({ cycle, lifecycle }: { cycle: Operati
   if (lifecycle.status === 'absent') return <Alert color="gray" title="Execution lifecycle">The execution lifecycle projection was not returned for this cycle.</Alert>;
   if (lifecycle.status === 'invalid') return <Alert color="red" title="Execution lifecycle unrecognized">The lifecycle response did not match the expected shape ({lifecycle.reason}). Evidence is hidden rather than guessed.</Alert>;
   const { value } = lifecycle, source = value.sourceLifecycle, { byId, unmatched } = matchLifecycles(cycle.accountCycles.map(account => account.id), value);
+  const matched = cycle.accountCycles.flatMap(account => {
+    const entries = byId.get(account.id) ?? [];
+    return entries.length === 1 ? entries : [];
+  });
+  const retainedExposureCount = matched.filter(item => item.recovery.retainedExposureReviewRequired).length;
+  const reconciliationCount = matched.filter(item => item.recovery.authoritativeReconciliationRequired).length;
   return <Card withBorder data-testid="execution-lifecycle-summary"><Stack gap={4}>
-    <Group gap="xs"><Text fw={600}>Execution lifecycle</Text>{source && <Badge color="gray" variant="light">{source.stage === 'ACCOUNT_LIFECYCLES_PROJECTED' ? `${value.accountCycles.length} account lifecycle(s)` : stageLabel(source.stage)}</Badge>}</Group>
+    <Group gap="xs" wrap="wrap"><Text fw={600}>Execution lifecycle</Text>{source && <Badge color="gray" variant="light">{source.stage === 'ACCOUNT_LIFECYCLES_PROJECTED' ? `${matched.length} matched account lifecycle(s)` : stageLabel(source.stage)}</Badge>}</Group>
+    {(retainedExposureCount > 0 || reconciliationCount > 0) && <Alert color="orange" title="Lifecycle review summary" data-testid="lifecycle-warning-summary">
+      <Text size="sm" style={wrap}>Retained-exposure review required: {retainedExposureCount}. Authoritative reconciliation required: {reconciliationCount}.</Text>
+    </Alert>}
     {source && sourceMessages[source.reasonCode] && <Text size="sm">{sourceMessages[source.reasonCode]}</Text>}
     {source?.stage === 'CORRELATION_IN_PROGRESS' && <Text size="sm">Correlation has not completed ({source.reasonCode}); account lifecycles may not exist yet.</Text>}
     <Text size="xs" c="dimmed">Observed {stamp(value.observedAt)}. {value.readinessMayChangeAfterObservation ? 'Readiness may change after observation. ' : ''}Finalization scheduling: {value.capabilities.finalizationScheduling} · Broker POST: {value.capabilities.brokerPost} · SELL: {value.capabilities.tradingViewSellExecution} · LIVE: {value.capabilities.tradingViewLiveExecution}.</Text>

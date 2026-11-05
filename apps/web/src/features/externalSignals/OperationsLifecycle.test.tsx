@@ -53,6 +53,17 @@ const listResult = (cycles: unknown[]) => ({ cycles, summary: { shadowOnly: true
 function mount(initial = '/?section=operations') { client = new QueryClient({ defaultOptions: { queries: { retry: false } } }); return render(<MantineProvider><QueryClientProvider client={client}><MemoryRouter initialEntries={[initial]}><OperationsTab token="owner" /></MemoryRouter></QueryClientProvider></MantineProvider>); }
 const open = async () => { fireEvent.click(await screen.findByRole('button', { name: 'Inspect' })); await screen.findByText('Execution lifecycle'); };
 const expand = (name: RegExp, scope?: HTMLElement) => fireEvent.click((scope ? within(scope) : screen).getByRole('button', { name }));
+const remove = Symbol('remove');
+function mutatePath(root: Record<string, unknown>, path: Array<string | number>, value: unknown | typeof remove) {
+  let cursor: unknown = root;
+  for (const part of path.slice(0, -1)) cursor = Array.isArray(cursor) && typeof part === 'number' ? cursor[part] : typeof cursor === 'object' && cursor !== null ? (cursor as Record<string, unknown>)[String(part)] : undefined;
+  const last = path.at(-1)!;
+  if (Array.isArray(cursor) && typeof last === 'number') cursor[last] = value;
+  else if (typeof cursor === 'object' && cursor !== null) {
+    if (value === remove) delete (cursor as Record<string, unknown>)[String(last)];
+    else (cursor as Record<string, unknown>)[String(last)] = value;
+  }
+}
 beforeEach(() => {
   vi.clearAllMocks(); detailError = false; calls = [];
   mocks.request.mockImplementation(async (path: string, options?: { method?: string }) => {
@@ -100,7 +111,7 @@ describe('Operations execution lifecycle UI', () => {
     const card = screen.getByTestId('lifecycle-20');
     expect(within(card).getByText('Admission awaiting processing')).toBeTruthy();
     expect(within(card).getByText(/Not yet frozen into an obligation/)).toBeTruthy();
-    expect(within(card).getByText(/3\. Paired final authorization committed.* — Not yet created/)).toBeTruthy();
+    expect(within(card).getByText(/3\. Paired final authorization committed.*Authorization not committed\./)).toBeTruthy();
     expand(/Identity/, card);
     expect(within(card).getByText(/Marked OrderIntent: Not yet created/)).toBeTruthy();
   });
@@ -123,7 +134,7 @@ describe('Operations execution lifecycle UI', () => {
     const card = screen.getByTestId('lifecycle-20');
     expect(within(card).getByText('C2 worker claimed')).toBeTruthy();
     expect(within(card).getByText('Worker claim #81 (historical)')).toBeTruthy();
-    expect(within(card).getByText(/3\. Paired final authorization committed.* — Not yet created/)).toBeTruthy();
+    expect(within(card).getByText(/3\. Paired final authorization committed.*Authorization not committed\./)).toBeTruthy();
     expect(within(card).getByText(/4\. Broker send permission established.* — Not established/)).toBeTruthy();
   });
 
@@ -145,9 +156,62 @@ describe('Operations execution lifecycle UI', () => {
     detail = cycleWith([account(20)], envelope([lifecycleFor(20, { lifecycle: { stage: 'AUTHORIZATION_COMMITTED', reasonCode: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' }, readiness: { scope: 'PAPER_BUY', authorizationDeadlineStatus: 'EXPIRED' }, evidence: { orderIntent: intent('submitting'), ...obligations, exposure: heldClaim('ENTRY_PENDING'), authorization: { ...pair, expired: true } } })]));
     mount(); await open();
     const card = screen.getByTestId('lifecycle-20');
-    expect(within(card).getByText(/Deadline has passed/)).toBeTruthy();
+    expect(within(card).getByText(/Historical authorization committed; deadline expired; broker send not established\./)).toBeTruthy();
     expand(/Readiness/, card);
     expect(within(card).getByText(/Authorization deadline: EXPIRED/)).toBeTruthy();
+  });
+
+  it.each([
+    ['neither consumption', { pairPresent: false, status: 'NOT_COMMITTED', expired: false, tradingViewConsumption: null, marketIntelligenceConsumption: null }, 'Authorization not committed.'],
+    ['only one consumption', { pairPresent: false, status: 'NOT_COMMITTED', expired: false, tradingViewConsumption: pair.tradingViewConsumption, marketIntelligenceConsumption: null }, 'Incomplete authorization pair — inconsistent evidence.'],
+    ['complete unexpired pair', pair, 'Authorization committed — broker send not established.'],
+    ['complete expired pair', { ...pair, expired: true }, 'Historical authorization committed; deadline expired; broker send not established.'],
+  ])('expanded Authorization derives copy for %s', async (_label, authorization, expected) => {
+    detail = cycleWith([account(20)], envelope([lifecycleFor(20, {
+      lifecycle: { stage: authorization.pairPresent ? 'AUTHORIZATION_COMMITTED' : authorization.tradingViewConsumption ? 'MISSING_OR_INCONSISTENT_EVIDENCE' : 'PENDING_MARKED_INTENT', reasonCode: 'AUTHORIZATION_EVIDENCE' },
+      readiness: { scope: 'PAPER_BUY', authorizationDeadlineStatus: authorization.expired ? 'EXPIRED' : authorization.pairPresent ? 'OPEN' : 'NOT_COMMITTED' },
+      evidence: { orderIntent: intent('pending'), ...obligations, exposure: heldClaim('ENTRY_PENDING'), authorization },
+    })]));
+    mount(); await open();
+    const card = screen.getByTestId('lifecycle-20');
+    expand(/Authorization/, card);
+    expect(within(card).getAllByText(expected, { exact: true }).length).toBeGreaterThan(0);
+  });
+
+  it.each([
+    ['capabilities.brokerPost', (v: Record<string, unknown>) => mutatePath(v, ['capabilities', 'brokerPost'], {})],
+    ['sourceLifecycle.stage', (v: Record<string, unknown>) => mutatePath(v, ['sourceLifecycle', 'stage'], {})],
+    ['receipt.freshness', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'readiness', 'receipt', 'freshness'], {})],
+    ['assignmentAuthorityState', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'readiness', 'assignmentAuthorityState'], {})],
+    ['broker.attributionProvenance', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'broker', 'attributionProvenance'], {})],
+    ['exposure.status', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'exposure'], { ...heldClaim('ENTRY_PENDING'), status: {} })],
+    ['exposureEvents[].eventType', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'exposureEvents'], [{ id: 1, eventType: {}, createdAt: null }])],
+    ['operationalAttention[].status', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'recovery', 'operationalAttention'], [{ id: 1, code: null, source: null, status: {}, severity: null, title: null, resolutionPolicy: null, firstObservedAt: null, lastObservedAt: null, resolvedAt: null }])],
+    ['missing exposure.held', (v: Record<string, unknown>) => { mutatePath(v, ['accountCycles', 0, 'evidence', 'exposure'], heldClaim('ENTRY_PENDING')); mutatePath(v, ['accountCycles', 0, 'evidence', 'exposure', 'held'], remove); }],
+    ['empty exposure', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'exposure'], {})],
+    ['missing orderIntent', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'orderIntent'], remove)],
+    ['invalid workerClaim', (v: Record<string, unknown>) => { mutatePath(v, ['accountCycles', 0, 'readiness', 'c2WorkerClaimPresent'], true); mutatePath(v, ['accountCycles', 0, 'evidence', 'workerClaim'], {}); }],
+    ['invalid frozenGeneration', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'readiness', 'frozenGeneration'], {})],
+    ['invalid tradingViewConsumption', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'authorization', 'tradingViewConsumption'], {})],
+    ['empty capabilities', (v: Record<string, unknown>) => mutatePath(v, ['capabilities'], {})],
+    ['unknown stage', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'lifecycle', 'stage'], 'UNKNOWN')],
+    ['unknown scope', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'readiness', 'scope'], 'UNKNOWN')],
+    ['unknown deadline status', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'readiness', 'authorizationDeadlineStatus'], 'UNKNOWN')],
+    ['malformed history record', (v: Record<string, unknown>) => mutatePath(v, ['accountCycles', 0, 'evidence', 'broker', 'orders'], [{ id: 1, brokerOrderId: {} }])],
+  ])('rejects malformed %s without breaking Operations', async (_label, mutate) => {
+    const value = structuredClone(envelope([lifecycleFor(20)])) as unknown as Record<string, unknown>;
+    mutate(value);
+    detail = cycleWith([account(20)], value);
+    mount();
+    fireEvent.click(await screen.findByRole('button', { name: 'Inspect' }));
+    expect(await screen.findByText('Execution lifecycle unrecognized')).toBeTruthy();
+    expect(screen.getAllByTestId('execution-boundary-notice').length).toBeGreaterThan(0);
+    expect(screen.getByText('Account cycles')).toBeTruthy();
+  });
+
+  it('accepts explicit null for legitimately nullable evidence', () => {
+    const parsed = parseExecutionLifecycle(envelope([lifecycleFor(20)]));
+    expect(parsed.status).toBe('ok');
   });
 
   it('normally blocked and released intent shows settled exposure without a recovery warning', async () => {
@@ -180,7 +244,7 @@ describe('Operations execution lifecycle UI', () => {
     const warning = screen.getByTestId('retained-exposure-warning');
     expect(warning.textContent).toMatch(/status UNRESOLVED/);
     expect(warning.textContent).toMatch(/TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE/);
-    expect(within(screen.getByTestId('lifecycle-20')).getAllByText('TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED').length).toBeGreaterThan(0);
+    expect(within(screen.getByTestId('lifecycle-20')).getByText(/Reason: TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED/)).toBeTruthy();
   });
 
   it('terminal/authorization contradiction is flagged as inconsistent', async () => {
@@ -188,19 +252,21 @@ describe('Operations execution lifecycle UI', () => {
     mount(); await open();
     const card = screen.getByTestId('lifecycle-20');
     expect(within(card).getByText('Missing or inconsistent evidence')).toBeTruthy();
-    expect(within(card).getByText('TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED')).toBeTruthy();
+    expect(within(card).getByText(/Reason: TERMINAL_LIFECYCLE_WITH_AUTHORIZATION_COMMITTED/)).toBeTruthy();
     expect(within(card).getAllByText(/Authorization committed — broker send not established/).length).toBeGreaterThan(0);
   });
 
   it('active AUTHORITATIVE_ONLY attention shows a separate reconciliation warning without release controls', async () => {
     const attention = { id: 17, code: 'BROKER_STATE_UNKNOWN', source: 'EXECUTION', status: 'OPEN', severity: 'HIGH', title: 'x', resolutionPolicy: 'AUTHORITATIVE_ONLY', firstObservedAt: null, lastObservedAt: '2026-11-04T10:07:00Z', resolvedAt: null };
-    detail = cycleWith([account(20)], envelope([lifecycleFor(20, { lifecycle: { stage: 'AUTHORIZATION_COMMITTED', reasonCode: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' }, readiness: { scope: 'PAPER_BUY' }, evidence: { orderIntent: intent('submitting'), ...obligations, exposure: heldClaim('UNRESOLVED'), authorization: pair }, recovery: { authoritativeReconciliationRequired: true, unresolvedAuthoritativeOnlyCount: 2, activeAttentionCount: 3, activeOperationalAttention: [attention], activeOperationalAttentionMetadata: meta(3, 1), operationalAttention: [attention], operationalAttentionMetadata: meta(3, 1) } })]));
+    const general = { ...attention, id: 18, code: 'GENERAL_REVIEW', resolutionPolicy: 'OPERATOR_REVIEW' };
+    detail = cycleWith([account(20)], envelope([lifecycleFor(20, { lifecycle: { stage: 'AUTHORIZATION_COMMITTED', reasonCode: 'AUTHORIZATION_COMMITTED_SEND_NOT_ESTABLISHED' }, readiness: { scope: 'PAPER_BUY' }, evidence: { orderIntent: intent('submitting'), ...obligations, exposure: heldClaim('UNRESOLVED'), authorization: pair }, recovery: { authoritativeReconciliationRequired: true, unresolvedAuthoritativeOnlyCount: 2, activeAttentionCount: 3, activeOperationalAttention: [attention, general], activeOperationalAttentionMetadata: meta(3, 2), operationalAttention: [attention, general], operationalAttentionMetadata: meta(3, 2) } })]));
     mount(); await open();
     const warning = screen.getByTestId('authoritative-reconciliation-warning');
     expect(warning.textContent).toMatch(/Unresolved authoritative-only attention: 2/);
     expect(warning.textContent).toMatch(/BROKER_STATE_UNKNOWN/);
     expect(warning.textContent).toMatch(/resolution policy AUTHORITATIVE_ONLY/);
-    expect(warning.textContent).toMatch(/Showing 1 of 3 records\./);
+    expect(warning.textContent).not.toMatch(/GENERAL_REVIEW/);
+    expect(warning.textContent).toMatch(/Showing 2 of 3 records\./);
     expect(warning.textContent).toMatch(/Nothing on this page releases or reconciles exposure/);
     expect(screen.queryByTestId('retained-exposure-warning')).toBeNull();
     expect(within(warning).queryAllByRole('button')).toHaveLength(0);
@@ -251,6 +317,35 @@ describe('Operations execution lifecycle UI', () => {
     expand(/Identity/, screen.getByTestId('lifecycle-20'));
     expect(within(screen.getByTestId('lifecycle-20')).getByText(/Marked OrderIntent: #71/)).toBeTruthy();
     expect(screen.getByText(/1 lifecycle entry did not match any account cycle/)).toBeTruthy();
+    expect(screen.getByText('2 matched account lifecycle(s)')).toBeTruthy();
+  });
+
+  it('summarizes matched lifecycle warnings above account detail', async () => {
+    detail = cycleWith([account(20), account(21)], envelope([
+      lifecycleFor(20, { evidence: { exposure: heldClaim('UNRESOLVED') }, recovery: { retainedExposureReviewRequired: true, retainedExposureReasonCode: 'TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE' } }),
+      lifecycleFor(21, { recovery: { authoritativeReconciliationRequired: true, unresolvedAuthoritativeOnlyCount: 1, activeAttentionCount: 1 } }),
+      lifecycleFor(999, { recovery: { retainedExposureReviewRequired: true, retainedExposureReasonCode: 'UNMATCHED' } }),
+    ]));
+    mount(); await open();
+    expect(screen.getByTestId('lifecycle-warning-summary').textContent).toMatch(/Retained-exposure review required: 1\. Authoritative reconciliation required: 1\./);
+  });
+
+  it('wraps long mobile diagnostics and disclosure summaries', async () => {
+    const longReason = 'TERMINAL_LIFECYCLE_WITH_UNRESOLVED_EXPOSURE';
+    detail = cycleWith([account(20, 'Paper-account-with-an-extremely-long-operational-identifier')], envelope([lifecycleFor(20, {
+      lifecycle: { stage: 'MISSING_OR_INCONSISTENT_EVIDENCE', reasonCode: longReason }, readiness: { scope: 'PAPER_BUY' },
+      evidence: { orderIntent: intent('blocked', 123456789012345), exposure: heldClaim('UNRESOLVED') }, recovery: { retainedExposureReviewRequired: true, retainedExposureReasonCode: longReason },
+    })]));
+    mount(); await open();
+    const card = screen.getByTestId('lifecycle-20');
+    const reason = within(card).getByText(`Reason: ${longReason}`);
+    expect(reason.style.overflowWrap).toBe('anywhere');
+    expect(reason.closest('.mantine-Badge-root')).toBeNull();
+    const warning = screen.getByTestId('retained-exposure-warning');
+    expect(within(warning).getByText(/Diagnostic reason:/).style.overflowWrap).toBe('anywhere');
+    const disclosure = within(card).getByRole('button', { name: /Recovery and attention/ });
+    expect(disclosure.style.overflowWrap).toBe('anywhere');
+    expect(disclosure.style.whiteSpace).toBe('normal');
   });
 
   it('missing, malformed and duplicate lifecycle evidence fail visibly rather than guessing', async () => {
