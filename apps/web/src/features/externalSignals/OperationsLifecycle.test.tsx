@@ -489,7 +489,7 @@ describe('Operations execution lifecycle UI', () => {
     [{ readiness: { assignmentAuthorityState: 'FROZEN_EFFECTIVE', effectiveAssignmentAuthority: false }, evidence: { executionObligation: obligations.executionObligation } }, 'boolean disagreement'],
     [{ readiness: { assignmentAuthorityState: 'FROZEN_EFFECTIVE', effectiveAssignmentAuthority: true } }, 'missing obligation'],
     [{ readiness: { assignmentAuthorityState: 'NOT_YET_FROZEN', effectiveAssignmentAuthority: true } }, 'not-yet-frozen effective'],
-  ])('renders contradictory lifecycle authority indeterminate: %s', async (overrides, _name) => {
+  ])('renders contradictory lifecycle authority indeterminate: %s', async (overrides) => {
     detail = cycleWith([account(20)], envelope([lifecycleFor(20, overrides as Overrides)]));
     mount(); await open();
     const card = await screen.findByTestId('assignment-authority-20');
