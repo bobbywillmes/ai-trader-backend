@@ -604,6 +604,33 @@ execution obligation from frozen-but-ineffective authority. The existing boolean
 `effectiveAssignmentAuthority` is unchanged. Both fields are diagnostic only and cannot
 confer execution eligibility.
 
+## C3B.3-3 read-only authority visibility (implemented)
+
+Operations now reads the existing execution rollout and exact assignment-authorization
+services and a new `GET /api/external-signal-admin/broker-dispatch-state` route. All three
+reads remain `SYSTEM_OWNER`-only and `no-store`; the dispatch route exposes the existing
+bounded 100-event history and adds no mutation. The list view loads the two singleton
+status summaries. Exact assignment history is requested only after an operator opens a
+cycle detail, using that cycle's frozen account and assignment identifiers.
+
+The UI separates configuration from capability. It shows active execution and dispatch
+generation identities, state versions, activation epochs, recent activation/deactivation
+events, and the exact authorization identity chain. Effective frozen authority is a
+diagnostic fact. Even an active dispatch generation is explicitly not broker-send
+permission; finalization scheduling and broker POST remain unavailable before C3C.
+
+Frontend validation additionally rejects contradictory exposure release state, a held
+`RELEASED` claim, an authorization-committed stage without both consumption rows, an
+expired authorization paired with an open deadline, and worker-claim presence that
+contradicts the readiness flag. The authoritative-reconciliation warning counts and
+displays only `AUTHORITATIVE_ONLY` records from its bounded active-attention result.
+
+Credential, allocation, Subscription, Security, Strategy and exit-profile diagnostics
+are deferred. The current operation projection exposes only the safe aggregate account
+and assignment operational booleans; joining the broader configuration graph (while
+guaranteeing that credential ciphertext and tokens cannot enter the DTO) needs a reviewed,
+purpose-built readiness projection rather than expanding this checkpoint's authority DTOs.
+
 **Still hard-disabled before C3C.** No runtime path imports or calls
 `finalizeTradingViewDispatch()` or `processTradingViewOrderIntentForC2()`; no scheduler,
 observer or worker job was added; no broker dispatch, activation control, exposure-release

@@ -130,3 +130,11 @@ export type ExecutionLifecycle = {
   sourceLifecycle?: { stage: SourceLifecycleStage; reasonCode: string };
   accountCycles: AccountCycleLifecycle[];
 };
+
+export type ExecutionRolloutStatus = {
+  activeExecutionGenerationId: number | null; executionEpochAt: string | null; rolloutStateVersion: number;
+  generations: Array<{ id: number; generation: number; direction: string; enabled: boolean; authorityMode: string; effectiveAt: string }>;
+  activationEvents: Array<{ id: number; rolloutGenerationId: number; action: string; reason: string; createdAt: string }>;
+};
+export type DispatchStatus = { state: { version: number; activeRolloutGenerationId: number | null; activatedAt: string | null }; activationEvents: Array<{ id: number; rolloutGenerationId: number; action: string; stateVersion: number; reason: string; createdAt: string }> };
+export type EntryExecutionAuthorization = { id: number; rolloutGenerationId: number; authorizationSequence: number; status: string; tradingAccountId: number; tradingAccountSubscriptionId: number; subscriptionId: number; securityId: number; signalSourceId: number; strategySignalBindingId: number; strategySignalRevisionId: number; strategyRevision: number; authorizedAt: string; revokedAt: string | null; invalidatedAt: string | null; invalidationReasonCode: string | null };

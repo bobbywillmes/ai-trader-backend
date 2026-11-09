@@ -6,7 +6,7 @@ import { externalSignalOperationsController, requeueExternalSignalCorrelationCon
 import {
   createExternalSignalExecutionGenerationController, externalSignalExecutionRolloutController,
   grantExternalSignalEntryExecutionAuthorizationController, listExternalSignalEntryExecutionAuthorizationsController,
-  listExternalSignalExecutionRolloutsController, revokeExternalSignalEntryExecutionAuthorizationController,
+  listExternalSignalBrokerDispatchStateController, listExternalSignalExecutionRolloutsController, revokeExternalSignalEntryExecutionAuthorizationController,
 } from '../controllers/external-signal-admin.controller.js';
 
 const router = Router();
@@ -15,6 +15,7 @@ router.get('/operations', externalSignalOperationsController);
 router.get('/operations/:id', externalSignalOperationsController);
 router.post('/correlation-work/:id/requeue', requeueExternalSignalCorrelationController);
 router.get('/execution-rollouts', listExternalSignalExecutionRolloutsController);
+router.get('/broker-dispatch-state', listExternalSignalBrokerDispatchStateController);
 router.post('/execution-rollouts', createExternalSignalExecutionGenerationController);
 router.post('/execution-rollouts/:id/activate', externalSignalExecutionRolloutController('ACTIVATE'));
 router.post('/execution-rollouts/:id/deactivate', externalSignalExecutionRolloutController('DEACTIVATE'));

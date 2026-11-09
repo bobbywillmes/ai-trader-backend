@@ -147,7 +147,8 @@ describe("External Signals configuration", () => {
   });
   it("loads sources and communicates global evidence-only scope", async () => {
     mount(); expect(await screen.findByText("Research feed")).toBeTruthy();
-    expect(screen.getByText(/cannot create orders or modify positions/)).toBeTruthy();
+    expect(screen.getByText(/Historical SHADOW correlation remains non-executable/)).toBeTruthy();
+    expect(screen.getByText(/broker POST remain unavailable before C3C/)).toBeTruthy();
     expect(screen.queryByText("Trading account")).toBeNull();
     expect(screen.getByText("Generic webhook")).toBeTruthy();
   });

@@ -27,6 +27,11 @@ export async function listExternalSignalExecutionRolloutsController(_req: Reques
   try { res.json(await executionAuthority.listExternalSignalExecutionRollouts(actorId(res))); } catch (error) { next(error); }
 }
 
+export async function listExternalSignalBrokerDispatchStateController(_req: Request, res: Response, next: NextFunction) {
+  res.setHeader('Cache-Control', 'no-store');
+  try { res.json(await executionAuthority.listExternalSignalBrokerDispatchState(actorId(res))); } catch (error) { next(error); }
+}
+
 export async function createExternalSignalExecutionGenerationController(req: Request, res: Response, next: NextFunction) {
   res.setHeader('Cache-Control', 'no-store');
   try { res.status(201).json(await executionAuthority.createExternalSignalExecuteGeneration(parse(schemas.createExternalSignalExecutionGenerationSchema, req.body), actorId(res))); } catch (error) { next(error); }

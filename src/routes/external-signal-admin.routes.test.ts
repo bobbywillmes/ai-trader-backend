@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   signalDelivery: { findMany: vi.fn(), findUnique: vi.fn(), count: vi.fn() },
   externalSignalTradeCycle: { findMany: vi.fn(), findUnique: vi.fn() },
   externalSignalCorrelationWork: { findUniqueOrThrow: vi.fn(), update: vi.fn() }, user: { findUnique: vi.fn() },
+  externalSignalExecutionRolloutGeneration: { findMany: vi.fn() }, externalSignalExecutionRolloutActivation: { findMany: vi.fn() },
+  externalSignalExecutionRolloutState: { findUniqueOrThrow: vi.fn() }, externalSignalBrokerDispatchState: { findUniqueOrThrow: vi.fn() }, externalSignalBrokerDispatchActivation: { findMany: vi.fn() },
   strategy: { findUnique: vi.fn() }, systemEvent: { create: vi.fn() },
   session: vi.fn(),
 }));
@@ -29,7 +31,9 @@ describe('external signal owner management and read routes', () => {
   beforeEach(async () => {
     vi.clearAllMocks(); process.env.AI_TRADER_ADMIN_API_KEY = 'admin-test';
     mocks.session.mockResolvedValue(null);
-    mocks.$queryRaw.mockResolvedValue([]);mocks.externalSignalTradeCycle.findMany.mockResolvedValue([]);mocks.externalSignalTradeCycle.findUnique.mockResolvedValue(null);mocks.user.findUnique.mockResolvedValue({platformRole:'SYSTEM_OWNER'});
+    mocks.$queryRaw.mockResolvedValue([]);mocks.externalSignalTradeCycle.findMany.mockResolvedValue([]);mocks.externalSignalTradeCycle.findUnique.mockResolvedValue(null);mocks.user.findUnique.mockResolvedValue({platformRole:'SYSTEM_OWNER',enabled:true});
+    mocks.externalSignalExecutionRolloutGeneration.findMany.mockResolvedValue([]); mocks.externalSignalExecutionRolloutActivation.findMany.mockResolvedValue([]); mocks.externalSignalExecutionRolloutState.findUniqueOrThrow.mockResolvedValue({id:1,version:1,activeRolloutGenerationId:null,activatedAt:null});
+    mocks.externalSignalBrokerDispatchState.findUniqueOrThrow.mockResolvedValue({id:1,version:1,activeRolloutGenerationId:null,activatedAt:null}); mocks.externalSignalBrokerDispatchActivation.findMany.mockResolvedValue([]);
     for (const delegate of [mocks.externalSignalSource, mocks.strategySignalBinding, mocks.signal, mocks.signalDelivery]) {
       delegate.findMany.mockResolvedValue([]); delegate.findUnique.mockResolvedValue({ id: 1 }); delegate.count.mockResolvedValue(0);
     }
@@ -103,6 +107,15 @@ describe('external signal owner management and read routes', () => {
     }
     mocks.session.mockResolvedValue({ user: { id: 1, platformRole: 'SYSTEM_OWNER' } });
     for (const path of paths) expect((await fetch(`${baseUrl}${path}`, { method: 'POST', headers: { authorization: 'Bearer session', 'content-type': 'application/json' }, body: '{}' })).status).toBe(400);
+  });
+  it('serves dispatch status read-only to SYSTEM_OWNER only', async () => {
+    expect((await fetch(`${baseUrl}/broker-dispatch-state`)).status).toBe(401);
+    mocks.session.mockResolvedValue({user:{id:2,platformRole:'OPERATOR'}});
+    expect((await fetch(`${baseUrl}/broker-dispatch-state`,{headers:{authorization:'Bearer session'}})).status).toBe(403);
+    mocks.session.mockResolvedValue({user:{id:1,platformRole:'SYSTEM_OWNER'}});
+    const response=await fetch(`${baseUrl}/broker-dispatch-state`,{headers:{authorization:'Bearer session'}});
+    expect(response.status).toBe(200); expect(response.headers.get('cache-control')).toBe('no-store');
+    expect(await response.json()).toMatchObject({state:{version:1,activeRolloutGenerationId:null},activationEvents:[]});
   });
   it('keeps operations and correlation recovery SYSTEM_OWNER-only', async () => {
     for (const [path,method] of [['/operations','GET'],['/operations/1','GET'],['/correlation-work/1/requeue','POST']] as const) {

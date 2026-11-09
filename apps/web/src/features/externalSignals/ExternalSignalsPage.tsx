@@ -15,7 +15,7 @@ export function ExternalSignalsPage() {
   const token = getAdminToken();
   return <main className={classes.page}><Stack gap="lg">
     <div><Title order={2}>External Signals</Title><Text c="dimmed" size="sm">Configure external origins and inspect recognized strategy events.</Text></div>
-    <Alert color="blue" variant="light" icon={<IconInfoCircle size={18} />}><strong>SHADOW ONLY.</strong> Observed eligibility and hypothetical authority cannot create orders or modify positions, and cannot dispatch to a broker.</Alert>
+    <Alert color="blue" variant="light" icon={<IconInfoCircle size={18} />}>Historical SHADOW correlation remains non-executable. PAPER ENTRY authority may be configured, but finalization scheduling and broker POST remain unavailable before C3C. TradingView SELL and LIVE execution remain unavailable.</Alert>
     <Tabs value={section} onChange={value => value && setParams(current => changeExternalParams(current, { section: value }))}>
       <div className={classes.tabs}><Tabs.List className={classes.tabList}>{Object.entries(sections).map(([value, label]) => <Tabs.Tab key={value} value={value}>{label}</Tabs.Tab>)}</Tabs.List></div>
       <Group gap="sm" my="md"><Badge variant="light" color={section === "sources" || section === "bindings" ? "gray" : "cyan"}>{section === "sources" || section === "bindings" ? "Configuration" : "Historical evidence"}</Badge><Text size="sm" c="dimmed">{section === "sources" || section === "bindings" ? "Mutable configuration · Changes affect future acceptance." : "Immutable historical evidence · Read-only."}</Text></Group>

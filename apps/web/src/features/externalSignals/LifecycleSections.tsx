@@ -26,7 +26,7 @@ export function ExecutionBoundaryNotice({ compact = false }: { compact?: boolean
 function Disclosure({ title, summary, children }: { title: string; summary?: string; children: ReactNode }) {
   const [open, setOpen] = useState(false);
   return <Stack gap={4}>
-    <Button variant="subtle" size="compact-sm" justify="flex-start" h="auto" style={{ whiteSpace: 'normal', ...wrap }} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '▾' : '▸'} {title}{summary ? ` · ${summary}` : ''}</Button>
+    <Button variant="subtle" size="compact-sm" justify="flex-start" h="auto" style={{ whiteSpace: 'normal', ...wrap }} styles={{ label: { whiteSpace: 'normal', overflow: 'visible' } }} aria-expanded={open} onClick={() => setOpen(value => !value)}>{open ? '▾' : '▸'} {title}{summary ? ` · ${summary}` : ''}</Button>
     {open && <Stack gap={4} pl="sm" style={{ minWidth: 0 }}>{children}</Stack>}
   </Stack>;
 }
@@ -59,6 +59,7 @@ const authorizationText = (pair: AccountCycleLifecycle['evidence']['authorizatio
 
 function Recovery({ item, account }: { item: AccountCycleLifecycle; account: AccountCycle }) {
   const { recovery, evidence } = item;
+  const authoritative = recovery.activeOperationalAttention.filter(attention => attention.resolutionPolicy === 'AUTHORITATIVE_ONLY');
   return <>
     {recovery.retainedExposureReviewRequired && <Alert color="red" title="Retained exposure review required" data-testid="retained-exposure-warning"><Stack gap={2}>
       <Text size="sm">The lifecycle is not safely terminal: the account cycle or intent is terminal while exposure is still held.</Text>
@@ -69,9 +70,8 @@ function Recovery({ item, account }: { item: AccountCycleLifecycle; account: Acc
       <Text size="xs" c="dimmed">This page is read-only and cannot release the exposure.</Text>
     </Stack></Alert>}
     {recovery.authoritativeReconciliationRequired && <Alert color="orange" title="Authoritative reconciliation required" data-testid="authoritative-reconciliation-warning"><Stack gap={2}>
-      <Text size="sm">Unresolved authoritative-only attention: {recovery.unresolvedAuthoritativeOnlyCount} (active attention records: {recovery.activeAttentionCount}).</Text>
-      {recovery.activeOperationalAttention.filter(attention => attention.resolutionPolicy === 'AUTHORITATIVE_ONLY').map(attention => <Line key={String(attention.id)} label={`Attention #${attention.id}`}>{show(attention.code)} · {show(attention.severity)} · {attention.status} · resolution policy {show(attention.resolutionPolicy)}</Line>)}
-      <Truncation meta={recovery.activeOperationalAttentionMetadata} />
+      <Text size="sm">Unresolved authoritative-only attention: {recovery.unresolvedAuthoritativeOnlyCount}. Displaying {authoritative.length} authoritative-only record{authoritative.length === 1 ? '' : 's'} from the bounded active-attention result.</Text>
+      {authoritative.map(attention => <Line key={String(attention.id)} label={`Attention #${attention.id}`}>{show(attention.code)} · {show(attention.severity)} · {attention.status} · resolution policy {show(attention.resolutionPolicy)}</Line>)}
       <Text size="xs" c="dimmed">Only authoritative broker evidence can resolve this. Nothing on this page releases or reconciles exposure.</Text>
     </Stack></Alert>}
   </>;

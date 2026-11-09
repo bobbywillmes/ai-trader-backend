@@ -7,6 +7,7 @@ const num = (value: unknown) => typeof value === 'number' && Number.isFinite(val
 const str = (value: unknown) => typeof value === 'string';
 const bool = (value: unknown) => typeof value === 'boolean';
 const nilStr = (value: unknown) => value === null || str(value);
+const nilDate = (value: unknown) => value === null || str(value) && !Number.isNaN(Date.parse(value));
 const nilNum = (value: unknown) => value === null || num(value);
 const oneOf = (value: unknown, accepted: readonly string[]) => str(value) && accepted.includes(value);
 const id = (value: unknown) => num(value) || str(value);
@@ -24,7 +25,8 @@ const receiptFreshness = ['FRESH', 'EXPIRED', 'HISTORICAL_NULL_RECEIPT', 'MISSIN
 const validObligation = (v: Rec) => num(v.id) && nilStr(v.createdAt) && nilStr(v.executionEpochAt) && nilNum(v.authorizationId) && nilNum(v.rolloutGenerationId);
 const validMarketObligation = (v: Rec) => num(v.id) && nilStr(v.frozenAt) && nilStr(v.validUntil);
 const validIntent = (v: Rec) => num(v.id) && str(v.status) && nilStr(v.clientOrderId) && nilStr(v.createdAt) && nilStr(v.updatedAt) && nilStr(v.blockReason);
-const validExposure = (v: Rec) => num(v.id) && str(v.status) && nilStr(v.acquiredAt) && nilStr(v.releasedAt) && nilStr(v.releaseReason) && bool(v.held);
+const validExposure = (v: Rec) => num(v.id) && str(v.status) && nilDate(v.acquiredAt) && nilDate(v.releasedAt) && nilStr(v.releaseReason) && bool(v.held)
+  && !(v.held === false && v.releasedAt === null) && !(v.held === true && v.status === 'RELEASED');
 const validClaim = (v: Rec) => num(v.id) && nilStr(v.claimedAt) && nilNum(v.dispatchStateVersion);
 const validTvConsumption = (v: Rec) => num(v.id) && nilStr(v.authorizedAt) && nilStr(v.deadlineAt) && nilStr(v.consumedAt);
 const validMiConsumption = (v: Rec) => num(v.id) && nilStr(v.consumedAt);
@@ -50,6 +52,8 @@ function validAccountCycle(value: unknown): value is AccountCycleLifecycle {
   if (!bool(authorization.pairPresent) || !str(authorization.status) || !bool(authorization.expired) || !nullable(authorization, 'tradingViewConsumption', validTvConsumption) || !nullable(authorization, 'marketIntelligenceConsumption', validMiConsumption)) return false;
   const consumptionCount = Number(authorization.tradingViewConsumption !== null) + Number(authorization.marketIntelligenceConsumption !== null);
   if (authorization.pairPresent !== (consumptionCount === 2)) return false;
+  if (value.lifecycle.stage === 'AUTHORIZATION_COMMITTED' && !authorization.pairPresent) return false;
+  if (authorization.expired && readiness.authorizationDeadlineStatus !== 'EXPIRED') return false;
   if (broker.attributionProvenance !== 'DIRECT_LINKED_EVIDENCE_ONLY_PRE_C3C' || !bool(broker.absenceIsAuthoritativeNonDeliveryProof) || !bool(broker.orderEvidencePresent) || !bool(broker.activityEvidencePresent) || !arrayOf(broker.orders, validOrder) || !metadata(broker.ordersMetadata) || !arrayOf(broker.activities, validActivity) || !metadata(broker.activitiesMetadata)) return false;
   if (!arrayOf(evidence.exposureEvents, validExposureEvent) || !metadata(evidence.exposureEventsMetadata)) return false;
 

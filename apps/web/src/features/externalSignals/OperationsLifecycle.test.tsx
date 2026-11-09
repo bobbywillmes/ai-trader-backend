@@ -68,6 +68,9 @@ beforeEach(() => {
   vi.clearAllMocks(); detailError = false; calls = [];
   mocks.request.mockImplementation(async (path: string, options?: { method?: string }) => {
     calls.push([path, options]);
+    if (path.endsWith('/execution-rollouts')) return { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: [], activationEvents: [] };
+    if (path.endsWith('/broker-dispatch-state')) return { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] };
+    if (path.includes('/entry-execution-authorizations')) return { authorizations: [] };
     if (path.endsWith('/operations/40')) { if (detailError) throw new Error('boom'); return detail; }
     if (path.includes('/operations?')) return listResult([cycleWith([account(20)], undefined)]);
     throw new Error(path);
@@ -88,6 +91,22 @@ describe('Operations execution lifecycle UI', () => {
     await open();
     const text = document.body.textContent ?? '';
     for (const phrase of [/finalization scheduling remains unavailable before C3C/, /Broker POST execution is unavailable/, /SELL and LIVE execution remain unavailable/, /EXIT correlation is not a broker SELL/, /C2 claims and final-authorization evidence may exist/]) expect(text).toMatch(phrase);
+  });
+
+  it('shows activation history and account-scoped authority without implying broker-send capability', async () => {
+    detail=cycleWith([account(20)],envelope([lifecycleFor(20,{readiness:{effectiveAssignmentAuthority:true,assignmentAuthorityState:'FROZEN_EFFECTIVE'}})]));
+    mocks.request.mockImplementation(async(path:string,options?:{method?:string})=>{calls.push([path,options]);if(path.endsWith('/execution-rollouts'))return{activeExecutionGenerationId:3,executionEpochAt:'2026-11-01T00:00:00Z',rolloutStateVersion:5,generations:[{id:3,generation:2,direction:'ENTRY',enabled:true,authorityMode:'EXECUTE',effectiveAt:'2026-10-01T00:00:00Z'}],activationEvents:[{id:8,rolloutGenerationId:3,action:'ACTIVATE',reason:'reviewed',createdAt:'2026-11-01T00:00:00Z'}]};if(path.endsWith('/broker-dispatch-state'))return{state:{version:6,activeRolloutGenerationId:3,activatedAt:'2026-11-02T00:00:00Z'},activationEvents:[{id:9,rolloutGenerationId:3,action:'ACTIVATE',stateVersion:6,reason:'reviewed',createdAt:'2026-11-02T00:00:00Z'}]};if(path.includes('/entry-execution-authorizations'))return{authorizations:[{id:12,rolloutGenerationId:3,authorizationSequence:1,status:'AUTHORIZED',tradingAccountId:120,tradingAccountSubscriptionId:220,subscriptionId:320,securityId:5,signalSourceId:1,strategySignalBindingId:2,strategySignalRevisionId:7,strategyRevision:1,authorizedAt:'2026-11-01T00:00:00Z',revokedAt:null,invalidatedAt:null,invalidationReasonCode:null}]};if(path.endsWith('/operations/40'))return detail;return listResult([cycleWith([account(20)],undefined)]);});
+    mount();
+    const status=await screen.findByTestId('authority-status');
+    expect(status.textContent).toMatch(/Active execution generation: 2 \(#3\).*state version 5/);
+    expect(status.textContent).toMatch(/Recent dispatch history: ACTIVATE generation #3 \/ v6/);
+    expect(status.textContent).toMatch(/does not permit a broker order/);
+    await open();
+    const assignment=await screen.findByTestId('assignment-authority-20');
+    expect(assignment.textContent).toMatch(/Latest authorization #12: AUTHORIZED/);
+    expect(assignment.textContent).toMatch(/Frozen authority effective/);
+    expect(calls.some(([path])=>path.endsWith('/accounts/120/assignments/220/entry-execution-authorizations'))).toBe(true);
+    expect(calls.filter(([,options])=>options?.method&&options.method!=='GET')).toEqual([]);
   });
 
   it('historical SHADOW cycle without a marked intent: not applicable, no BUY scope, details collapsed', async () => {
@@ -159,6 +178,23 @@ describe('Operations execution lifecycle UI', () => {
     expect(within(card).getByText(/Historical authorization committed; deadline expired; broker send not established\./)).toBeTruthy();
     expand(/Readiness/, card);
     expect(within(card).getByText(/Authorization deadline: EXPIRED/)).toBeTruthy();
+  });
+
+  it.each([
+    ['released claim without release time', (v: AccountCycleLifecycle) => { v.evidence.exposure = { ...heldClaim('BLOCKED', false), releasedAt: null }; }],
+    ['held claim marked RELEASED', (v: AccountCycleLifecycle) => { v.evidence.exposure = heldClaim('RELEASED'); }],
+    ['authorization stage without complete pair', (v: AccountCycleLifecycle) => { v.lifecycle.stage='AUTHORIZATION_COMMITTED'; }],
+    ['expired authorization with open deadline', (v: AccountCycleLifecycle) => { v.evidence.authorization={...pair,expired:true};v.readiness.authorizationDeadlineStatus='OPEN'; }],
+    ['worker claim object contradicts false readiness', (v: AccountCycleLifecycle) => { v.evidence.workerClaim=claim; }],
+    ['malformed exposure date', (v: AccountCycleLifecycle) => { v.evidence.exposure={...heldClaim('ENTRY_PENDING'),acquiredAt:'not-a-date'}; }],
+  ])('rejects contradictory evidence: %s', (_name, mutate) => {
+    const value=lifecycleFor(20); mutate(value);
+    expect(parseExecutionLifecycle(envelope([value])).status).toBe('invalid');
+  });
+
+  it('accepts legitimate released and expired lifecycle evidence', () => {
+    const value=lifecycleFor(20,{lifecycle:{stage:'BLOCKED_EXPIRED_OR_TERMINALIZED',reasonCode:'EXPIRED'},readiness:{scope:'PAPER_BUY',authorizationDeadlineStatus:'EXPIRED'},evidence:{exposure:heldClaim('RELEASED',false),authorization:{...pair,expired:true}}});
+    expect(parseExecutionLifecycle(envelope([value])).status).toBe('ok');
   });
 
   it.each([
@@ -266,7 +302,7 @@ describe('Operations execution lifecycle UI', () => {
     expect(warning.textContent).toMatch(/BROKER_STATE_UNKNOWN/);
     expect(warning.textContent).toMatch(/resolution policy AUTHORITATIVE_ONLY/);
     expect(warning.textContent).not.toMatch(/GENERAL_REVIEW/);
-    expect(warning.textContent).toMatch(/Showing 2 of 3 records\./);
+    expect(warning.textContent).toMatch(/Displaying 1 authoritative-only record/);
     expect(warning.textContent).toMatch(/Nothing on this page releases or reconciles exposure/);
     expect(screen.queryByTestId('retained-exposure-warning')).toBeNull();
     expect(within(warning).queryAllByRole('button')).toHaveLength(0);
@@ -395,13 +431,13 @@ describe('Operations execution lifecycle UI', () => {
     expect(labels.filter(text => /release|retry|reconcil|acknowledge|activate|finalize|dispatch|send|cancel|close/i.test(text))).toEqual([]);
     expect(labels.filter(text => /requeue/i.test(text))).toEqual(['Requeue failed work']);
     expect(calls.filter(([, options]) => options?.method && options.method !== 'GET')).toEqual([]);
-    expect(calls.every(([path]) => /\/api\/external-signal-admin\/operations/.test(path))).toBe(true);
+    expect(calls.every(([path]) => /\/api\/external-signal-admin\/(operations|execution-rollouts|broker-dispatch-state|accounts\/\d+\/assignments\/\d+\/entry-execution-authorizations)/.test(path))).toBe(true);
   });
 
   it('preserves controlled requeue and URL-backed filtering', async () => {
     const failed = { id: 50, signalId: 11, event: 'EXIT_LONG', status: 'FAILED', attemptCount: 1, leaseOwner: null, leaseExpiresAt: null, nextAttemptAt: '2026-11-04T00:00:00Z', lastErrorCode: 'X', completedAt: null, createdAt: '2026-11-04T00:00:00Z', updatedAt: '2026-11-04T00:00:00Z', ageMs: 1, stalledLease: false };
     detail = cycleWith([account(20)], envelope([lifecycleFor(20)]), { work: [failed] });
-    mocks.request.mockImplementation(async (path: string, options?: { method?: string }) => { calls.push([path, options]); if (path.includes('/correlation-work/')) return { id: 50 }; if (path.endsWith('/operations/40')) return detail; return listResult([cycleWith([account(20)], undefined)]); });
+    mocks.request.mockImplementation(async (path: string, options?: { method?: string }) => { calls.push([path, options]); if (path.endsWith('/execution-rollouts')) return { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: [], activationEvents: [] }; if (path.endsWith('/broker-dispatch-state')) return { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] }; if (path.includes('/entry-execution-authorizations')) return { authorizations: [] }; if (path.includes('/correlation-work/')) return { id: 50 }; if (path.endsWith('/operations/40')) return detail; return listResult([cycleWith([account(20)], undefined)]); });
     mount(); await open();
     const button = screen.getByRole('button', { name: 'Requeue failed work' });
     expect(button.hasAttribute('disabled')).toBe(true);

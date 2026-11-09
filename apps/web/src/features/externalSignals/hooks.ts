@@ -18,6 +18,12 @@ export function useExternalDetail<K extends Section>(section: K, id: number | nu
 export function useOperations(query:string,token:string|null){return useQuery({queryKey:[...externalSignalKeys.section('operations'),'list',query],queryFn:()=>api.listExternalSignalOperations(query,token),enabled:Boolean(token)});}
 export function useOperation(id:number|null,token:string|null){return useQuery({queryKey:[...externalSignalKeys.section('operations'),'detail',id],queryFn:()=>api.getExternalSignalOperation(id!,token),enabled:Boolean(token&&id)});}
 export function useCorrelationRequeue(token:string|null){const client=useQueryClient();return useMutation({mutationFn:(id:number)=>api.requeueCorrelationWork(id,token),onSuccess:()=>client.invalidateQueries({queryKey:externalSignalKeys.section('operations')})});}
+export function useAuthorityStatus(token:string|null){
+  const execution=useQuery({queryKey:['externalSignals','authority','execution'],queryFn:()=>api.getExecutionRollouts(token),enabled:Boolean(token)});
+  const dispatch=useQuery({queryKey:['externalSignals','authority','dispatch'],queryFn:()=>api.getDispatchStatus(token),enabled:Boolean(token)});
+  return {execution,dispatch};
+}
+export function useEntryExecutionAuthorizations(accountId:number|null,assignmentId:number|null,token:string|null){return useQuery({queryKey:['externalSignals','authority','assignment',accountId,assignmentId],queryFn:()=>api.getEntryExecutionAuthorizations(accountId!,assignmentId!,token),enabled:Boolean(token&&accountId&&assignmentId)});}
 export function useSourceCatalog(token: string | null) {
   return useQuery({ queryKey: externalSignalKeys.catalog, queryFn: () => api.getSourceCatalog(token), enabled: Boolean(token) });
 }
