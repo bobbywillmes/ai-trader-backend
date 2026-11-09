@@ -94,7 +94,7 @@ describe('Operations execution lifecycle UI', () => {
   });
 
   it('shows activation history and account-scoped authority without implying broker-send capability', async () => {
-    detail=cycleWith([account(20)],envelope([lifecycleFor(20,{readiness:{effectiveAssignmentAuthority:true,assignmentAuthorityState:'FROZEN_EFFECTIVE'}})]));
+    detail=cycleWith([account(20)],envelope([lifecycleFor(20,{readiness:{effectiveAssignmentAuthority:true,assignmentAuthorityState:'FROZEN_EFFECTIVE'},evidence:{executionObligation:obligations.executionObligation}})]));
     mocks.request.mockImplementation(async(path:string,options?:{method?:string})=>{calls.push([path,options]);if(path.endsWith('/execution-rollouts'))return{activeExecutionGenerationId:3,executionEpochAt:'2026-11-01T00:00:00Z',rolloutStateVersion:5,generations:[{id:3,generation:2,direction:'ENTRY',enabled:true,authorityMode:'EXECUTE',effectiveAt:'2026-10-01T00:00:00Z'}],activationEvents:[{id:8,rolloutGenerationId:3,action:'ACTIVATE',reason:'reviewed',createdAt:'2026-11-01T00:00:00Z'}]};if(path.endsWith('/broker-dispatch-state'))return{state:{version:6,activeRolloutGenerationId:3,activatedAt:'2026-11-02T00:00:00Z'},activationEvents:[{id:9,rolloutGenerationId:3,action:'ACTIVATE',stateVersion:6,reason:'reviewed',createdAt:'2026-11-02T00:00:00Z'}]};if(path.includes('/entry-execution-authorizations'))return{authorizations:[{id:12,rolloutGenerationId:3,authorizationSequence:1,status:'AUTHORIZED',tradingAccountId:120,tradingAccountSubscriptionId:220,subscriptionId:320,securityId:5,signalSourceId:1,strategySignalBindingId:2,strategySignalRevisionId:7,strategyRevision:1,authorizedAt:'2026-11-01T00:00:00Z',revokedAt:null,invalidatedAt:null,invalidationReasonCode:null}]};if(path.endsWith('/operations/40'))return detail;return listResult([cycleWith([account(20)],undefined)]);});
     mount();
     const status=await screen.findByTestId('authority-status');
@@ -420,6 +420,97 @@ describe('Operations execution lifecycle UI', () => {
     mocks.request.mockRejectedValue(new Error('down'));
     mount();
     expect(await screen.findByText('Unable to load correlation operations')).toBeTruthy();
+  });
+
+  it.each([
+    ['empty execution object', {}, { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] }],
+    ['null execution', null, { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] }],
+    ['null generations', { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: null, activationEvents: [] }, { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] }],
+    ['string activation events', { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: [], activationEvents: 'bad' }, { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] }],
+    ['null dispatch state', { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: [], activationEvents: [] }, { state: null, activationEvents: [] }],
+  ])('keeps Operations usable for malformed authority payload: %s', async (_name, executionResponse, dispatchResponse) => {
+    detail = cycleWith([account(20)], envelope([lifecycleFor(20)]));
+    mocks.request.mockImplementation(async (path: string) => {
+      if (path.endsWith('/execution-rollouts')) return executionResponse;
+      if (path.endsWith('/broker-dispatch-state')) return dispatchResponse;
+      if (path.includes('/entry-execution-authorizations')) return { authorizations: [] };
+      if (path.endsWith('/operations/40')) return detail;
+      return listResult([cycleWith([account(20)], undefined)]);
+    });
+    mount();
+    expect(await screen.findByText(/Authority status response is invalid/)).toBeTruthy();
+    expect(screen.getByLabelText('Cycle status')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: 'Inspect' }));
+    expect(await screen.findByText('Execution lifecycle')).toBeTruthy();
+    expect(screen.getByText('EXIT obligations')).toBeTruthy();
+  });
+
+  it('renders missing active execution and dispatch references as unavailable, never none', async () => {
+    mocks.request.mockImplementation(async (path: string) => {
+      if (path.endsWith('/execution-rollouts')) return { activeExecutionGenerationId: 99, executionEpochAt: '2026-11-01T00:00:00Z', rolloutStateVersion: 1, generations: [], activationEvents: [] };
+      if (path.endsWith('/broker-dispatch-state')) return { state: { version: 1, activeRolloutGenerationId: 98, activatedAt: '2026-11-01T00:00:00Z' }, activationEvents: [] };
+      return listResult([cycleWith([account(20)], undefined)]);
+    });
+    mount();
+    const status = await screen.findByTestId('authority-status');
+    expect(status.textContent).toMatch(/Active execution generation: unavailable \(missing generation #99\)/);
+    expect(status.textContent).toMatch(/Active dispatch generation: unavailable \(missing generation #98\)/);
+  });
+
+  it.each([
+    [[lifecycleFor(20)], 'Not yet frozen'],
+    [[lifecycleFor(20, { readiness: { assignmentAuthorityState: 'FROZEN_NOT_EFFECTIVE', effectiveAssignmentAuthority: false }, evidence: { executionObligation: obligations.executionObligation } })], 'Frozen authority not effective'],
+    [[], 'Indeterminate'],
+    [[lifecycleFor(20), lifecycleFor(20)], 'Indeterminate'],
+    [[lifecycleFor(20), lifecycleFor(20)].reverse(), 'Indeterminate'],
+  ])('requires exactly one consistent lifecycle match for assignment authority', async (entries, expected) => {
+    detail = cycleWith([account(20)], envelope(entries));
+    mount(); await open();
+    expect((await screen.findByTestId('assignment-authority-20')).textContent).toContain(expected);
+  });
+
+  it('shows frozen states only when state, boolean, and obligation agree, independent of revoked history', async () => {
+    const frozen = lifecycleFor(20, { readiness: { assignmentAuthorityState: 'FROZEN_EFFECTIVE', effectiveAssignmentAuthority: true }, evidence: { executionObligation: obligations.executionObligation } });
+    detail = cycleWith([account(20)], envelope([frozen]));
+    mocks.request.mockImplementation(async (path: string) => {
+      if (path.endsWith('/execution-rollouts')) return { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: [], activationEvents: [] };
+      if (path.endsWith('/broker-dispatch-state')) return { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] };
+      if (path.includes('/entry-execution-authorizations')) return { authorizations: [{ id: 16, rolloutGenerationId: 3, authorizationSequence: 2, status: 'REVOKED', tradingAccountId: 120, tradingAccountSubscriptionId: 220, subscriptionId: 320, securityId: 5, signalSourceId: 1, strategySignalBindingId: 2, strategySignalRevisionId: 7, strategyRevision: 1, authorizedAt: '2026-11-01T00:00:00Z', revokedAt: '2026-11-03T00:00:00Z', invalidatedAt: null, invalidationReasonCode: null }] };
+      if (path.endsWith('/operations/40')) return detail;
+      return listResult([cycleWith([account(20)], undefined)]);
+    });
+    mount(); await open();
+    const card = await screen.findByTestId('assignment-authority-20');
+    expect(card.textContent).toContain('Frozen authority effective');
+    expect(card.textContent).toContain('Latest authorization #16: REVOKED');
+  });
+
+  it.each([
+    [{ readiness: { assignmentAuthorityState: 'FROZEN_EFFECTIVE', effectiveAssignmentAuthority: false }, evidence: { executionObligation: obligations.executionObligation } }, 'boolean disagreement'],
+    [{ readiness: { assignmentAuthorityState: 'FROZEN_EFFECTIVE', effectiveAssignmentAuthority: true } }, 'missing obligation'],
+    [{ readiness: { assignmentAuthorityState: 'NOT_YET_FROZEN', effectiveAssignmentAuthority: true } }, 'not-yet-frozen effective'],
+  ])('renders contradictory lifecycle authority indeterminate: %s', async (overrides, _name) => {
+    detail = cycleWith([account(20)], envelope([lifecycleFor(20, overrides as Overrides)]));
+    mount(); await open();
+    const card = await screen.findByTestId('assignment-authority-20');
+    expect(card.textContent).toContain('Indeterminate — lifecycle evidence unavailable or inconsistent');
+    expect(card.textContent).not.toContain('Frozen authority effective');
+  });
+
+  it.each([null, [], { authorizations: null }, { authorizations: [{ status: {} }] }])('keeps lifecycle and EXIT evidence usable for malformed authorization history %#', async (response) => {
+    detail = cycleWith([account(20)], envelope([lifecycleFor(20)]));
+    mocks.request.mockImplementation(async (path: string) => {
+      if (path.endsWith('/execution-rollouts')) return { activeExecutionGenerationId: null, executionEpochAt: null, rolloutStateVersion: 1, generations: [], activationEvents: [] };
+      if (path.endsWith('/broker-dispatch-state')) return { state: { version: 1, activeRolloutGenerationId: null, activatedAt: null }, activationEvents: [] };
+      if (path.includes('/entry-execution-authorizations')) return response;
+      if (path.endsWith('/operations/40')) return detail;
+      return listResult([cycleWith([account(20)], undefined)]);
+    });
+    mount(); await open();
+    expect(await screen.findByText(/Assignment authority history response is invalid/)).toBeTruthy();
+    expect(screen.getByTestId('lifecycle-20')).toBeTruthy();
+    expect(screen.getByText('EXIT obligations')).toBeTruthy();
+    expect(screen.queryByText(/No authorization records/)).toBeNull();
   });
 
   it('adds no mutation or execution controls and issues only GETs while browsing', async () => {

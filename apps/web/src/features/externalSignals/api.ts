@@ -1,5 +1,5 @@
 import { apiRequest, getApiUrl } from "../../lib/api";
-import type { CreateBinding, CreateSource, DispatchStatus, EntryExecutionAuthorization, ExecutionRolloutStatus, ListResult, OperationsResult, Resources, Section, Source, UpdateBinding, UpdateSource, Revision, AuthorityMode } from "./types";
+import type { CreateBinding, CreateSource, ListResult, OperationsResult, Resources, Section, Source, UpdateBinding, UpdateSource, Revision, AuthorityMode } from "./types";
 const root = "/api/external-signal-admin";
 export function listExternalSignals<K extends Section>(section: K, query: string, token: string | null) {
   return apiRequest<ListResult<K>>(`${root}/${section}?${query}`, { token });
@@ -10,9 +10,9 @@ export function getExternalSignal<K extends Section>(section: K, id: number, tok
 export function listExternalSignalOperations(query:string,token:string|null){return apiRequest<OperationsResult>(`${root}/operations?${query}`,{token});}
 export function getExternalSignalOperation(id:number,token:string|null){return apiRequest<Resources['operations']>(`${root}/operations/${id}`,{token});}
 export function requeueCorrelationWork(id:number,token:string|null){return apiRequest(`${root}/correlation-work/${id}/requeue`,{method:'POST',token,body:{confirm:true}});}
-export function getExecutionRollouts(token:string|null){return apiRequest<ExecutionRolloutStatus>(`${root}/execution-rollouts`,{token});}
-export function getDispatchStatus(token:string|null){return apiRequest<DispatchStatus>(`${root}/broker-dispatch-state`,{token});}
-export function getEntryExecutionAuthorizations(accountId:number,assignmentId:number,token:string|null){return apiRequest<{authorizations:EntryExecutionAuthorization[]}>(`${root}/accounts/${accountId}/assignments/${assignmentId}/entry-execution-authorizations`,{token});}
+export function getExecutionRollouts(token:string|null){return apiRequest<unknown>(`${root}/execution-rollouts`,{token});}
+export function getDispatchStatus(token:string|null){return apiRequest<unknown>(`${root}/broker-dispatch-state`,{token});}
+export function getEntryExecutionAuthorizations(accountId:number,assignmentId:number,token:string|null){return apiRequest<unknown>(`${root}/accounts/${accountId}/assignments/${assignmentId}/entry-execution-authorizations`,{token});}
 export async function getSourceCatalog(token: string | null) {
   const sources: Source[] = [];
   let page = 1;

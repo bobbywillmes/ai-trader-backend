@@ -643,3 +643,12 @@ readiness and per-component account/assignment readiness remain unrepresented by
 aggregate `accountOperational` field. The remaining accepted LOW findings from C3B.3-1
 stay open; a C3C-era projection must add real adapter-invocation and send-permission
 fields before the UI can display them.
+
+The C3B.3-3 frontend correction also leaves these LOW items for the next appropriate
+checkpoint: distinguish dispatch generation database IDs from generation-number labels;
+expose separate execution/dispatch observation times and the non-atomic nature of those
+status reads; bound assignment-authorization history and link the frozen obligation to
+its `authorizationId`; review session-cache behavior after logout; complete the remaining
+exposure cross-field and malformed-date validation; and wrap long
+`externalTradeCycleRef` values on mobile. Assignment history remains intentionally
+unbounded in this corrective pass rather than expanding the backend contract.
