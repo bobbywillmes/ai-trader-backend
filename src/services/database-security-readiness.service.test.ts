@@ -47,6 +47,8 @@ describe('evaluateTriggerOrder (trigger firing order is name order)', () => {
     row('ExternalSignalTradeCycleAccount', 'ExternalSignalTradeCycleAccount_paper_only'),
     row('ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump', AFTER_INSERT_ROW),
     row('ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_zz_b_fence_verify', AFTER_INSERT_ROW),
+    row('ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_zz_a_fence_bump', AFTER_INSERT_ROW),
+    row('ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_zz_b_fence_verify', AFTER_INSERT_ROW),
   ];
 
   it('accepts the shipped order, whatever order the catalog returns the rows in', () => {
@@ -55,7 +57,7 @@ describe('evaluateTriggerOrder (trigger firing order is name order)', () => {
   });
 
   it('pins every rule to a real, distinct table and trigger sequence', () => {
-    expect(TRIGGER_ORDER_INVARIANTS.length).toBeGreaterThanOrEqual(5);
+    expect(TRIGGER_ORDER_INVARIANTS.length).toBeGreaterThanOrEqual(6);
     for (const rule of TRIGGER_ORDER_INVARIANTS) expect(new Set(rule.sequence).size).toBe(rule.sequence.length);
   });
 
@@ -76,7 +78,7 @@ describe('evaluateTriggerOrder (trigger firing order is name order)', () => {
     const renamed = shipped.map(r => r.trigger_name.endsWith('c2_delivery_fence') ? { ...r, trigger_name: 'EntryExposureClaimEvent_external_signal_c2_zz_delivery_fence' } : r);
     expect(evaluateTriggerOrder(renamed).map(v => v.table)).toContain('EntryExposureClaimEvent');
     expect(evaluateTriggerOrder(shipped.filter(r => !r.trigger_name.endsWith('a_lock_prelude'))).map(v => v.table)).toEqual(['MarketPolicyBrokerDispatchConsumption']);
-    const flipped = shipped.map(r => r.trigger_name.endsWith('zz_a_fence_bump') ? { ...r, trigger_name: 'ExternalSignalBrokerDispatchConsumption_zz_c_fence_bump' } : r);
+    const flipped = shipped.map(r => r.table_name === 'ExternalSignalBrokerDispatchConsumption' && r.trigger_name.endsWith('zz_a_fence_bump') ? { ...r, trigger_name: 'ExternalSignalBrokerDispatchConsumption_zz_c_fence_bump' } : r);
     expect(evaluateTriggerOrder(flipped).map(v => v.table)).toEqual(['ExternalSignalBrokerDispatchConsumption']);
   });
 

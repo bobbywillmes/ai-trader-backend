@@ -7,8 +7,8 @@ export type ManifestFunction = { language: string; volatility: string; kind: str
 export type ManifestTrigger = { function: string; enabled: string; timing: string; events: string; scope: string; when: string; columns: string; arguments: string; deferrable: boolean; initiallyDeferred: boolean; transitionTables: string };
 
 export const SECURITY_MANIFEST: { version: string; migration: string; functions: Record<string, ManifestFunction>; triggers: Record<string, ManifestTrigger> } = {
-  "version": "20261103120000_tradingview_receipt_clock_dispatch_fence_foundation",
-  "migration": "20261103120000_tradingview_receipt_clock_dispatch_fence_foundation",
+  "version": "20261111120000_tradingview_send_permission_foundation",
+  "migration": "20261111120000_tradingview_send_permission_foundation",
   "functions": {
     "assert_strategy_market_policy_prepared()": {
       "language": "plpgsql",
@@ -260,7 +260,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "b941ff41e415b76b6de981da3fa302be7ab53b9a547ebcaf4306f35d7d97fc3c"
+      "bodySha256": "d87f18713e9f784450d037288a2a44ff6f8bfa5e49916cd7b0d7820c3eca11d2"
     },
     "external_signal_broker_dispatch_activation_apply()": {
       "language": "plpgsql",
@@ -289,6 +289,15 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "result": "trigger",
       "bodySha256": "0b144dd1c63863e3a181584263ecd2a7bdddd62f7c5e2b2c56c2a9eeb405b515"
     },
+    "external_signal_broker_evidence_fence_advance(p_intent_ids integer[])": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "void",
+      "bodySha256": "14262086cefb7c56a4acabce63c1c061419ae1ff09d9902688d6b232a262242b"
+    },
     "external_signal_broker_evidence_marked_intents(p_intent_id integer, p_client_order_id text, p_broker_order_id text, p_account_id integer, p_broker_order_record_id integer)": {
       "language": "plpgsql",
       "volatility": "s",
@@ -306,6 +315,42 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "strict": false,
       "result": "trigger",
       "bodySha256": "9184cc9c6fa0035c696d6251e10f518d3a202360eb27c6c62e096cab9717a7b4"
+    },
+    "external_signal_broker_send_evidence_immutable()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "7e32145d32748864709e93c1ec5d589b856730db9052b80e567f8f8efda481e6"
+    },
+    "external_signal_broker_send_permission_fence_verify()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "14ca87c4f0ab4c4ab8d196860220958196f55b38646b66badb42f69868462360"
+    },
+    "external_signal_broker_send_permission_guard()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "0b9eec895f3d88e41f8fcc346529e8275f5ee22fbf344f8b8b093ed0fa1da231"
+    },
+    "external_signal_broker_send_resolution_guard()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "2747701a15c877c454753bb6b79ea73cb95c4d5b43a91d5549b5d21dc40304b2"
     },
     "external_signal_broker_worker_claim_guard()": {
       "language": "plpgsql",
@@ -334,6 +379,33 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "result": "trigger",
       "bodySha256": "70f1cf0a2dc418cf2934bea88082d325f6fe8c72dae1e3a9aa67389d30cee3d2"
     },
+    "external_signal_c3c_a_minimum_remaining()": {
+      "language": "sql",
+      "volatility": "i",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "interval",
+      "bodySha256": "20b5737f47f58583cceb4222b85052513f4be31e273f6d0abd4887245a40e6fb"
+    },
+    "external_signal_c3c_f_minimum_remaining()": {
+      "language": "sql",
+      "volatility": "i",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "interval",
+      "bodySha256": "20b5737f47f58583cceb4222b85052513f4be31e273f6d0abd4887245a40e6fb"
+    },
+    "external_signal_c3c_p_minimum_remaining()": {
+      "language": "sql",
+      "volatility": "i",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "interval",
+      "bodySha256": "20b5737f47f58583cceb4222b85052513f4be31e273f6d0abd4887245a40e6fb"
+    },
     "external_signal_dispatch_fence_advance(p_intent_ids integer[])": {
       "language": "plpgsql",
       "volatility": "v",
@@ -350,7 +422,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "05c143fbb5d3986712da8a801a7a299709f865ec3d496b766850b6774da7a220"
+      "bodySha256": "4e056a2f750df181cd5abea7eca2e64dd62fa28ea03337adb229fc710319b049"
     },
     "external_signal_dispatch_fence_bump_broker_order()": {
       "language": "plpgsql",
@@ -359,7 +431,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "6dd1bf9cd5d6f015040cb59b393f2e2cfdaf84ede6e77e4a68385900e0d38daf"
+      "bodySha256": "ee2002b59b572829b1e08adef6b5ce8b3ba20259bfd588257118229d3d2e5e09"
     },
     "external_signal_dispatch_fence_bump_claim_event()": {
       "language": "plpgsql",
@@ -1611,6 +1683,110 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "timing": "BEFORE",
       "events": "INSERT,DELETE,UPDATE",
       "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendPermission/ExternalSignalBrokerSendPermission_a_guard": {
+      "function": "external_signal_broker_send_permission_guard()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendPermission/ExternalSignalBrokerSendPermission_immutable": {
+      "function": "external_signal_broker_send_evidence_immutable()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendPermission/ExternalSignalBrokerSendPermission_truncate_guard": {
+      "function": "external_signal_broker_send_evidence_immutable()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "TRUNCATE",
+      "scope": "STATEMENT",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendPermission/ExternalSignalBrokerSendPermission_zz_a_fence_bump": {
+      "function": "external_signal_dispatch_fence_bump_order_ref()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendPermission/ExternalSignalBrokerSendPermission_zz_b_fence_verify": {
+      "function": "external_signal_broker_send_permission_fence_verify()",
+      "enabled": "O",
+      "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendResolution/ExternalSignalBrokerSendResolution_a_guard": {
+      "function": "external_signal_broker_send_resolution_guard()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendResolution/ExternalSignalBrokerSendResolution_immutable": {
+      "function": "external_signal_broker_send_evidence_immutable()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "DELETE,UPDATE",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "ExternalSignalBrokerSendResolution/ExternalSignalBrokerSendResolution_truncate_guard": {
+      "function": "external_signal_broker_send_evidence_immutable()",
+      "enabled": "O",
+      "timing": "BEFORE",
+      "events": "TRUNCATE",
+      "scope": "STATEMENT",
       "when": "",
       "columns": "",
       "arguments": "",

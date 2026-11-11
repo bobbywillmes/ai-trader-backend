@@ -68,6 +68,14 @@ export const CRITICAL_TRIGGERS: ReadonlyArray<readonly [table: string, trigger: 
   ['ExternalSignalBrokerDispatchActivation', 'ExternalSignalBrokerDispatchActivation_guard', 'external_signal_broker_dispatch_activation_guard'],
   ['ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_guard', 'external_signal_broker_consumption_guard'],
   ['ExternalSignalBrokerDispatchConsumption', 'ExternalSignalBrokerDispatchConsumption_pair_check', 'external_signal_dispatch_pair_check'],
+  ['ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_a_guard', 'external_signal_broker_send_permission_guard'],
+  ['ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_immutable', 'external_signal_broker_send_evidence_immutable'],
+  ['ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_truncate_guard', 'external_signal_broker_send_evidence_immutable'],
+  ['ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_zz_a_fence_bump', 'external_signal_dispatch_fence_bump_order_ref'],
+  ['ExternalSignalBrokerSendPermission', 'ExternalSignalBrokerSendPermission_zz_b_fence_verify', 'external_signal_broker_send_permission_fence_verify'],
+  ['ExternalSignalBrokerSendResolution', 'ExternalSignalBrokerSendResolution_a_guard', 'external_signal_broker_send_resolution_guard'],
+  ['ExternalSignalBrokerSendResolution', 'ExternalSignalBrokerSendResolution_immutable', 'external_signal_broker_send_evidence_immutable'],
+  ['ExternalSignalBrokerSendResolution', 'ExternalSignalBrokerSendResolution_truncate_guard', 'external_signal_broker_send_evidence_immutable'],
   ['ExternalSignalBrokerDispatchState', 'ExternalSignalBrokerDispatchState_guard', 'external_signal_broker_dispatch_state_guard'],
   ['ExternalSignalBrokerWorkerClaim', 'ExternalSignalBrokerWorkerClaim_guard', 'external_signal_broker_worker_claim_guard'],
   ['ExternalSignalEntryExecutionAuthorization', 'ExternalSignalEntryExecutionAuthorization_guard', 'external_signal_entry_authorization_guard'],
@@ -106,6 +114,8 @@ export const TRIGGER_ORDER_INVARIANTS: readonly TriggerOrderRule[] = [
     sequence: ['ExternalSignalTradeCycleAccount_a_epoch_stamp'] },
   { table: 'ExternalSignalBrokerDispatchConsumption', timing: 'AFTER', event: 'INSERT', contiguous: false, reason: 'the single post-pair bump must precede its verification',
     sequence: ['ExternalSignalBrokerDispatchConsumption_zz_a_fence_bump', 'ExternalSignalBrokerDispatchConsumption_zz_b_fence_verify'] },
+  { table: 'ExternalSignalBrokerSendPermission', timing: 'AFTER', event: 'INSERT', contiguous: true, reason: 'the single permission bump must precede its exact-delta verification',
+    sequence: ['ExternalSignalBrokerSendPermission_zz_a_fence_bump', 'ExternalSignalBrokerSendPermission_zz_b_fence_verify'] },
 ];
 
 export type TriggerCatalogRow = { table_name: string; trigger_name: string; tgtype: number; enabled: string };

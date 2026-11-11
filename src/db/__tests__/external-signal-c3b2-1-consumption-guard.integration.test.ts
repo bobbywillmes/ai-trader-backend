@@ -140,6 +140,21 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
   }
   const counts = async (intentId: number) => (await db.query(`SELECT (SELECT count(*)::int FROM "ExternalSignalBrokerDispatchConsumption" WHERE "orderIntentId"=$1) AS tv, (SELECT count(*)::int FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1) AS mi`, [intentId])).rows[0] as { tv: number; mi: number };
   const fenceNow = async (intentId: number) => Number((await db.query(`SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1`, [intentId])).rows[0].version);
+  const insertSendPermission = (intentId: number, expectedFence: number) => db.query(`
+    INSERT INTO "ExternalSignalBrokerSendPermission"
+      ("orderIntentId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId","marketPolicyDispatchDecisionId",
+       "executionObligationId","workerClaimId","entryExposureClaimId","tradingAccountId","securityId","clientOrderId",
+       "executionAuthorizationId","prePermissionFenceVersion","evidenceJson")
+    SELECT i.id,tv.id,mi.id,d.id,o.id,wc.id,c.id,i."tradingAccountId",ac."securityId",o."clientOrderId",o."authorizationId",$2,'{}'
+    FROM "OrderIntent" i
+    JOIN "ExternalSignalEntryExecutionObligation" o ON o."orderIntentId"=i.id
+    JOIN "ExternalSignalBrokerWorkerClaim" wc ON wc."orderIntentId"=i.id
+    JOIN "EntryExposureClaim" c ON c."orderIntentId"=i.id
+    JOIN "ExternalSignalTradeCycleAccount" ac ON ac.id=o."accountCycleId"
+    JOIN "ExternalSignalBrokerDispatchConsumption" tv ON tv."orderIntentId"=i.id
+    JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId"
+    JOIN "MarketPolicyBrokerDispatchDecision" d ON d.id=mi."decisionId"
+    WHERE i.id=$1 RETURNING *`, [intentId, expectedFence]);
   const refused = async (g: Ready, pair: Pair, pattern: RegExp) => {
     expect(pair.ok, `${g.intentId}: the pair must be refused`).toBe(false);
     if (!pair.ok) expect(message(pair.error)).toMatch(pattern);
@@ -365,6 +380,65 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
     }, 120_000);
   });
 
+  describe('C3C.1A broker-inert send-permission foundation', () => {
+    it('derives the exact effective deadline and advances the fence exactly once', async () => {
+      const g = await ready('c3c-permission', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const before = await fenceNow(g.intentId);
+      const permission = (await insertSendPermission(g.intentId, before)).rows[0];
+      expect(await fenceNow(g.intentId)).toBe(before + 1);
+      const pair = (await db.query(`SELECT least(tv."authorizationDeadlineAt",d."dispatchExpiresAt") AS deadline
+        FROM "ExternalSignalBrokerDispatchConsumption" tv JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId"
+        JOIN "MarketPolicyBrokerDispatchDecision" d ON d.id=mi."decisionId" WHERE tv."orderIntentId"=$1`, [g.intentId])).rows[0];
+      expect(permission.effectiveDeadlineAt).toEqual(pair.deadline);
+      expect(permission.permittedAt).toBeInstanceOf(Date);
+      expect(fetchSpy).not.toHaveBeenCalled();
+    });
+
+    it('rejects stale fences, caller clocks, duplicate identity, prior evidence, and rolls back every failed increment', async () => {
+      const g = await ready('c3c-invalid', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const before = await fenceNow(g.intentId);
+      await expect(insertSendPermission(g.intentId, before - 1)).rejects.toThrow(/fence version is stale/);
+      expect(await fenceNow(g.intentId)).toBe(before);
+      await expect(db.query(`INSERT INTO "ExternalSignalBrokerSendPermission"
+        ("orderIntentId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId","marketPolicyDispatchDecisionId","executionObligationId","workerClaimId","entryExposureClaimId","tradingAccountId","securityId","clientOrderId","executionAuthorizationId","effectiveDeadlineAt","permittedAt","prePermissionFenceVersion","evidenceJson")
+        SELECT $1,tv.id,mi.id,d.id,o.id,wc.id,c.id,i."tradingAccountId",ac."securityId",o."clientOrderId",o."authorizationId",now()+interval '1 hour',now(),$2,'{}'
+        FROM "OrderIntent" i JOIN "ExternalSignalEntryExecutionObligation" o ON o."orderIntentId"=i.id JOIN "ExternalSignalBrokerWorkerClaim" wc ON wc."orderIntentId"=i.id JOIN "EntryExposureClaim" c ON c."orderIntentId"=i.id JOIN "ExternalSignalTradeCycleAccount" ac ON ac.id=o."accountCycleId" JOIN "ExternalSignalBrokerDispatchConsumption" tv ON tv."orderIntentId"=i.id JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId" JOIN "MarketPolicyBrokerDispatchDecision" d ON d.id=mi."decisionId" WHERE i.id=$1`, [g.intentId, before])).rejects.toThrow(/database-stamped/);
+      expect(await fenceNow(g.intentId)).toBe(before);
+      await insertSendPermission(g.intentId, before);
+      const after = await fenceNow(g.intentId);
+      await expect(insertSendPermission(g.intentId, after)).rejects.toThrow(/duplicate key/);
+      expect(await fenceNow(g.intentId)).toBe(after);
+    });
+
+    it('keeps permission and resolution rows append-only and resolution insertion adds no fence increment', async () => {
+      const g = await ready('c3c-resolution', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const permission = (await insertSendPermission(g.intentId, await fenceNow(g.intentId))).rows[0];
+      const beforeResolution = await fenceNow(g.intentId);
+      const resolution = (await db.query(`INSERT INTO "ExternalSignalBrokerSendResolution"
+        ("orderIntentId","permissionId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId",outcome,"evidenceJson")
+        VALUES ($1,$2,$3,$4,'WITHDRAWN_NEVER_SENT','{}') RETURNING *`, [g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId])).rows[0];
+      expect(resolution.resolvedAt).toBeInstanceOf(Date);
+      expect(await fenceNow(g.intentId)).toBe(beforeResolution);
+      await expect(db.query(`UPDATE "ExternalSignalBrokerSendPermission" SET "clientOrderId"='changed' WHERE id=$1`, [permission.id])).rejects.toThrow(/append-only/);
+      await expect(db.query(`DELETE FROM "ExternalSignalBrokerSendResolution" WHERE id=$1`, [resolution.id])).rejects.toThrow(/append-only/);
+      await expect(db.query(`TRUNCATE "ExternalSignalBrokerSendPermission" CASCADE`)).rejects.toThrow(/append-only/);
+    });
+
+    it('reports a structurally clean historical pair audit without rewriting either consumption', async () => {
+      const g = await ready('c3c-audit', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const before = (await db.query(`SELECT tv.*,mi."decisionId" FROM "ExternalSignalBrokerDispatchConsumption" tv JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId" WHERE tv."orderIntentId"=$1`, [g.intentId])).rows[0];
+      const audit = (await db.query(`SELECT * FROM "ExternalSignalBrokerDispatchPairDeadlineAudit" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0];
+      expect(audit.findings).not.toContain('MISSING_MI_CONSUMPTION');
+      expect(audit.findings).not.toContain('DECISION_NOT_ALLOWED');
+      const after = (await db.query(`SELECT tv.*,mi."decisionId" FROM "ExternalSignalBrokerDispatchConsumption" tv JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId" WHERE tv."orderIntentId"=$1`, [g.intentId])).rows[0];
+      expect(after).toEqual(before);
+    });
+  });
+
   // =============================================================================================================
   describe('existing evidence is refused by the guard itself, under both isolation levels (the fence alone is necessary but not sufficient)', () => {
     type Evidence = [label: string, make: (g: Ready) => Promise<unknown>];
@@ -545,10 +619,10 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
     it('stamps authorizedAt after the wait and keeps the accepted deadline contract for a signal that is still fresh', async () => {
       const { g, result, entered, released } = await waitedPair('clock-fresh-after-wait', null, 1500);
       expect(result.ok, result.ok ? '' : message(result.error)).toBe(true);
-      const row = (await db.query(`SELECT c."authorizedAt", c."authorizationDeadlineAt", s."receivedAt" FROM "ExternalSignalBrokerDispatchConsumption" c JOIN "ExternalSignalEntryExecutionObligation" o ON o.id=c."executionObligationId" JOIN "Signal" s ON s.id=o."entrySignalId" WHERE c."orderIntentId"=$1`, [g.intentId])).rows[0];
+      const row = (await db.query(`SELECT c."authorizedAt", c."authorizationDeadlineAt", s."receivedAt", d."dispatchExpiresAt" FROM "ExternalSignalBrokerDispatchConsumption" c JOIN "ExternalSignalEntryExecutionObligation" o ON o.id=c."executionObligationId" JOIN "Signal" s ON s.id=o."entrySignalId" JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=c."marketPolicyDispatchConsumptionId" JOIN "MarketPolicyBrokerDispatchDecision" d ON d.id=mi."decisionId" WHERE c."orderIntentId"=$1`, [g.intentId])).rows[0];
       expect(row.authorizedAt.getTime()).toBeGreaterThanOrEqual(released.getTime()); // later than the lock grant, not the trigger entry
       expect(row.authorizedAt.getTime()).toBeGreaterThan(entered.getTime() + 1000);
-      expect(row.authorizationDeadlineAt.getTime()).toBe(Math.min(row.receivedAt.getTime() + 120_000, row.authorizedAt.getTime() + 30_000));
+      expect(row.authorizationDeadlineAt.getTime()).toBe(Math.min(row.receivedAt.getTime() + 120_000, row.authorizedAt.getTime() + 30_000, row.dispatchExpiresAt.getTime()));
     }, 120_000);
   });
 

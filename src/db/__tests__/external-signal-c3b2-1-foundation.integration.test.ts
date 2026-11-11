@@ -148,6 +148,33 @@ const fenceOf = async (c: Client, intentId: number) => Number((await c.query(`SE
       }
     });
 
+    it('locks the affected OrderIntent before broker-evidence fence work and does not deadlock with claim-first diagnostics', async () => {
+      const g = await fx.admit('broker-lock-order');
+      const intentFirst = await connect();
+      const brokerWriter = await connect();
+      await quarantineOff('BrokerOrder', () => quarantineOff('BrokerActivity', async () => {
+        await intentFirst.query('BEGIN');
+        await intentFirst.query(`SELECT 1 FROM "OrderIntent" WHERE id=$1 FOR UPDATE`, [g.intentId]);
+        const blockedOrder = brokerOrder(brokerWriter, { intentId: g.intentId, accountId: paperId, clientOrderId: g.clientOrderId, brokerOrderId: `lock-${randomUUID()}`, securityId: g.target.securityId });
+        const state = await Promise.race([blockedOrder.then(() => 'completed'), new Promise<string>(resolve => setTimeout(() => resolve('waiting'), 150))]);
+        expect(state).toBe('waiting');
+        await intentFirst.query('ROLLBACK');
+        await blockedOrder;
+
+        const claimFirst = await connect();
+        await claimFirst.query('BEGIN');
+        await claimFirst.query(`UPDATE "EntryExposureClaim" SET "lastDiagnosedAt"=clock_timestamp() WHERE id=$1`, [g.claimId]);
+        await claimFirst.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'REPEATED_OBSERVATION','{}')`, [g.claimId]);
+        const activity = brokerActivity(brokerWriter, { accountId: paperId, intentId: g.intentId });
+        const activityState = await Promise.race([activity.then(() => 'completed'), new Promise<string>(resolve => setTimeout(() => resolve('waiting'), 150))]);
+        expect(activityState).toBe('waiting');
+        await claimFirst.query('COMMIT');
+        await activity;
+      }));
+      const deadlocks = (await db.query(`SELECT deadlocks::int n FROM pg_stat_database WHERE datname=current_database()`)).rows[0].n as number;
+      expect(deadlocks).toBe(0);
+    });
+
     it('does not move any fence for unmarked lifecycle writes (zero fence-table writes inside the transaction)', async () => {
       const unmarked = await unmarkedIntent(paperId, 'inert');
       const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ($1,$1,true,'STOCK',now(),now()) RETURNING id`, [`IN${sequence}`])).rows[0].id as number;
@@ -468,6 +495,19 @@ const fenceOf = async (c: Client, intentId: number) => Number((await c.query(`SE
         } })('src');
         process.stdout.write(JSON.stringify(hits));`], { encoding: 'utf8' });
       expect((JSON.parse(out) as string[]).map(value => value.replaceAll('\\', '/'))).toEqual(['src/services/external-signal-broker-worker.service.ts']);
+    });
+
+    it('has no production permission or resolution writer', async () => {
+      const { execFileSync } = await import('node:child_process');
+      const out = execFileSync(process.execPath, ['-e', `
+        const fs = require('node:fs'); const path = require('node:path'); const hits = [];
+        (function walk(dir) { for (const e of fs.readdirSync(dir, { withFileTypes: true })) { const p = path.join(dir, e.name);
+          if (e.isDirectory()) { if (e.name !== '__tests__' && e.name !== 'node_modules') walk(p); continue; }
+          if (!/\.ts$/.test(e.name) || /\.test\.ts$/.test(e.name) || /database-security-/.test(e.name)) continue;
+          const text = fs.readFileSync(p, 'utf8');
+          if (/ExternalSignalBrokerSendPermission|ExternalSignalBrokerSendResolution|externalSignalBrokerSend(Permission|Resolution)/.test(text)) hits.push(p.replaceAll('\\\\','/'));
+        } })('src'); process.stdout.write(JSON.stringify(hits));`], { encoding: 'utf8' });
+      expect(JSON.parse(out)).toEqual([]);
     });
 
     it('never supplies receivedAt from the ingestion service', async () => {

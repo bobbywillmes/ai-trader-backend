@@ -114,6 +114,11 @@ enum ExternalSignalEntryExecutionAuthorizationStatus {
   INVALIDATED
 }
 
+enum ExternalSignalBrokerSendResolutionOutcome {
+  CONSUMED
+  WITHDRAWN_NEVER_SENT
+}
+
 enum ExternalSignalTradeCycleStatus {
   AWAITING_ENTRY
   ENTRY_RECEIVED
@@ -436,19 +441,20 @@ model ExternalSignalEntryExecutionAuthorization {
   invalidationReasonCode       String?
   createdAt                    DateTime                                        @default(now()) @db.Timestamptz(3)
 
-  rolloutGeneration          ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorizat_rolloutGenerationId_fkey")
-  tradingAccount             TradingAccount                            @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  accountSubscription        TradingAccountSubscription                @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionA_tradingAccountSubscriptionId_fkey")
-  subscription               Subscription                              @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  security                   Security                                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  signalSource               ExternalSignalSource                      @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  binding                    StrategySignalBinding                     @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthor_strategySignalBindingId_fkey")
-  revision                   StrategySignalRevision                    @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorization_revision_fkey")
-  accountHolder              User                                      @relation("ExternalSignalEntryExecutionAccountHolder", fields: [accountHolderUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorizat_accountHolderUserId_fkey")
-  authorizedBy               User                                      @relation("ExternalSignalEntryExecutionAuthorizer", fields: [authorizedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorizati_authorizedByUserId_fkey")
-  revokedBy                  User?                                     @relation("ExternalSignalEntryExecutionRevoker", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  obligations                ExternalSignalEntryExecutionObligation[]
-  brokerDispatchConsumptions ExternalSignalBrokerDispatchConsumption[]
+  rolloutGeneration                   ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorizat_rolloutGenerationId_fkey")
+  tradingAccount                      TradingAccount                            @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountSubscription                 TradingAccountSubscription                @relation(fields: [tradingAccountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionA_tradingAccountSubscriptionId_fkey")
+  subscription                        Subscription                              @relation(fields: [subscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security                            Security                                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  signalSource                        ExternalSignalSource                      @relation(fields: [signalSourceId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  binding                             StrategySignalBinding                     @relation(fields: [strategySignalBindingId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthor_strategySignalBindingId_fkey")
+  revision                            StrategySignalRevision                    @relation(fields: [strategySignalRevisionId, strategySignalBindingId, strategyRevision], references: [id, strategySignalBindingId, revision], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorization_revision_fkey")
+  accountHolder                       User                                      @relation("ExternalSignalEntryExecutionAccountHolder", fields: [accountHolderUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorizat_accountHolderUserId_fkey")
+  authorizedBy                        User                                      @relation("ExternalSignalEntryExecutionAuthorizer", fields: [authorizedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalEntryExecutionAuthorizati_authorizedByUserId_fkey")
+  revokedBy                           User?                                     @relation("ExternalSignalEntryExecutionRevoker", fields: [revokedByUserId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  obligations                         ExternalSignalEntryExecutionObligation[]
+  brokerDispatchConsumptions          ExternalSignalBrokerDispatchConsumption[]
+  externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission[]
 
   @@unique([rolloutGenerationId, tradingAccountSubscriptionId, strategySignalBindingId, authorizationSequence], map: "ExternalSignalEntryExecutionAuthorization_sequence_key")
   @@index([tradingAccountSubscriptionId, strategySignalBindingId, status], map: "ExternalSignalEntryExecutionAuthorization_assignment_binding_st")
@@ -923,8 +929,9 @@ model TradingAccount {
   entryExposureClaims                        EntryExposureClaim[]
   positionLifecycleProvenanceDecisions       PositionLifecycleProvenanceDecision[]
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt                           DateTime                             @default(now())
+  updatedAt                           DateTime                             @updatedAt
+  externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission[]
 
   @@unique([accountHolderUserId, broker, environment], map: "TradingAccount_holder_broker_environment_key")
   @@unique([broker, environment, brokerAccountId])
@@ -1648,6 +1655,7 @@ model Security {
   marketPolicyEnforcementAdmissionAttempts   MarketPolicyEnforcementAdmissionAttempt[]
   marketPolicyBrokerDispatchDecisions        MarketPolicyBrokerDispatchDecision[]
   marketPolicyBrokerUnenforcedDispatches     MarketPolicyBrokerUnenforcedDispatch[]
+  externalSignalBrokerSendPermissions        ExternalSignalBrokerSendPermission[]
 
   @@index([enabled])
   @@index([assetType])
@@ -1742,6 +1750,8 @@ model OrderIntent {
   externalSignalBrokerWorkerClaim         ExternalSignalBrokerWorkerClaim?
   externalSignalBrokerDispatchConsumption ExternalSignalBrokerDispatchConsumption?
   externalSignalDispatchFence             ExternalSignalDispatchFence?
+  externalSignalBrokerSendPermission      ExternalSignalBrokerSendPermission?
+  externalSignalBrokerSendResolution      ExternalSignalBrokerSendResolution?
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1768,15 +1778,16 @@ model ExternalSignalEntryExecutionObligation {
   clientOrderId            String
   createdAt                DateTime @default(now()) @db.Timestamptz(3)
 
-  orderIntent               OrderIntent                               @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  accountCycle              ExternalSignalTradeCycleAccount           @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  sourceCycle               ExternalSignalTradeCycle                  @relation(fields: [sourceCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  entrySignal               Signal                                    @relation(fields: [entrySignalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  entrySignalRoute          SignalRoute                               @relation(fields: [entrySignalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  authorization             ExternalSignalEntryExecutionAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  rolloutGeneration         ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  brokerWorkerClaim         ExternalSignalBrokerWorkerClaim?
-  brokerDispatchConsumption ExternalSignalBrokerDispatchConsumption?
+  orderIntent                        OrderIntent                               @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountCycle                       ExternalSignalTradeCycleAccount           @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  sourceCycle                        ExternalSignalTradeCycle                  @relation(fields: [sourceCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entrySignal                        Signal                                    @relation(fields: [entrySignalId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  entrySignalRoute                   SignalRoute                               @relation(fields: [entrySignalRouteId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  authorization                      ExternalSignalEntryExecutionAuthorization @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  rolloutGeneration                  ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  brokerWorkerClaim                  ExternalSignalBrokerWorkerClaim?
+  brokerDispatchConsumption          ExternalSignalBrokerDispatchConsumption?
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission?
 
   @@index([clientOrderId])
 }
@@ -1794,11 +1805,12 @@ model ExternalSignalBrokerWorkerClaim {
   claimFingerprint      String   @unique
   claimedAt             DateTime @default(now()) @db.Timestamptz(3)
 
-  orderIntent         OrderIntent                              @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  executionObligation ExternalSignalEntryExecutionObligation   @relation(fields: [executionObligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  accountCycle        ExternalSignalTradeCycleAccount          @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  rolloutGeneration   ExternalSignalExecutionRolloutGeneration @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  dispatchConsumption ExternalSignalBrokerDispatchConsumption?
+  orderIntent                        OrderIntent                              @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  executionObligation                ExternalSignalEntryExecutionObligation   @relation(fields: [executionObligationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  accountCycle                       ExternalSignalTradeCycleAccount          @relation(fields: [accountCycleId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  rolloutGeneration                  ExternalSignalExecutionRolloutGeneration @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  dispatchConsumption                ExternalSignalBrokerDispatchConsumption?
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission?
 }
 
 // TradingView half of the final one-shot dispatch linearization point. A deferred database
@@ -1822,13 +1834,68 @@ model ExternalSignalBrokerDispatchConsumption {
   authorizationDeadlineAt           DateTime @db.Timestamptz(6)
   fenceVersion                      BigInt
 
+  orderIntent                        OrderIntent                               @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  executionObligation                ExternalSignalEntryExecutionObligation    @relation(fields: [executionObligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsumpt_executionObligationId_fkey")
+  workerClaim                        ExternalSignalBrokerWorkerClaim           @relation(fields: [workerClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  marketPolicyDispatchConsumption    MarketPolicyBrokerDispatchConsumption     @relation(fields: [marketPolicyDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchC_marketPolicyDispatchConsumpt_fkey")
+  rolloutGeneration                  ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsumptio_rolloutGenerationId_fkey")
+  executionAuthorization             ExternalSignalEntryExecutionAuthorization @relation(fields: [executionAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsu_executionAuthorizationId_fkey")
+  brokerPostOpportunity              OrderIntentBrokerPostOpportunity?         @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsum_brokerPostOpportunityId_fkey")
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission?
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution?
+}
+
+/// C3C.1A database-only send-permission evidence. No runtime writer exists in this checkpoint.
+/// The database guard stamps permittedAt/effectiveDeadlineAt and advances the dispatch fence exactly once.
+model ExternalSignalBrokerSendPermission {
+  id                                Int      @id @default(autoincrement())
+  orderIntentId                     Int      @unique
+  tradingViewDispatchConsumptionId  Int      @unique(map: "ExternalSignalBrokerSendPerm_tvConsumptionId_key")
+  marketPolicyDispatchConsumptionId Int      @unique(map: "ExternalSignalBrokerSendPerm_miConsumptionId_key")
+  marketPolicyDispatchDecisionId    Int      @unique(map: "ExternalSignalBrokerSendPerm_miDecisionId_key")
+  executionObligationId             Int      @unique(map: "ExternalSignalBrokerSendPerm_executionObligationId_key")
+  workerClaimId                     Int      @unique
+  entryExposureClaimId              Int      @unique
+  tradingAccountId                  Int
+  securityId                        Int
+  clientOrderId                     String
+  executionAuthorizationId          Int
+  effectiveDeadlineAt               DateTime @db.Timestamptz(6)
+  prePermissionFenceVersion         BigInt
+  permittedAt                       DateTime @db.Timestamptz(6)
+  evidenceJson                      Json
+
   orderIntent                     OrderIntent                               @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  executionObligation             ExternalSignalEntryExecutionObligation    @relation(fields: [executionObligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsumpt_executionObligationId_fkey")
+  tradingViewDispatchConsumption  ExternalSignalBrokerDispatchConsumption   @relation(fields: [tradingViewDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendPerm_tvConsumptionId_fkey")
+  marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption     @relation(fields: [marketPolicyDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendPerm_miConsumptionId_fkey")
+  marketPolicyDispatchDecision    MarketPolicyBrokerDispatchDecision        @relation(fields: [marketPolicyDispatchDecisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendPerm_miDecisionId_fkey")
+  executionObligation             ExternalSignalEntryExecutionObligation    @relation(fields: [executionObligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendPerm_executionObligationId_fkey")
   workerClaim                     ExternalSignalBrokerWorkerClaim           @relation(fields: [workerClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption     @relation(fields: [marketPolicyDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchC_marketPolicyDispatchConsumpt_fkey")
-  rolloutGeneration               ExternalSignalExecutionRolloutGeneration  @relation(fields: [rolloutGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsumptio_rolloutGenerationId_fkey")
-  executionAuthorization          ExternalSignalEntryExecutionAuthorization @relation(fields: [executionAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsu_executionAuthorizationId_fkey")
-  brokerPostOpportunity           OrderIntentBrokerPostOpportunity?         @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerDispatchConsum_brokerPostOpportunityId_fkey")
+  entryExposureClaim              EntryExposureClaim                        @relation(fields: [entryExposureClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradingAccount                  TradingAccount                            @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security                        Security                                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  executionAuthorization          ExternalSignalEntryExecutionAuthorization @relation(fields: [executionAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  resolution                      ExternalSignalBrokerSendResolution?
+
+  @@index([tradingAccountId, securityId])
+  @@index([effectiveDeadlineAt])
+}
+
+/// C3C.1A immutable terminal identity. No runtime resolution writer exists in this checkpoint.
+model ExternalSignalBrokerSendResolution {
+  id                                Int                                       @id @default(autoincrement())
+  orderIntentId                     Int                                       @unique
+  permissionId                      Int?                                      @unique
+  tradingViewDispatchConsumptionId  Int                                       @unique(map: "ExternalSignalBrokerSendRes_tvConsumptionId_key")
+  marketPolicyDispatchConsumptionId Int                                       @unique(map: "ExternalSignalBrokerSendRes_miConsumptionId_key")
+  outcome                           ExternalSignalBrokerSendResolutionOutcome
+  resolvedAt                        DateTime                                  @db.Timestamptz(6)
+  evidenceJson                      Json
+
+  orderIntent                     OrderIntent                             @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  permission                      ExternalSignalBrokerSendPermission?     @relation(fields: [permissionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  tradingViewDispatchConsumption  ExternalSignalBrokerDispatchConsumption @relation(fields: [tradingViewDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendRes_tvConsumptionId_fkey")
+  marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption   @relation(fields: [marketPolicyDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendRes_miConsumptionId_fkey")
 }
 
 model BrokerOrder {
@@ -1885,11 +1952,12 @@ model EntryExposureClaim {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  tradingAccount  TradingAccount            @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  security        Security                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  orderIntent     OrderIntent?              @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  trackedPosition TrackedPosition?          @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  events          EntryExposureClaimEvent[]
+  tradingAccount                     TradingAccount                      @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  security                           Security                            @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  orderIntent                        OrderIntent?                        @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  trackedPosition                    TrackedPosition?                    @relation(fields: [trackedPositionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  events                             EntryExposureClaimEvent[]
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission?
 
   // One unreleased claim per account/security is enforced by partial unique SQL.
   @@index([tradingAccountId, securityId])
@@ -4171,17 +4239,18 @@ model MarketPolicyBrokerDispatchDecision {
   evidenceJson                    Json
   createdAt                       DateTime                               @default(now()) @db.Timestamptz(3)
 
-  orderIntent            OrderIntent                                     @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_orderIntent_fkey")
-  obligation             OrderIntentMarketPolicyEnforcementObligation?   @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_obligation_fkey")
-  tradingAccount         TradingAccount                                  @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_account_fkey")
-  accountSubscription    TradingAccountSubscription                      @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_assignment_fkey")
-  security               Security?                                       @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_security_fkey")
-  policyRevision         StrategyMarketPolicyRevision?                   @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_revision_fkey")
-  enrollmentGeneration   AssignmentMarketPolicyEnrollmentGeneration?     @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_generation_fkey")
-  authorization          AssignmentMarketPolicyEnforcementAuthorization? @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_authorization_fkey")
-  marketRegimeAssessment MarketRegimeAssessment?                         @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_composition_fkey")
-  gates                  MarketPolicyBrokerDispatchGate[]
-  consumption            MarketPolicyBrokerDispatchConsumption?
+  orderIntent                        OrderIntent                                     @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_orderIntent_fkey")
+  obligation                         OrderIntentMarketPolicyEnforcementObligation?   @relation(fields: [obligationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_obligation_fkey")
+  tradingAccount                     TradingAccount                                  @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_account_fkey")
+  accountSubscription                TradingAccountSubscription                      @relation(fields: [accountSubscriptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_assignment_fkey")
+  security                           Security?                                       @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_security_fkey")
+  policyRevision                     StrategyMarketPolicyRevision?                   @relation(fields: [policyRevisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_revision_fkey")
+  enrollmentGeneration               AssignmentMarketPolicyEnrollmentGeneration?     @relation(fields: [enrollmentGenerationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_generation_fkey")
+  authorization                      AssignmentMarketPolicyEnforcementAuthorization? @relation(fields: [authorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_authorization_fkey")
+  marketRegimeAssessment             MarketRegimeAssessment?                         @relation(fields: [marketRegimeAssessmentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchDecision_composition_fkey")
+  gates                              MarketPolicyBrokerDispatchGate[]
+  consumption                        MarketPolicyBrokerDispatchConsumption?
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission?
 
   @@unique([orderIntentId, dispatchSequence], map: "BrokerDispatchDecision_intent_sequence_key")
   @@index([accountSubscriptionId, id], map: "BrokerDispatchDecision_assignment_idx")
@@ -4228,10 +4297,12 @@ model MarketPolicyBrokerDispatchConsumption {
   consumedAt              DateTime @default(now()) @db.Timestamptz(3)
   evidenceJson            Json
 
-  decision                          MarketPolicyBrokerDispatchDecision       @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_decision_fkey")
-  orderIntent                       OrderIntent                              @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_orderIntent_fkey")
-  brokerPostOpportunity             OrderIntentBrokerPostOpportunity?        @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_opportunity_fkey")
-  externalSignalDispatchConsumption ExternalSignalBrokerDispatchConsumption?
+  decision                           MarketPolicyBrokerDispatchDecision       @relation(fields: [decisionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_decision_fkey")
+  orderIntent                        OrderIntent                              @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_orderIntent_fkey")
+  brokerPostOpportunity              OrderIntentBrokerPostOpportunity?        @relation(fields: [brokerPostOpportunityId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "BrokerDispatchConsumption_opportunity_fkey")
+  externalSignalDispatchConsumption  ExternalSignalBrokerDispatchConsumption?
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission?
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution?
 }
 
 // The final serialized broker-time authorization of an un-obligated PAPER entry BUY, inserted
