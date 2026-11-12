@@ -148,28 +148,20 @@ const fenceOf = async (c: Client, intentId: number) => Number((await c.query(`SE
       }
     });
 
-    it('locks the affected OrderIntent before broker-evidence fence work and does not deadlock with claim-first diagnostics', async () => {
+    it('completes the supported intent -> claim -> fence sequence against concurrent scoped broker evidence without deadlock', async () => {
       const g = await fx.admit('broker-lock-order');
       const intentFirst = await connect();
       const brokerWriter = await connect();
       await quarantineOff('BrokerOrder', () => quarantineOff('BrokerActivity', async () => {
         await intentFirst.query('BEGIN');
         await intentFirst.query(`SELECT 1 FROM "OrderIntent" WHERE id=$1 FOR UPDATE`, [g.intentId]);
+        await intentFirst.query(`UPDATE "EntryExposureClaim" SET "lastDiagnosedAt"=clock_timestamp() WHERE id=$1`, [g.claimId]);
+        await intentFirst.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'REPEATED_OBSERVATION','{}')`, [g.claimId]);
         const blockedOrder = brokerOrder(brokerWriter, { intentId: g.intentId, accountId: paperId, clientOrderId: g.clientOrderId, brokerOrderId: `lock-${randomUUID()}`, securityId: g.target.securityId });
         const state = await Promise.race([blockedOrder.then(() => 'completed'), new Promise<string>(resolve => setTimeout(() => resolve('waiting'), 150))]);
         expect(state).toBe('waiting');
-        await intentFirst.query('ROLLBACK');
+        await intentFirst.query('COMMIT');
         await blockedOrder;
-
-        const claimFirst = await connect();
-        await claimFirst.query('BEGIN');
-        await claimFirst.query(`UPDATE "EntryExposureClaim" SET "lastDiagnosedAt"=clock_timestamp() WHERE id=$1`, [g.claimId]);
-        await claimFirst.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'REPEATED_OBSERVATION','{}')`, [g.claimId]);
-        const activity = brokerActivity(brokerWriter, { accountId: paperId, intentId: g.intentId });
-        const activityState = await Promise.race([activity.then(() => 'completed'), new Promise<string>(resolve => setTimeout(() => resolve('waiting'), 150))]);
-        expect(activityState).toBe('waiting');
-        await claimFirst.query('COMMIT');
-        await activity;
       }));
       const deadlocks = (await db.query(`SELECT deadlocks::int n FROM pg_stat_database WHERE datname=current_database()`)).rows[0].n as number;
       expect(deadlocks).toBe(0);

@@ -412,20 +412,99 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       expect(await fenceNow(g.intentId)).toBe(after);
     });
 
-    it('keeps permission and resolution rows append-only and resolution insertion adds no fence increment', async () => {
+    it('keeps permission rows append-only and refuses both resolution outcomes without a fence increment', async () => {
       const g = await ready('c3c-resolution', { decision: false });
       await svc.worker.finalizeTradingViewDispatch(g.intentId);
       const permission = (await insertSendPermission(g.intentId, await fenceNow(g.intentId))).rows[0];
       const beforeResolution = await fenceNow(g.intentId);
-      const resolution = (await db.query(`INSERT INTO "ExternalSignalBrokerSendResolution"
-        ("orderIntentId","permissionId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId",outcome,"evidenceJson")
-        VALUES ($1,$2,$3,$4,'WITHDRAWN_NEVER_SENT','{}') RETURNING *`, [g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId])).rows[0];
-      expect(resolution.resolvedAt).toBeInstanceOf(Date);
+      for (const outcome of ['CONSUMED', 'WITHDRAWN_NEVER_SENT']) {
+        await expect(db.query(`INSERT INTO "ExternalSignalBrokerSendResolution"
+          ("orderIntentId","permissionId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId",outcome,"evidenceJson")
+          VALUES ($1,$2,$3,$4,$5,'{}')`, [g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId, outcome])).rejects.toThrow(/TRADINGVIEW_RESOLUTION_DISABLED_C3C1A/);
+      }
       expect(await fenceNow(g.intentId)).toBe(beforeResolution);
+      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendResolution" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
       await expect(db.query(`UPDATE "ExternalSignalBrokerSendPermission" SET "clientOrderId"='changed' WHERE id=$1`, [permission.id])).rejects.toThrow(/append-only/);
-      await expect(db.query(`DELETE FROM "ExternalSignalBrokerSendResolution" WHERE id=$1`, [resolution.id])).rejects.toThrow(/append-only/);
       await expect(db.query(`TRUNCATE "ExternalSignalBrokerSendPermission" CASCADE`)).rejects.toThrow(/append-only/);
     });
+
+    const staleAuthorityCases: Array<[string, (g: Ready) => Promise<(() => Promise<void>) | void>, RegExp]> = [
+      ['account tradingBlocked', async () => { await db.query(`UPDATE "TradingAccount" SET "tradingBlocked"=true WHERE id=$1`, [paperId]); }, /TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE/],
+      ['account kill switch', async () => { await db.query(`UPDATE "TradingAccount" SET "tradingEnabled"=false,"killSwitchEnabled"=true WHERE id=$1`, [paperId]); }, /TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE/],
+      ['paused account', async () => { await db.query(`UPDATE "TradingAccount" SET status='PAUSED',"tradingEnabled"=false,"killSwitchEnabled"=true,"pausedReason"='C3C audit' WHERE id=$1`, [paperId]); }, /TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE/],
+      ['disabled assignment', async g => { await db.query(`UPDATE "TradingAccountSubscription" SET enabled=false WHERE id=$1`, [g.target.assignmentId]); }, /TRADINGVIEW_ASSIGNMENT_NOT_ELIGIBLE/],
+      ['entry-disabled assignment', async g => { await db.query(`UPDATE "TradingAccountSubscription" SET "entriesEnabled"=false WHERE id=$1`, [g.target.assignmentId]); }, /TRADINGVIEW_ASSIGNMENT_NOT_ELIGIBLE/],
+      ['disabled subscription', async g => { await db.query(`UPDATE "Subscription" SET enabled=false WHERE id=$1`, [g.target.subscriptionId]); }, /TRADINGVIEW_SUBSCRIPTION_DISABLED/],
+      ['disabled strategy', async g => {
+        const id = (await db.query(`SELECT "strategyId" AS id FROM "Subscription" WHERE id=$1`, [g.target.subscriptionId])).rows[0].id as number;
+        await db.query(`UPDATE "Strategy" SET enabled=false WHERE id=$1`, [id]);
+        return () => db.query(`UPDATE "Strategy" SET enabled=true WHERE id=$1`, [id]).then(() => undefined);
+      }, /TRADINGVIEW_STRATEGY_DISABLED|TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT/],
+      ['disabled security', async g => { await db.query(`UPDATE "Security" SET enabled=false WHERE id=$1`, [g.target.securityId]); }, /TRADINGVIEW_SECURITY_DISABLED|TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT/],
+      ['disabled exit profile', async g => {
+        const id = (await db.query(`SELECT "exitProfileId" AS id FROM "Subscription" WHERE id=$1`, [g.target.subscriptionId])).rows[0].id as number;
+        await db.query(`UPDATE "ExitProfile" SET enabled=false WHERE id=$1`, [id]);
+        return () => db.query(`UPDATE "ExitProfile" SET enabled=true WHERE id=$1`, [id]).then(() => undefined);
+      }, /TRADINGVIEW_EXIT_PROFILE_DISABLED/],
+      ['disabled allocation', async g => {
+        const id = (await db.query(`SELECT "allocationId" AS id FROM "TradingAccountSubscription" WHERE id=$1`, [g.target.assignmentId])).rows[0].id as number;
+        await db.query(`UPDATE "TradingAccountAllocation" SET enabled=false WHERE id=$1`, [id]);
+        return () => db.query(`UPDATE "TradingAccountAllocation" SET enabled=true WHERE id=$1`, [id]).then(() => undefined);
+      }, /TRADINGVIEW_ALLOCATION_NOT_ELIGIBLE/],
+      ['revoked execution authorization', async g => { await svc.authority.revokeExternalSignalEntryExecutionAuthorization(paperId, g.target.assignmentId, g.target.authorizationId, 'C3C P stale authority', ownerId); }, /TRADINGVIEW_AUTHORIZATION_NOT_EFFECTIVE/],
+      ['revoked market-policy authorization', async g => { await svc.enforcement.revokeAssignmentMarketPolicyEnforcementAuthorization(paperId, g.target.assignmentId, { authorizationId: g.mi.authorizationId, reason: 'C3C P stale MI authority' }, ownerId); }, /TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT/],
+      ['disabled market-policy enrollment', async g => { await svc.enrollment.disableAssignmentMarketPolicyEnrollment(paperId, g.target.assignmentId, g.mi.generationId, ownerId, 'C3C P stale enrollment'); }, /TRADINGVIEW_MI_ENROLLMENT_INACTIVE|TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT/],
+      ['disabled market-policy runtime', async () => {
+        const rollout = await import('../../services/market-policy-enforcement-rollout.service.js');
+        const current = (await db.query(`SELECT version FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].version as number;
+        await rollout.setMarketPolicyEnforcementRuntimeRollout(false, { expectedVersion: current, reason: 'C3C P stale runtime' }, ownerId);
+        return async () => { const version = (await db.query(`SELECT version FROM "MarketPolicyEnforcementRuntimeRollout" WHERE id=1`)).rows[0].version as number; await rollout.setMarketPolicyEnforcementRuntimeRollout(true, { expectedVersion: version, reason: 'restore after C3C P test' }, ownerId); };
+      }, /TRADINGVIEW_MI_RUNTIME_INACTIVE/],
+      ['dispatch rollout deactivated', async g => {
+        const generationId = (await db.query(`SELECT "rolloutGenerationId" AS id FROM "ExternalSignalEntryExecutionObligation" WHERE id=$1`, [g.obligationId])).rows[0].id as number;
+        const prior = (await db.query(`SELECT * FROM "ExternalSignalBrokerDispatchState" WHERE id=1`)).rows[0];
+        await svc.authority.changeExternalSignalBrokerDispatchState(generationId, 'DEACTIVATE', 'C3C P stale dispatch rollout', ownerId);
+        return async () => {
+          await db.query('BEGIN');
+          try {
+            await db.query(`SET LOCAL session_replication_role='replica'`);
+            await db.query(`UPDATE "ExternalSignalBrokerDispatchState" SET version=$2,"activeRolloutGenerationId"=$3,"activatedAt"=$4,"updatedAt"=$5 WHERE id=$1`, [prior.id, prior.version, prior.activeRolloutGenerationId, prior.activatedAt, prior.updatedAt]);
+            await db.query('COMMIT');
+          } catch (error) { await db.query('ROLLBACK'); throw error; }
+        };
+      }, /TRADINGVIEW_DISPATCH_STATE_CHANGED/],
+      ['execution rollout deactivated', async g => {
+        const prior = (await db.query(`SELECT * FROM "ExternalSignalExecutionRolloutState" WHERE id=1`)).rows[0];
+        await db.query('BEGIN');
+        try {
+          await db.query(`SET LOCAL session_replication_role='replica'`);
+          await db.query(`UPDATE "ExternalSignalExecutionRolloutState" SET version=version+1,"activeRolloutGenerationId"=NULL,"activatedAt"=NULL,"updatedAt"=clock_timestamp() WHERE id=1`);
+          await db.query('COMMIT');
+        } catch (error) { await db.query('ROLLBACK'); throw error; }
+        return async () => {
+          await db.query('BEGIN');
+          try {
+            await db.query(`SET LOCAL session_replication_role='replica'`);
+            await db.query(`UPDATE "ExternalSignalExecutionRolloutState" SET version=$2,"activeRolloutGenerationId"=$3,"activatedAt"=$4,"updatedAt"=$5 WHERE id=$1`, [prior.id, prior.version, prior.activeRolloutGenerationId, prior.activatedAt, prior.updatedAt]);
+            await db.query('COMMIT');
+          } catch (error) { await db.query('ROLLBACK'); throw error; }
+        };
+      }, /TRADINGVIEW_EXECUTION_ROLLOUT_NOT_CURRENT/],
+      ['cycle has accepted EXIT state', async g => { await db.query(`UPDATE "ExternalSignalTradeCycleAccount" SET "pendingExitAcceptedAt"=clock_timestamp() WHERE id=$1`, [g.accountCycleId]); }, /TRADINGVIEW_EXIT_ACCEPTED/],
+      ['a conflicting open position exists', async g => { await db.query(`INSERT INTO "TrackedPosition" (broker,symbol,side,qty,"avgEntryPrice","currentPrice","marketValue","costBasis","unrealizedPnL","unrealizedPnLPct",status,"rawPositionJson","securityId","tradingAccountId","tradingAccountSubscriptionId","updatedAt") VALUES ('alpaca',$1,'long',1,100,100,100,100,0,0,'open','{}',$2,$3,$4,now())`, [g.target.symbol, g.target.securityId, paperId, g.target.assignmentId]); }, /TRADINGVIEW_OPEN_POSITION_EXISTS/],
+    ];
+
+    it.each(staleAuthorityCases)('refuses P after F when %s, without changing permission or fence evidence', async (_label, mutate, pattern) => {
+      const g = await ready(`c3c-stale-${_label}`, { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const fence = await fenceNow(g.intentId);
+      const cleanup = await mutate(g);
+      try {
+        await expect(insertSendPermission(g.intentId, fence)).rejects.toThrow(pattern);
+        expect(await fenceNow(g.intentId)).toBe(fence);
+        expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
+      } finally { if (cleanup) await cleanup(); }
+    }, 120_000);
 
     it('reports a structurally clean historical pair audit without rewriting either consumption', async () => {
       const g = await ready('c3c-audit', { decision: false });

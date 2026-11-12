@@ -182,7 +182,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     it('audits the catalog: every application function pins exactly the trusted path, none is SECURITY DEFINER, ownership is unchanged', async () => {
       expect((await superDb.query(unpinnedFunctionsSql)).rows).toEqual([]);
       const counted = (await superDb.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE l.lanname='plpgsql')::int AS plpgsql, count(*) FILTER (WHERE p.prosecdef)::int AS definers, count(*) FILTER (WHERE pg_get_userbyid(p.proowner)<>'ai_trader_migrator')::int AS foreign_owner, count(*) FILTER (WHERE array_length(p.proconfig,1)<>1)::int AS extra_settings ${applicationFunctions}`)).rows[0];
-      expect(counted).toEqual({ total: 138, plpgsql: 130, definers: 0, foreign_owner: 0, extra_settings: 0 });
+      expect(counted).toEqual({ total: 147, plpgsql: 136, definers: 0, foreign_owner: 0, extra_settings: 0 });
     });
 
     it('closes nested name resolution: every application function that another application function calls is itself pinned', async () => {
@@ -647,14 +647,15 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         expect(cli(['--mode', 'admin-diagnostic'], secUrl()).status).toBe(64);
       });
 
-      it('control 4: a runtime TRUNCATE privilege on an otherwise healthy database is the only finding, and the truncate really bypasses the guard', async () => {
+      it('control 4: a runtime TRUNCATE privilege is the only readiness finding while protected descendants still refuse CASCADE', async () => {
         await sec.query(`GRANT TRUNCATE ON ALL TABLES IN SCHEMA public TO ai_trader_app`);
         try {
           expect((await preflight('BROKER_ENABLED')).findings.map(finding => finding.code)).toEqual(['RUNTIME_ROLE_TRUNCATE_PRIVILEGE']);
           expectRefused(brokerCli(), 'RUNTIME_ROLE_TRUNCATE_PRIVILEGE');
-          // Rolled back: proves the grant defeats the row-level delete guard without changing the disposable database.
+          // New protected descendants make the old parent CASCADE probe fail closed too; the privilege remains
+          // unacceptable because unprotected application tables can still be truncated.
           await runtime.query('BEGIN');
-          try { await runtime.query(`TRUNCATE "EntryExposureClaim" CASCADE`); } finally { await runtime.query('ROLLBACK'); }
+          try { await expect(runtime.query(`TRUNCATE "EntryExposureClaim" CASCADE`)).rejects.toThrow(/append-only|forbidden/); } finally { await runtime.query('ROLLBACK'); }
         } finally { await sec.query(`REVOKE TRUNCATE ON ALL TABLES IN SCHEMA public FROM ai_trader_app`); }
         for (const grant of [`GRANT TRUNCATE ON "EntryExposureClaim" TO ai_trader_app`, `GRANT TRUNCATE ON "Signal" TO PUBLIC`]) {
           try {
@@ -853,7 +854,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         const catalog = await readSecurityCatalog(rowsOf(sec) as never);
         const drift = compareWithManifest(catalog);
         expect(drift, 'regenerate with scripts/generate-database-security-manifest.ts after a migration changes a function or trigger').toEqual({ functionsChanged: [], functionsMissing: [], functionsUnreviewed: [], triggersChanged: [], triggersMissing: [], triggersUnreviewed: [] });
-        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(138);
+        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(147);
         for (const [table, trigger, fn] of CRITICAL_TRIGGERS) expect(SECURITY_MANIFEST.triggers[`${table}/${trigger}`], `${table}/${trigger}`).toMatchObject({ function: `${fn}()`, enabled: 'O', timing: expect.stringMatching(/^(BEFORE|AFTER)$/), scope: expect.stringMatching(/^(ROW|STATEMENT)$/) });
         expect(SECURITY_MANIFEST.migration).toBe((await sec.query(`SELECT migration_name FROM _prisma_migrations ORDER BY migration_name DESC LIMIT 1`)).rows[0].migration_name);
       });

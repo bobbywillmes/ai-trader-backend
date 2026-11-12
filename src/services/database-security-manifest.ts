@@ -260,7 +260,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "d87f18713e9f784450d037288a2a44ff6f8bfa5e49916cd7b0d7820c3eca11d2"
+      "bodySha256": "8dff5e1cd1dc810dc77e0a0c8ad847a215c740a040b442f4adc9a3f8e5667fee"
     },
     "external_signal_broker_dispatch_activation_apply()": {
       "language": "plpgsql",
@@ -341,7 +341,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "0b9eec895f3d88e41f8fcc346529e8275f5ee22fbf344f8b8b093ed0fa1da231"
+      "bodySha256": "fb538f6baa01fbe0356a1ca24287b2fa0488b61b7495e082857f620f4eec43f6"
     },
     "external_signal_broker_send_resolution_guard()": {
       "language": "plpgsql",
@@ -350,7 +350,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "2747701a15c877c454753bb6b79ea73cb95c4d5b43a91d5549b5d21dc40304b2"
+      "bodySha256": "2c26d6d61dbca92715d719eb6fa7c0ad542970f269785a8bbc205de3cc9a29c7"
     },
     "external_signal_broker_worker_claim_guard()": {
       "language": "plpgsql",
@@ -747,6 +747,15 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "strict": false,
       "result": "trigger",
       "bodySha256": "9167dfde34aa0948a8262ebe24f5878ee07c97fd75b33b1cc56134014bd53b97"
+    },
+    "external_signal_validate_current_send_authority(p_intent_id integer, p_decision_id integer)": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "void",
+      "bodySha256": "f75ebea9183b42022c1b3c9923787374532e2493ac70c67735cbd608204e5b03"
     },
     "freeze_live_entry_acceptance_executed_preview()": {
       "language": "plpgsql",

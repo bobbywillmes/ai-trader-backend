@@ -1874,10 +1874,10 @@ model ExternalSignalBrokerSendPermission {
   entryExposureClaim              EntryExposureClaim                        @relation(fields: [entryExposureClaimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   tradingAccount                  TradingAccount                            @relation(fields: [tradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   security                        Security                                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
-  executionAuthorization          ExternalSignalEntryExecutionAuthorization @relation(fields: [executionAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  executionAuthorization          ExternalSignalEntryExecutionAuthorization @relation(fields: [executionAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendPerm_executionAuthorizationId_fkey")
   resolution                      ExternalSignalBrokerSendResolution?
 
-  @@index([tradingAccountId, securityId])
+  @@index([tradingAccountId, securityId], map: "ExternalSignalBrokerSendPerm_account_security_idx")
   @@index([effectiveDeadlineAt])
 }
 

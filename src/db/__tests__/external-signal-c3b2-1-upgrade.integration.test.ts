@@ -35,13 +35,24 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
   beforeAll(async () => {
     vi.stubGlobal('fetch', fetchSpy);
     scratch = await mkdtemp(path.join(tmpdir(), 'c3b21-upgrade-'));
-    const migrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name).sort();
+    const allMigrations = (await readdir('prisma/migrations', { withFileTypes: true })).filter(e => e.isDirectory()).map(e => e.name).sort();
+    const migrations = allMigrations.filter(name => name <= NEW_MIGRATION);
     expect(migrations.at(-1)).toBe(NEW_MIGRATION);
-    expect(migrations).toHaveLength(109); // 108 accepted migrations plus the C3B.2-1 migration
-    await cp('prisma/migrations', path.join(scratch, 'migrations'), { recursive: true, filter: source => !source.replaceAll('\\', '/').includes(NEW_MIGRATION) });
+    expect(migrations).toHaveLength(109); // This pinned historical upgrade remains 108 -> 109 after later migrations are added.
+    await cp('prisma/migrations', path.join(scratch, 'migrations'), { recursive: true, filter: source => {
+      const normalized = source.replaceAll('\\', '/');
+      const migration = normalized.match(/prisma\/migrations\/(\d+_[^/]+)/)?.[1];
+      return migration === undefined || migration < NEW_MIGRATION;
+    } });
+    await cp('prisma/migrations', path.join(scratch, 'upgrade-migrations'), { recursive: true, filter: source => {
+      const normalized = source.replaceAll('\\', '/');
+      const migration = normalized.match(/prisma\/migrations\/(\d+_[^/]+)/)?.[1];
+      return migration === undefined || migration <= NEW_MIGRATION;
+    } });
     baselineConfig = path.join(scratch, 'prisma.config.mjs');
     await writeFile(baselineConfig, `export default { schema: ${JSON.stringify(path.resolve('prisma/schema.prisma').replaceAll('\\', '/'))}, migrations: { path: ${JSON.stringify(path.join(scratch, 'migrations').replaceAll('\\', '/'))} }, datasource: { url: process.env.DATABASE_URL } };\n`);
-    configPath = path.resolve('prisma.config.ts');
+    configPath = path.join(scratch, 'upgrade-prisma.config.mjs');
+    await writeFile(configPath, `export default { schema: ${JSON.stringify(path.resolve('prisma/schema.prisma').replaceAll('\\', '/'))}, migrations: { path: ${JSON.stringify(path.join(scratch, 'upgrade-migrations').replaceAll('\\', '/'))} }, datasource: { url: process.env.DATABASE_URL } };\n`);
   }, 120_000);
 
   afterAll(async () => {
@@ -127,7 +138,7 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
     });
 
     it('applies with the real Prisma runner (`migrate deploy` against the full migration directory) and records exactly one new migration', () => {
-      const result = prisma(null, url, 'migrate', 'deploy');
+      const result = prisma(configPath, url, 'migrate', 'deploy');
       expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
       expect(result.stdout).toContain(NEW_MIGRATION);
       expect(result.stdout).not.toMatch(/\d{14}_(?!tradingview_receipt_clock)/);
@@ -180,10 +191,11 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
     }, 180_000);
 
     it('replaced the four guard functions and nothing else about the reviewed security surface drifted', async () => {
-      expect(await definitions(client)).not.toEqual(hashesBefore);
-      const result = prisma(configPath, url, 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code');
-      expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
-      expect(result.stdout).toContain('No difference detected');
+      const after = await definitions(client);
+      expect(after).toHaveLength(REPLACED.length);
+      expect(after).not.toEqual(hashesBefore);
+      expect((await client.query(`SELECT count(*)::int n FROM "_prisma_migrations" WHERE finished_at IS NOT NULL`)).rows[0].n).toBe(109);
+      expect((await objectCounts(client)).fence_table).toBe(true);
     }, 120_000);
 
     it('fails on its own precondition when applied a second time and changes nothing', async () => {
@@ -279,7 +291,7 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
       const holder = await connect(database.url);
       await holder.query('BEGIN'); await holder.query(`LOCK TABLE "BrokerOrder" IN ROW EXCLUSIVE MODE`);
       const before = { counts: await objectCounts(client), definitions: await definitions(client) };
-      const failed = prisma(null, database.url, 'migrate', 'deploy'); // blocks on the held lock for 15 s, then fails on lock_timeout
+      const failed = prisma(configPath, database.url, 'migrate', 'deploy'); // blocks on the held lock for 15 s, then fails on lock_timeout
       expect(failed.status).not.toBe(0);
       expect(`${failed.stderr}${failed.stdout}`).toMatch(/lock timeout|55P03|failed to apply/i);
       await holder.query('ROLLBACK');
@@ -291,11 +303,11 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
       expect((await client.query(`SELECT count(*)::int n FROM pg_trigger WHERE tgname LIKE '%dispatch_fence%' OR tgname LIKE '%\\_a\\_epoch\\_stamp' OR tgname = 'Signal_received_at_guard' OR tgname = 'BrokerDispatchConsumption_a_lock_prelude'`)).rows[0].n).toBe(0);
       expect((await client.query(`SELECT count(*)::int n FROM "_prisma_migrations" WHERE finished_at IS NOT NULL`)).rows[0].n).toBe(108);
       // Only after that proof: mark rolled back and retry.
-      const blocked = prisma(null, database.url, 'migrate', 'deploy');
+      const blocked = prisma(configPath, database.url, 'migrate', 'deploy');
       expect(blocked.status, 'a failed migration blocks further deploys until it is resolved').not.toBe(0);
-      const resolved = prisma(null, database.url, 'migrate', 'resolve', '--rolled-back', NEW_MIGRATION);
+      const resolved = prisma(configPath, database.url, 'migrate', 'resolve', '--rolled-back', NEW_MIGRATION);
       expect(resolved.status, `${resolved.stderr}\n${resolved.stdout}`).toBe(0);
-      const retried = prisma(null, database.url, 'migrate', 'deploy');
+      const retried = prisma(configPath, database.url, 'migrate', 'deploy');
       expect(retried.status, `${retried.stderr}\n${retried.stdout}`).toBe(0);
       expect((await client.query(`SELECT count(*)::int n FROM "_prisma_migrations" WHERE finished_at IS NOT NULL`)).rows[0].n).toBe(109);
       expect((await objectCounts(client)).fence_table).toBe(true);

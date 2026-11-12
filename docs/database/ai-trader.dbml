@@ -274,6 +274,7 @@ Table ExternalSignalEntryExecutionAuthorization {
   revokedBy User
   obligations ExternalSignalEntryExecutionObligation [not null]
   brokerDispatchConsumptions ExternalSignalBrokerDispatchConsumption [not null]
+  externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission [not null]
 
   indexes {
     (rolloutGenerationId, tradingAccountSubscriptionId, strategySignalBindingId, authorizationSequence) [unique]
@@ -601,6 +602,7 @@ Table TradingAccount {
   positionLifecycleProvenanceDecisions PositionLifecycleProvenanceDecision [not null]
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
+  externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission [not null]
 
   indexes {
     (accountHolderUserId, broker, environment) [unique]
@@ -1105,6 +1107,7 @@ Table Security {
   marketPolicyEnforcementAdmissionAttempts MarketPolicyEnforcementAdmissionAttempt [not null]
   marketPolicyBrokerDispatchDecisions MarketPolicyBrokerDispatchDecision [not null]
   marketPolicyBrokerUnenforcedDispatches MarketPolicyBrokerUnenforcedDispatch [not null]
+  externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission [not null]
 }
 
 Table MomentumUniverseMember {
@@ -1173,6 +1176,8 @@ Table OrderIntent {
   externalSignalBrokerWorkerClaim ExternalSignalBrokerWorkerClaim
   externalSignalBrokerDispatchConsumption ExternalSignalBrokerDispatchConsumption
   externalSignalDispatchFence ExternalSignalDispatchFence
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution
 }
 
 Table ExternalSignalEntryExecutionObligation {
@@ -1198,6 +1203,7 @@ Table ExternalSignalEntryExecutionObligation {
   rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
   brokerWorkerClaim ExternalSignalBrokerWorkerClaim
   brokerDispatchConsumption ExternalSignalBrokerDispatchConsumption
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
 }
 
 Table ExternalSignalBrokerWorkerClaim {
@@ -1215,6 +1221,7 @@ Table ExternalSignalBrokerWorkerClaim {
   accountCycle ExternalSignalTradeCycleAccount [not null]
   rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
   dispatchConsumption ExternalSignalBrokerDispatchConsumption
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
 }
 
 Table ExternalSignalBrokerDispatchConsumption {
@@ -1240,6 +1247,58 @@ Table ExternalSignalBrokerDispatchConsumption {
   rolloutGeneration ExternalSignalExecutionRolloutGeneration [not null]
   executionAuthorization ExternalSignalEntryExecutionAuthorization [not null]
   brokerPostOpportunity OrderIntentBrokerPostOpportunity
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution
+}
+
+Table ExternalSignalBrokerSendPermission {
+  id Int [pk, increment]
+  orderIntentId Int [unique, not null]
+  tradingViewDispatchConsumptionId Int [unique, not null]
+  marketPolicyDispatchConsumptionId Int [unique, not null]
+  marketPolicyDispatchDecisionId Int [unique, not null]
+  executionObligationId Int [unique, not null]
+  workerClaimId Int [unique, not null]
+  entryExposureClaimId Int [unique, not null]
+  tradingAccountId Int [not null]
+  securityId Int [not null]
+  clientOrderId String [not null]
+  executionAuthorizationId Int [not null]
+  effectiveDeadlineAt DateTime [not null]
+  prePermissionFenceVersion BigInt [not null]
+  permittedAt DateTime [not null]
+  evidenceJson Json [not null]
+  orderIntent OrderIntent [not null]
+  tradingViewDispatchConsumption ExternalSignalBrokerDispatchConsumption [not null]
+  marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption [not null]
+  marketPolicyDispatchDecision MarketPolicyBrokerDispatchDecision [not null]
+  executionObligation ExternalSignalEntryExecutionObligation [not null]
+  workerClaim ExternalSignalBrokerWorkerClaim [not null]
+  entryExposureClaim EntryExposureClaim [not null]
+  tradingAccount TradingAccount [not null]
+  security Security [not null]
+  executionAuthorization ExternalSignalEntryExecutionAuthorization [not null]
+  resolution ExternalSignalBrokerSendResolution
+
+  Note: 'C3C.1A database-only send-permission evidence. No runtime writer exists in this checkpoint.
+The database guard stamps permittedAt/effectiveDeadlineAt and advances the dispatch fence exactly once.'
+}
+
+Table ExternalSignalBrokerSendResolution {
+  id Int [pk, increment]
+  orderIntentId Int [unique, not null]
+  permissionId Int [unique]
+  tradingViewDispatchConsumptionId Int [unique, not null]
+  marketPolicyDispatchConsumptionId Int [unique, not null]
+  outcome ExternalSignalBrokerSendResolutionOutcome [not null]
+  resolvedAt DateTime [not null]
+  evidenceJson Json [not null]
+  orderIntent OrderIntent [not null]
+  permission ExternalSignalBrokerSendPermission
+  tradingViewDispatchConsumption ExternalSignalBrokerDispatchConsumption [not null]
+  marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption [not null]
+
+  Note: 'C3C.1A immutable terminal identity. No runtime resolution writer exists in this checkpoint.'
 }
 
 Table BrokerOrder {
@@ -1285,6 +1344,7 @@ Table EntryExposureClaim {
   orderIntent OrderIntent
   trackedPosition TrackedPosition
   events EntryExposureClaimEvent [not null]
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
 }
 
 Table EntryExposureClaimEvent {
@@ -2909,6 +2969,7 @@ Table MarketPolicyBrokerDispatchDecision {
   marketRegimeAssessment MarketRegimeAssessment
   gates MarketPolicyBrokerDispatchGate [not null]
   consumption MarketPolicyBrokerDispatchConsumption
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
 
   indexes {
     (orderIntentId, dispatchSequence) [unique]
@@ -2952,6 +3013,8 @@ Table MarketPolicyBrokerDispatchConsumption {
   orderIntent OrderIntent [not null]
   brokerPostOpportunity OrderIntentBrokerPostOpportunity
   externalSignalDispatchConsumption ExternalSignalBrokerDispatchConsumption
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution
 }
 
 Table MarketPolicyBrokerUnenforcedDispatch {
@@ -3165,6 +3228,11 @@ Enum ExternalSignalEntryExecutionAuthorizationStatus {
   AUTHORIZED
   REVOKED
   INVALIDATED
+}
+
+Enum ExternalSignalBrokerSendResolutionOutcome {
+  CONSUMED
+  WITHDRAWN_NEVER_SENT
 }
 
 Enum ExternalSignalTradeCycleStatus {
@@ -4063,6 +4131,34 @@ Ref: ExternalSignalBrokerDispatchConsumption.rolloutGenerationId > ExternalSigna
 Ref: ExternalSignalBrokerDispatchConsumption.executionAuthorizationId > ExternalSignalEntryExecutionAuthorization.id [delete: Restrict]
 
 Ref: ExternalSignalBrokerDispatchConsumption.brokerPostOpportunityId > OrderIntentBrokerPostOpportunity.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.tradingViewDispatchConsumptionId - ExternalSignalBrokerDispatchConsumption.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.marketPolicyDispatchConsumptionId - MarketPolicyBrokerDispatchConsumption.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.marketPolicyDispatchDecisionId - MarketPolicyBrokerDispatchDecision.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.executionObligationId - ExternalSignalEntryExecutionObligation.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.workerClaimId - ExternalSignalBrokerWorkerClaim.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.entryExposureClaimId - EntryExposureClaim.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.tradingAccountId > TradingAccount.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.securityId > Security.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendPermission.executionAuthorizationId > ExternalSignalEntryExecutionAuthorization.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendResolution.orderIntentId - OrderIntent.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendResolution.permissionId - ExternalSignalBrokerSendPermission.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendResolution.tradingViewDispatchConsumptionId - ExternalSignalBrokerDispatchConsumption.id [delete: Restrict]
+
+Ref: ExternalSignalBrokerSendResolution.marketPolicyDispatchConsumptionId - MarketPolicyBrokerDispatchConsumption.id [delete: Restrict]
 
 Ref: BrokerOrder.securityId > Security.id
 

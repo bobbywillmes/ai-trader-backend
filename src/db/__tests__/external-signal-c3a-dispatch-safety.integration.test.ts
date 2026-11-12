@@ -759,6 +759,9 @@ const matrix = (pairs: Array<[Isolation, Isolation]>) => pairs.flatMap(([eventIs
       for (const name of names.filter(candidate => candidate >= C3A_MIGRATION)) {
         const sql = await readFile(`prisma/migrations/${name}/migration.sql`, 'utf8');
         if (/CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)/i.test(sql) && !sql.includes('application functions still lack the trusted search_path')) unrestated.push(name);
+        if (/CREATE\s+(OR\s+REPLACE\s+)?(FUNCTION|PROCEDURE)/i.test(sql)) {
+          expect(/d\.deptype\s*=\s*'e'/.test(sql), `${name} must exclude extension-owned functions from both search-path audit passes`).toBe(true);
+        }
         expect(/SECURITY\s+DEFINER/i.test(sql.replace(/--.*$/gm, '')), `${name} must not introduce SECURITY DEFINER`).toBe(false);
       }
       expect(unrestated).toEqual([]);
