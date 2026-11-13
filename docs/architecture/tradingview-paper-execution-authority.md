@@ -631,6 +631,26 @@ and assignment operational booleans; joining the broader configuration graph (wh
 guaranteeing that credential ciphertext and tokens cannot enter the DTO) needs a reviewed,
 purpose-built readiness projection rather than expanding this checkpoint's authority DTOs.
 
+## C3C.1A send-permission corrective restrictions
+
+Transaction P is database-restricted to `READ COMMITTED`. Its current-state and open-position
+queries must receive a fresh statement snapshot after the canonical authority locks; a future
+writer must not raise the isolation level. This is a narrow fail-closed requirement, not a claim
+that isolation eliminates the open-position race. C3C.1B must retain account/security exposure
+exclusivity and recheck authoritative position state on the eventual executable entry path.
+
+The shared F/P authority validator retains the Market Intelligence authorization row lock but
+does not lock `StrategyMarketPolicyRevision` or `StrategyMarketPolicy`. That authorization lock
+serializes revocation and supersession, while avoiding the inverse policy-activation lock order.
+Both F and P sample `clock_timestamp()` only after their authority and dispatch-graph locks are
+acquired.
+
+Lock-order carry-forward: a transaction must not mutate `EntryExposureClaim` or an
+`EntryExposureClaimEvent` and then acquire `OrderIntent FOR UPDATE`. That unsupported
+claim-first/intent-second sequence can deadlock with broker-evidence fencing. The existing
+position-tracking flow must be corrected before TradingView broker-evidence quarantine is
+relaxed; this checkpoint does not perform that refactor.
+
 **Still hard-disabled before C3C.** No runtime path imports or calls
 `finalizeTradingViewDispatch()` or `processTradingViewOrderIntentForC2()`; no scheduler,
 observer or worker job was added; no broker dispatch, activation control, exposure-release

@@ -51,6 +51,7 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
     admission: typeof import('../../services/external-signal-entry-admission.service.js');
     dispatch: typeof import('../../services/market-policy-broker-dispatch.service.js');
     ingestion: typeof import('../../services/external-signal-ingestion.service.js');
+    policy: typeof import('../../services/strategy-market-policy.service.js');
     prisma: (typeof import('../prisma.js'))['prisma'];
   };
   const open: Client[] = [];
@@ -140,7 +141,7 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
   }
   const counts = async (intentId: number) => (await db.query(`SELECT (SELECT count(*)::int FROM "ExternalSignalBrokerDispatchConsumption" WHERE "orderIntentId"=$1) AS tv, (SELECT count(*)::int FROM "MarketPolicyBrokerDispatchConsumption" WHERE "orderIntentId"=$1) AS mi`, [intentId])).rows[0] as { tv: number; mi: number };
   const fenceNow = async (intentId: number) => Number((await db.query(`SELECT version FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1`, [intentId])).rows[0].version);
-  const insertSendPermission = (intentId: number, expectedFence: number) => db.query(`
+  const insertSendPermissionWith = (client: Client, intentId: number, expectedFence: number) => client.query(`
     INSERT INTO "ExternalSignalBrokerSendPermission"
       ("orderIntentId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId","marketPolicyDispatchDecisionId",
        "executionObligationId","workerClaimId","entryExposureClaimId","tradingAccountId","securityId","clientOrderId",
@@ -155,6 +156,7 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
     JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId"
     JOIN "MarketPolicyBrokerDispatchDecision" d ON d.id=mi."decisionId"
     WHERE i.id=$1 RETURNING *`, [intentId, expectedFence]);
+  const insertSendPermission = (intentId: number, expectedFence: number) => insertSendPermissionWith(db, intentId, expectedFence);
   const refused = async (g: Ready, pair: Pair, pattern: RegExp) => {
     expect(pair.ok, `${g.intentId}: the pair must be refused`).toBe(false);
     if (!pair.ok) expect(message(pair.error)).toMatch(pattern);
@@ -187,6 +189,7 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       admission: await import('../../services/external-signal-entry-admission.service.js'),
       dispatch: await import('../../services/market-policy-broker-dispatch.service.js'),
       ingestion: await import('../../services/external-signal-ingestion.service.js'),
+      policy: await import('../../services/strategy-market-policy.service.js'),
       prisma: (await import('../prisma.js')).prisma,
     };
     // Market Intelligence: an ACTIVE policy for the fixture strategy, the runtime rollout and a fresh regime composition.
@@ -412,6 +415,51 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       expect(await fenceNow(g.intentId)).toBe(after);
     });
 
+    it('requires READ COMMITTED so a stale higher-isolation snapshot cannot hide a newly committed open position', async () => {
+      const g = await ready('c3c-read-committed-only', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const before = await fenceNow(g.intentId);
+      const client = await connect();
+      await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+      try {
+        await expect(client.query(`
+          INSERT INTO "ExternalSignalBrokerSendPermission"
+            ("orderIntentId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId","marketPolicyDispatchDecisionId",
+             "executionObligationId","workerClaimId","entryExposureClaimId","tradingAccountId","securityId","clientOrderId",
+             "executionAuthorizationId","prePermissionFenceVersion","evidenceJson")
+          SELECT i.id,tv.id,mi.id,d.id,o.id,wc.id,c.id,i."tradingAccountId",ac."securityId",o."clientOrderId",o."authorizationId",$2,'{}'
+          FROM "OrderIntent" i JOIN "ExternalSignalEntryExecutionObligation" o ON o."orderIntentId"=i.id
+          JOIN "ExternalSignalBrokerWorkerClaim" wc ON wc."orderIntentId"=i.id JOIN "EntryExposureClaim" c ON c."orderIntentId"=i.id
+          JOIN "ExternalSignalTradeCycleAccount" ac ON ac.id=o."accountCycleId" JOIN "ExternalSignalBrokerDispatchConsumption" tv ON tv."orderIntentId"=i.id
+          JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId" JOIN "MarketPolicyBrokerDispatchDecision" d ON d.id=mi."decisionId"
+          WHERE i.id=$1`, [g.intentId, before])).rejects.toThrow(/TRADINGVIEW_PERMISSION_REQUIRES_READ_COMMITTED/);
+      } finally { await client.query('ROLLBACK').catch(() => undefined); }
+      expect(await fenceNow(g.intentId)).toBe(before);
+      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
+    });
+
+    it('samples the P deadline after authority locks and refuses when the wait consumes the five-second margin', async () => {
+      const g = await ready('c3c-p-deadline-after-lock', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const before = await fenceNow(g.intentId);
+      await db.query('BEGIN');
+      await db.query(`SET LOCAL session_replication_role='replica'`);
+      await db.query(`UPDATE "MarketPolicyBrokerDispatchDecision" SET "dispatchExpiresAt"=clock_timestamp()+interval '6 seconds', "validUntil"=clock_timestamp()+interval '6 seconds' WHERE id=(SELECT mi."decisionId" FROM "ExternalSignalBrokerDispatchConsumption" tv JOIN "MarketPolicyBrokerDispatchConsumption" mi ON mi.id=tv."marketPolicyDispatchConsumptionId" WHERE tv."orderIntentId"=$1)`, [g.intentId]);
+      await db.query('COMMIT');
+      const holder = await connect();
+      await holder.query('BEGIN');
+      await holder.query(`SELECT id FROM "ExternalSignalBrokerWorkerClaim" WHERE id=$1 FOR NO KEY UPDATE`, [g.workerClaimId]);
+      const contender = await connect();
+      const base = await waiters();
+      const permission = insertSendPermissionWith(contender, g.intentId, before);
+      await untilWaiters(base + 1, 'P queued behind its authority graph');
+      await sleep(2200);
+      await holder.query('ROLLBACK');
+      await expect(permission).rejects.toThrow(/TRADINGVIEW_DECISION_NOT_AUTHORIZED|TRADINGVIEW_PERMISSION_DEADLINE_INSUFFICIENT/);
+      expect(await fenceNow(g.intentId)).toBe(before);
+      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
+    }, 120_000);
+
     it('keeps permission rows append-only and refuses both resolution outcomes without a fence increment', async () => {
       const g = await ready('c3c-resolution', { decision: false });
       await svc.worker.finalizeTradingViewDispatch(g.intentId);
@@ -505,6 +553,54 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
         expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
       } finally { if (cleanup) await cleanup(); }
     }, 120_000);
+
+    async function prepareNextPolicy(label: string) {
+      return svc.policy.prepareStrategyMarketPolicyRevision(fx.strategyId, ownerId, label);
+    }
+
+    it('P may commit first and a subsequent policy activation proceeds without 40P01', async () => {
+      const g = await ready('c3c-policy-p-first', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const next = await prepareNextPolicy('C3C P-first activation');
+      await insertSendPermission(g.intentId, await fenceNow(g.intentId));
+      await expect(svc.policy.activateStrategyMarketPolicyRevision(fx.strategyId, next.id, next.configurationFingerprint, ownerId)).resolves.toMatchObject({ id: next.id, status: 'ACTIVE' });
+      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(1);
+      expect(await newDeadlocks()).toBe(0);
+    }, 180_000);
+
+    it('policy activation may commit first and P then refuses the retired revision without a row or fence advancement', async () => {
+      const g = await ready('c3c-policy-activation-first', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const fence = await fenceNow(g.intentId);
+      const next = await prepareNextPolicy('C3C activation-first');
+      await svc.policy.activateStrategyMarketPolicyRevision(fx.strategyId, next.id, next.configurationFingerprint, ownerId);
+      await expect(insertSendPermission(g.intentId, fence)).rejects.toThrow(/TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT|TRADINGVIEW_MI_ENROLLMENT_INACTIVE|TRADINGVIEW_MI_POLICY_REVISION_INACTIVE/);
+      expect(await fenceNow(g.intentId)).toBe(fence);
+      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
+      expect(await newDeadlocks()).toBe(0);
+    }, 180_000);
+
+    it('concurrent P and policy activation serialize without 40P01 and never permit stale authority after activation wins', async () => {
+      const g = await ready('c3c-policy-concurrent', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const fence = await fenceNow(g.intentId);
+      const next = await prepareNextPolicy('C3C concurrent activation');
+      const [permission, activation] = await Promise.allSettled([
+        insertSendPermission(g.intentId, fence),
+        svc.policy.activateStrategyMarketPolicyRevision(fx.strategyId, next.id, next.configurationFingerprint, ownerId),
+      ]);
+      expect(activation.status, activation.status === 'rejected' ? message(activation.reason) : '').toBe('fulfilled');
+      if (permission.status === 'rejected') {
+        expect(codeOf(permission.reason)).not.toBe('40P01');
+        expect(message(permission.reason)).toMatch(/TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT|TRADINGVIEW_MI_ENROLLMENT_INACTIVE|TRADINGVIEW_MI_POLICY_REVISION_INACTIVE/);
+        expect(await fenceNow(g.intentId)).toBe(fence);
+        expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
+      } else {
+        expect(await fenceNow(g.intentId)).toBe(fence + 1);
+        expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(1);
+      }
+      expect(await newDeadlocks()).toBe(0);
+    }, 180_000);
 
     it('reports a structurally clean historical pair audit without rewriting either consumption', async () => {
       const g = await ready('c3c-audit', { decision: false });

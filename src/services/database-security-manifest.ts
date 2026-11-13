@@ -260,7 +260,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "8dff5e1cd1dc810dc77e0a0c8ad847a215c740a040b442f4adc9a3f8e5667fee"
+      "bodySha256": "89b467a1fdaf5eeeabaa199924091d5e106acf315e93de8e0ee77f69df89f24b"
     },
     "external_signal_broker_dispatch_activation_apply()": {
       "language": "plpgsql",
@@ -341,7 +341,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "fb538f6baa01fbe0356a1ca24287b2fa0488b61b7495e082857f620f4eec43f6"
+      "bodySha256": "e7ceb0babf730b8e1b6af230bff2f76df9c311354c782d9a79b4b62aec265c49"
     },
     "external_signal_broker_send_resolution_guard()": {
       "language": "plpgsql",
@@ -755,7 +755,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "void",
-      "bodySha256": "f75ebea9183b42022c1b3c9923787374532e2493ac70c67735cbd608204e5b03"
+      "bodySha256": "6e4a606dbaf8d4839f8f79f32cb7867a82b777ee6bca73d9b7d7539b81133142"
     },
     "freeze_live_entry_acceptance_executed_preview()": {
       "language": "plpgsql",

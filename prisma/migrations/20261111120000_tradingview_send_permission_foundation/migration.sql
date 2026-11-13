@@ -160,7 +160,7 @@ DECLARE
   mi_rollout "MarketPolicyEnforcementRuntimeRollout"%ROWTYPE;
   mi_generation "AssignmentMarketPolicyEnrollmentGeneration"%ROWTYPE;
   mi_auth "AssignmentMarketPolicyEnforcementAuthorization"%ROWTYPE;
-  flag boolean; stamp timestamptz := clock_timestamp();
+  flag boolean; stamp timestamptz;
 BEGIN
   SELECT * INTO o FROM "ExternalSignalEntryExecutionObligation" WHERE "orderIntentId"=p_intent_id;
   SELECT * INTO i FROM "OrderIntent" WHERE id=p_intent_id;
@@ -219,8 +219,12 @@ BEGIN
   IF mi_auth.id IS NULL OR mi_auth.status<>'AUTHORIZED' OR mi_auth."enrollmentGenerationId"<>mi_generation.id OR mi_auth."authorizationFingerprint" IS DISTINCT FROM mo."authorizationFingerprint"
      OR mi_auth."authorityVersion" IS DISTINCT FROM mo."authorityVersion" OR mi_auth."subscriptionId" IS DISTINCT FROM sub.id OR mi_auth."securityId" IS DISTINCT FROM sub."securityId"
      OR mi_auth.id IS DISTINCT FROM (SELECT a.id FROM "AssignmentMarketPolicyEnforcementAuthorization" a WHERE a."accountSubscriptionId"=tas.id ORDER BY a.id DESC LIMIT 1) THEN RAISE EXCEPTION 'TRADINGVIEW_MI_AUTHORIZATION_NOT_CURRENT'; END IF;
-  SELECT r.status='ACTIVE' AND p."strategyId"=sub."strategyId" INTO flag FROM "StrategyMarketPolicyRevision" r JOIN "StrategyMarketPolicy" p ON p.id=r."policyId" WHERE r.id=mo."policyRevisionId" FOR SHARE;
+  -- The MI authorization row above serializes authority invalidation. Do not lock the policy rows here:
+  -- activation owns StrategyMarketPolicy before retiring the revision, so taking these locks after the
+  -- authorization lock would invert activation's order and can deadlock.
+  SELECT r.status='ACTIVE' AND p."strategyId"=sub."strategyId" INTO flag FROM "StrategyMarketPolicyRevision" r JOIN "StrategyMarketPolicy" p ON p.id=r."policyId" WHERE r.id=mo."policyRevisionId";
   IF NOT coalesce(flag,false) THEN RAISE EXCEPTION 'TRADINGVIEW_MI_POLICY_REVISION_INACTIVE'; END IF;
+  stamp := clock_timestamp();
   IF d.id IS DISTINCT FROM (SELECT x.id FROM "MarketPolicyBrokerDispatchDecision" x WHERE x."orderIntentId"=p_intent_id ORDER BY x."dispatchSequence" DESC,x.id DESC LIMIT 1)
      OR d.outcome<>'ALLOWED' OR d."dispatchDisposition"<>'DISPATCH_AUTHORIZED' OR d."dispatchExpiresAt" IS NULL OR d."validUntil" IS NULL
      OR stamp>=d."dispatchExpiresAt" OR stamp>=d."validUntil" THEN RAISE EXCEPTION 'TRADINGVIEW_DECISION_NOT_AUTHORIZED'; END IF;
@@ -232,7 +236,7 @@ DECLARE definition text;
 BEGIN
   SELECT pg_get_functiondef('external_signal_broker_consumption_guard()'::regprocedure) INTO definition;
   IF definition NOT LIKE '%stamp := clock_timestamp();%' THEN RAISE EXCEPTION 'unexpected C3B.2 finalization guard clock'; END IF;
-  definition := replace(definition, 'stamp := clock_timestamp();', 'stamp := clock_timestamp(); PERFORM external_signal_validate_current_send_authority(NEW."orderIntentId", mi."decisionId");');
+  definition := replace(definition, 'stamp := clock_timestamp();', 'PERFORM external_signal_validate_current_send_authority(NEW."orderIntentId", mi."decisionId"); stamp := clock_timestamp();');
   EXECUTE definition;
 END $$;
 
@@ -256,6 +260,9 @@ DECLARE
   effective_deadline timestamptz;
 BEGIN
   IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'TradingView broker send permission is immutable'; END IF;
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'TRADINGVIEW_PERMISSION_REQUIRES_READ_COMMITTED';
+  END IF;
   IF NEW."permittedAt" IS NOT NULL OR NEW."effectiveDeadlineAt" IS NOT NULL THEN
     RAISE EXCEPTION 'permittedAt and effectiveDeadlineAt are database-stamped and cannot be supplied';
   END IF;
@@ -272,9 +279,8 @@ BEGIN
   SELECT * INTO ac FROM "ExternalSignalTradeCycleAccount" WHERE id=o."accountCycleId";
   SELECT * INTO auth FROM "ExternalSignalEntryExecutionAuthorization" WHERE id=NEW."executionAuthorizationId";
   SELECT * INTO ds FROM "ExternalSignalBrokerDispatchState" WHERE id=1;
-  stamp := clock_timestamp();
-
   PERFORM external_signal_validate_current_send_authority(NEW."orderIntentId", d.id);
+  stamp := clock_timestamp();
 
   IF NEW."prePermissionFenceVersion" IS NULL OR fence_v IS DISTINCT FROM NEW."prePermissionFenceVersion" THEN
     RAISE EXCEPTION 'TradingView permission dispatch fence version is stale or missing (supplied %, current %)', NEW."prePermissionFenceVersion", fence_v;
