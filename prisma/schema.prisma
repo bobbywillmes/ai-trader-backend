@@ -932,6 +932,7 @@ model TradingAccount {
   createdAt                           DateTime                             @default(now())
   updatedAt                           DateTime                             @updatedAt
   externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission[]
+  entryExposureClaimEvents            EntryExposureClaimEvent[]
 
   @@unique([accountHolderUserId, broker, environment], map: "TradingAccount_holder_broker_environment_key")
   @@unique([broker, environment, brokerAccountId])
@@ -1752,6 +1753,7 @@ model OrderIntent {
   externalSignalDispatchFence             ExternalSignalDispatchFence?
   externalSignalBrokerSendPermission      ExternalSignalBrokerSendPermission?
   externalSignalBrokerSendResolution      ExternalSignalBrokerSendResolution?
+  externalSignalAdapterMarkers            EntryExposureClaimEvent[]
 
   @@index([trackedPositionId])
   @@index([tradingAccountId])
@@ -1876,12 +1878,14 @@ model ExternalSignalBrokerSendPermission {
   security                        Security                                  @relation(fields: [securityId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   executionAuthorization          ExternalSignalEntryExecutionAuthorization @relation(fields: [executionAuthorizationId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendPerm_executionAuthorizationId_fkey")
   resolution                      ExternalSignalBrokerSendResolution?
+  adapterInvocationMarker         EntryExposureClaimEvent?
 
   @@index([tradingAccountId, securityId], map: "ExternalSignalBrokerSendPerm_account_security_idx")
   @@index([effectiveDeadlineAt])
 }
 
-/// C3C.1A immutable terminal identity. No runtime resolution writer exists in this checkpoint.
+/// C3C.1B.1 immutable terminal identity. Only atomic CONSUMED/adapter-marker evidence is database-permitted;
+/// no runtime resolution writer exists and withdrawal remains disabled in this checkpoint.
 model ExternalSignalBrokerSendResolution {
   id                                Int                                       @id @default(autoincrement())
   orderIntentId                     Int                                       @unique
@@ -1891,11 +1895,13 @@ model ExternalSignalBrokerSendResolution {
   outcome                           ExternalSignalBrokerSendResolutionOutcome
   resolvedAt                        DateTime                                  @db.Timestamptz(6)
   evidenceJson                      Json
+  preResolutionFenceVersion         BigInt
 
   orderIntent                     OrderIntent                             @relation(fields: [orderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   permission                      ExternalSignalBrokerSendPermission?     @relation(fields: [permissionId], references: [id], onDelete: Restrict, onUpdate: Restrict)
   tradingViewDispatchConsumption  ExternalSignalBrokerDispatchConsumption @relation(fields: [tradingViewDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendRes_tvConsumptionId_fkey")
   marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption   @relation(fields: [marketPolicyDispatchConsumptionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "ExternalSignalBrokerSendRes_miConsumptionId_fkey")
+  adapterInvocationMarker         EntryExposureClaimEvent?
 }
 
 model BrokerOrder {
@@ -1965,13 +1971,24 @@ model EntryExposureClaim {
 }
 
 model EntryExposureClaimEvent {
-  id           Int      @id @default(autoincrement())
-  claimId      Int
-  eventType    String
-  evidenceJson Json
-  createdAt    DateTime @default(now())
+  id                                   Int      @id @default(autoincrement())
+  claimId                              Int
+  eventType                            String
+  evidenceJson                         Json
+  createdAt                            DateTime @default(now())
+  externalSignalBrokerProtocol         String?
+  externalSignalBrokerSendResolutionId Int?     @unique(map: "EntryExposureClaimEvent_c3c_resolution_key")
+  externalSignalBrokerSendPermissionId Int?     @unique(map: "EntryExposureClaimEvent_c3c_permission_key")
+  externalSignalOrderIntentId          Int?
+  externalSignalTradingAccountId       Int?
+  externalSignalClientOrderId          String?
+  preAdapterFenceVersion               BigInt?
 
-  claim EntryExposureClaim @relation(fields: [claimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  claim                              EntryExposureClaim                  @relation(fields: [claimId], references: [id], onDelete: Restrict, onUpdate: Restrict)
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution? @relation(fields: [externalSignalBrokerSendResolutionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EntryExposureClaimEvent_c3c_resolution_fkey")
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission? @relation(fields: [externalSignalBrokerSendPermissionId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EntryExposureClaimEvent_c3c_permission_fkey")
+  externalSignalOrderIntent          OrderIntent?                        @relation(fields: [externalSignalOrderIntentId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EntryExposureClaimEvent_c3c_intent_fkey")
+  externalSignalTradingAccount       TradingAccount?                     @relation(fields: [externalSignalTradingAccountId], references: [id], onDelete: Restrict, onUpdate: Restrict, map: "EntryExposureClaimEvent_c3c_account_fkey")
 
   @@index([claimId, createdAt])
 }

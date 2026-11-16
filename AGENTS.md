@@ -412,6 +412,14 @@ create broker evidence. Never relax the complete marked-intent quarantine until 
 combined claim transaction and deferred lifecycle work are implemented. See
 `docs/architecture/tradingview-paper-execution-authority.md`.
 
+Phase 4A.2C3C.1B.1 adds the broker-inert Transaction A database contract. Exactly one
+`CONSUMED` send resolution and its relationally identified C3C
+`ADAPTER_INVOCATION_STARTED` marker must commit together under current authority and the canonical
+dispatch graph locks. The marker supplies the existing exact `+2` fence advancement; the resolution
+does not advance the fence. Withdrawal, broker evidence, runtime writers, adapter capability and
+transport remain disabled. A committed pair means possible delivery and permanently prohibits a
+second POST. See `docs/architecture/tradingview-paper-execution-authority.md`.
+
 Phase 2E associates ENTRY_LONG routes with independently evaluated, immutable
 `SIGNAL_ROUTE_MARKET_ELIGIBILITY_V1` attempts. These append-only attempts link exact
 Phase 2D decisions without changing SignalEvaluation gates or outcomes. Failures are

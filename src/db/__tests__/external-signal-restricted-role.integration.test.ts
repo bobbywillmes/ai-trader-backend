@@ -182,7 +182,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
     it('audits the catalog: every application function pins exactly the trusted path, none is SECURITY DEFINER, ownership is unchanged', async () => {
       expect((await superDb.query(unpinnedFunctionsSql)).rows).toEqual([]);
       const counted = (await superDb.query(`SELECT count(*)::int AS total, count(*) FILTER (WHERE l.lanname='plpgsql')::int AS plpgsql, count(*) FILTER (WHERE p.prosecdef)::int AS definers, count(*) FILTER (WHERE pg_get_userbyid(p.proowner)<>'ai_trader_migrator')::int AS foreign_owner, count(*) FILTER (WHERE array_length(p.proconfig,1)<>1)::int AS extra_settings ${applicationFunctions}`)).rows[0];
-      expect(counted).toEqual({ total: 147, plpgsql: 136, definers: 0, foreign_owner: 0, extra_settings: 0 });
+      expect(counted).toEqual({ total: 149, plpgsql: 138, definers: 0, foreign_owner: 0, extra_settings: 0 });
     });
 
     it('closes nested name resolution: every application function that another application function calls is itself pinned', async () => {
@@ -854,7 +854,7 @@ const GUARDS = ['external_signal_exposure_claim_c2_guard()', 'external_signal_or
         const catalog = await readSecurityCatalog(rowsOf(sec) as never);
         const drift = compareWithManifest(catalog);
         expect(drift, 'regenerate with scripts/generate-database-security-manifest.ts after a migration changes a function or trigger').toEqual({ functionsChanged: [], functionsMissing: [], functionsUnreviewed: [], triggersChanged: [], triggersMissing: [], triggersUnreviewed: [] });
-        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(147);
+        expect(Object.keys(SECURITY_MANIFEST.functions)).toHaveLength(149);
         for (const [table, trigger, fn] of CRITICAL_TRIGGERS) expect(SECURITY_MANIFEST.triggers[`${table}/${trigger}`], `${table}/${trigger}`).toMatchObject({ function: `${fn}()`, enabled: 'O', timing: expect.stringMatching(/^(BEFORE|AFTER)$/), scope: expect.stringMatching(/^(ROW|STATEMENT)$/) });
         expect(SECURITY_MANIFEST.migration).toBe((await sec.query(`SELECT migration_name FROM _prisma_migrations ORDER BY migration_name DESC LIMIT 1`)).rows[0].migration_name);
       });

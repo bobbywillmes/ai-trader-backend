@@ -86,7 +86,7 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
   const snapshot = async (client: Client) => {
     const out: Record<string, string> = {};
     // Every historical row, whole, in key order. Signal is compared without the new column: that column is the migration's own addition.
-    for (const table of SNAPSHOT_TABLES) out[table] = (await client.query(`SELECT coalesce(md5(string_agg((to_jsonb(t) - 'receivedAt')::text, '|' ORDER BY id)), '') AS h FROM "${table}" t`)).rows[0].h;
+    for (const table of SNAPSHOT_TABLES) out[table] = (await client.query(`SELECT coalesce(md5(string_agg((to_jsonb(t) - ARRAY['receivedAt','externalSignalBrokerProtocol','externalSignalBrokerSendResolutionId','externalSignalBrokerSendPermissionId','externalSignalOrderIntentId','externalSignalTradingAccountId','externalSignalClientOrderId','preAdapterFenceVersion'])::text, '|' ORDER BY id)), '') AS h FROM "${table}" t`)).rows[0].h;
     return out;
   };
 
@@ -142,6 +142,18 @@ const REPLACED = ['external_signal_broker_consumption_guard', 'external_signal_b
       expect(result.status, `${result.stderr}\n${result.stdout}`).toBe(0);
       expect(result.stdout).toContain(NEW_MIGRATION);
       expect(result.stdout).not.toMatch(/\d{14}_(?!tradingview_receipt_clock)/);
+      // This historical 108 -> 109 checkpoint intentionally stops before C3C.1B.1, while the generated
+      // Prisma client necessarily reflects today's nullable EntryExposureClaimEvent columns. Add only those
+      // nullable client-compatibility columns to this disposable historical database; the dedicated C3C.1B.1
+      // upgrade suite proves the real 110 -> 111 migration and its constraints.
+      return client.query(`ALTER TABLE "EntryExposureClaimEvent"
+        ADD COLUMN "externalSignalBrokerProtocol" TEXT,
+        ADD COLUMN "externalSignalBrokerSendResolutionId" INTEGER,
+        ADD COLUMN "externalSignalBrokerSendPermissionId" INTEGER,
+        ADD COLUMN "externalSignalOrderIntentId" INTEGER,
+        ADD COLUMN "externalSignalTradingAccountId" INTEGER,
+        ADD COLUMN "externalSignalClientOrderId" TEXT,
+        ADD COLUMN "preAdapterFenceVersion" BIGINT`);
     }, 180_000);
 
     it('gave every historical marked intent a version-1 fence, no unmarked intent a fence, and produced no missing or unexpected fence', async () => {

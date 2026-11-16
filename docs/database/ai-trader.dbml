@@ -603,6 +603,7 @@ Table TradingAccount {
   createdAt DateTime [default: `now()`, not null]
   updatedAt DateTime [not null]
   externalSignalBrokerSendPermissions ExternalSignalBrokerSendPermission [not null]
+  entryExposureClaimEvents EntryExposureClaimEvent [not null]
 
   indexes {
     (accountHolderUserId, broker, environment) [unique]
@@ -1178,6 +1179,7 @@ Table OrderIntent {
   externalSignalDispatchFence ExternalSignalDispatchFence
   externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
   externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution
+  externalSignalAdapterMarkers EntryExposureClaimEvent [not null]
 }
 
 Table ExternalSignalEntryExecutionObligation {
@@ -1279,6 +1281,7 @@ Table ExternalSignalBrokerSendPermission {
   security Security [not null]
   executionAuthorization ExternalSignalEntryExecutionAuthorization [not null]
   resolution ExternalSignalBrokerSendResolution
+  adapterInvocationMarker EntryExposureClaimEvent
 
   Note: 'C3C.1A database-only send-permission evidence. No runtime writer exists in this checkpoint.
 The database guard stamps permittedAt/effectiveDeadlineAt and advances the dispatch fence exactly once.'
@@ -1293,10 +1296,12 @@ Table ExternalSignalBrokerSendResolution {
   outcome ExternalSignalBrokerSendResolutionOutcome [not null]
   resolvedAt DateTime [not null]
   evidenceJson Json [not null]
+  preResolutionFenceVersion BigInt [not null]
   orderIntent OrderIntent [not null]
   permission ExternalSignalBrokerSendPermission
   tradingViewDispatchConsumption ExternalSignalBrokerDispatchConsumption [not null]
   marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption [not null]
+  adapterInvocationMarker EntryExposureClaimEvent
 
   Note: 'C3C.1A immutable terminal identity. No runtime resolution writer exists in this checkpoint.'
 }
@@ -1353,7 +1358,18 @@ Table EntryExposureClaimEvent {
   eventType String [not null]
   evidenceJson Json [not null]
   createdAt DateTime [default: `now()`, not null]
+  externalSignalBrokerProtocol String
+  externalSignalBrokerSendResolutionId Int [unique]
+  externalSignalBrokerSendPermissionId Int [unique]
+  externalSignalOrderIntentId Int
+  externalSignalTradingAccountId Int
+  externalSignalClientOrderId String
+  preAdapterFenceVersion BigInt
   claim EntryExposureClaim [not null]
+  externalSignalBrokerSendResolution ExternalSignalBrokerSendResolution
+  externalSignalBrokerSendPermission ExternalSignalBrokerSendPermission
+  externalSignalOrderIntent OrderIntent
+  externalSignalTradingAccount TradingAccount
 }
 
 Table SystemEvent {
@@ -4177,6 +4193,14 @@ Ref: EntryExposureClaim.orderIntentId - OrderIntent.id [delete: Restrict]
 Ref: EntryExposureClaim.trackedPositionId - TrackedPosition.id [delete: Restrict]
 
 Ref: EntryExposureClaimEvent.claimId > EntryExposureClaim.id [delete: Restrict]
+
+Ref: EntryExposureClaimEvent.externalSignalBrokerSendResolutionId - ExternalSignalBrokerSendResolution.id [delete: Restrict]
+
+Ref: EntryExposureClaimEvent.externalSignalBrokerSendPermissionId - ExternalSignalBrokerSendPermission.id [delete: Restrict]
+
+Ref: EntryExposureClaimEvent.externalSignalOrderIntentId > OrderIntent.id [delete: Restrict]
+
+Ref: EntryExposureClaimEvent.externalSignalTradingAccountId > TradingAccount.id [delete: Restrict]
 
 Ref: SystemEvent.tradingAccountId > TradingAccount.id [delete: Set Null]
 

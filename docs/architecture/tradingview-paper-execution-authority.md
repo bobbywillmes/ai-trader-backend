@@ -645,6 +645,34 @@ serializes revocation and supersession, while avoiding the inverse policy-activa
 Both F and P sample `clock_timestamp()` only after their authority and dispatch-graph locks are
 acquired.
 
+## C3C.1B.1 atomic broker-send consumption foundation
+
+Transaction A remains database-only and broker-inert. A `CONSUMED`
+`ExternalSignalBrokerSendResolution` and its exact `ADAPTER_INVOCATION_STARTED` claim event are a
+single commit protocol. The marker is identified by relational columns and the discriminator
+`TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1`; a caller-controlled JSON label is never authority.
+Deferred bidirectional constraint triggers require exactly one side of each identity and permit
+either insertion order, while ordinary adapter markers remain unchanged.
+
+Both insert guards require `READ COMMITTED`, take the accepted dispatch-graph locks before the
+claim and fence, and revalidate current TradingView and Market Intelligence authority. They require
+the exact immutable send permission, PAPER BUY `submitting` intent, held `ENTRY_SUBMITTING` claim,
+matching account/security/worker/authorization/consumption/decision/obligation/client-order
+identity, no accepted EXIT or terminal cycle, no contradictory lifecycle or broker evidence, and
+at least five seconds on the database effective deadline.
+
+The resolution records the pre-A fence without advancing it. The existing marker trigger chain
+advances the fence twice: once through the claim tuple evidence fence and once through the claim
+event dispatch fence. Deferred checks require the final version to equal the recorded version plus
+two. A constraint trigger on later fence updates prevents an early `SET CONSTRAINTS ... IMMEDIATE`
+from admitting a subsequent extra mutation. No resolution fence trigger exists; P retains its
+independent `+1` contract.
+
+`WITHDRAWN_NEVER_SENT` remains refused pending C3C.1B.2. A committed `CONSUMED`/marker pair is
+possible-delivery evidence: it is never withdrawal proof, never authorizes a retry POST, and is not
+settled by the absence of `BrokerOrder`. Broker evidence quarantine, runtime writers, adapters,
+schedulers and transport remain unchanged.
+
 Lock-order carry-forward: a transaction must not mutate `EntryExposureClaim` or an
 `EntryExposureClaimEvent` and then acquire `OrderIntent FOR UPDATE`. That unsupported
 claim-first/intent-second sequence can deadlock with broker-evidence fencing. The existing

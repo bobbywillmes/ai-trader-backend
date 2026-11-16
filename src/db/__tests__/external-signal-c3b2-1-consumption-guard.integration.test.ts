@@ -383,7 +383,7 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
     }, 120_000);
   });
 
-  describe('C3C.1A broker-inert send-permission foundation', () => {
+  describe('C3C.1B.1 broker-inert atomic send-consumption foundation', () => {
     it('derives the exact effective deadline and advances the fence exactly once', async () => {
       const g = await ready('c3c-permission', { decision: false });
       await svc.worker.finalizeTradingViewDispatch(g.intentId);
@@ -460,21 +460,97 @@ type Pair = { ok: true; before: number; afterMi: number; after: number; consumed
       expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
     }, 120_000);
 
-    it('keeps permission rows append-only and refuses both resolution outcomes without a fence increment', async () => {
-      const g = await ready('c3c-resolution', { decision: false });
+    const consumedSql = `INSERT INTO "ExternalSignalBrokerSendResolution"
+      (id,"orderIntentId","permissionId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId",outcome,"evidenceJson")
+      VALUES ($1,$2,$3,$4,$5,'CONSUMED','{}') RETURNING *`;
+    const markerSql = `INSERT INTO "EntryExposureClaimEvent"
+      ("claimId","eventType","evidenceJson","externalSignalBrokerProtocol","externalSignalBrokerSendResolutionId",
+       "externalSignalBrokerSendPermissionId","externalSignalOrderIntentId","externalSignalTradingAccountId","externalSignalClientOrderId")
+      VALUES ($1,'ADAPTER_INVOCATION_STARTED',$2,'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1',$3,$4,$5,$6,$7) RETURNING *`;
+    const nextResolutionId = async (client: Client) => Number((await client.query(`SELECT nextval(pg_get_serial_sequence('"ExternalSignalBrokerSendResolution"','id')) AS id`)).rows[0].id);
+    const transactionA = async (g: Ready, order: 'resolution-first' | 'marker-first', options: { client?: Client; commit?: boolean; extraFence?: boolean } = {}) => {
+      const client = options.client ?? await connect();
+      await client.query('BEGIN');
+      try {
+        const permission = (await client.query(`SELECT * FROM "ExternalSignalBrokerSendPermission" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0];
+        const resolutionId = await nextResolutionId(client);
+        const resolution = () => client.query(consumedSql, [resolutionId, g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId]);
+        const marker = () => client.query(markerSql, [g.claimId, JSON.stringify({ protocol: 'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1' }), resolutionId, permission.id, g.intentId, paperId, g.clientOrderId]);
+        if (order === 'resolution-first') { await resolution(); await marker(); } else { await marker(); await resolution(); }
+        if (options.extraFence) await client.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'C3C_TEST_DIAGNOSTIC','{}')`, [g.claimId]);
+        if (options.commit === false) return { client, resolutionId };
+        await client.query('COMMIT');
+        return { client, resolutionId };
+      } catch (error) { await client.query('ROLLBACK').catch(() => undefined); throw error; }
+    };
+
+    it.each(['resolution-first', 'marker-first'] as const)('commits atomic A %s with the exact +2 fence delta and no broker evidence', async order => {
+      const g = await ready(`c3c-a-${order}`, { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      await insertSendPermission(g.intentId, await fenceNow(g.intentId));
+      const before = await fenceNow(g.intentId);
+      await transactionA(g, order);
+      expect(await fenceNow(g.intentId)).toBe(before + 2);
+      expect((await db.query(`SELECT count(*)::int r,(SELECT count(*)::int FROM "EntryExposureClaimEvent" WHERE "externalSignalOrderIntentId"=$1) e FROM "ExternalSignalBrokerSendResolution" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0]).toEqual({ r: 1, e: 1 });
+      expect((await db.query(`SELECT (SELECT count(*)::int FROM "BrokerOrder" WHERE "orderIntentId"=$1) o,(SELECT count(*)::int FROM "BrokerActivity" WHERE "orderIntentId"=$1) a`, [g.intentId])).rows[0]).toEqual({ o: 0, a: 0 });
+      expect(fetchSpy).not.toHaveBeenCalled();
+    }, 120_000);
+
+    it('refuses either half alone, forged JSON protocol, withdrawal, and an unexpected extra fence mutation', async () => {
+      const g = await ready('c3c-a-refusal', { decision: false });
       await svc.worker.finalizeTradingViewDispatch(g.intentId);
       const permission = (await insertSendPermission(g.intentId, await fenceNow(g.intentId))).rows[0];
-      const beforeResolution = await fenceNow(g.intentId);
-      for (const outcome of ['CONSUMED', 'WITHDRAWN_NEVER_SENT']) {
-        await expect(db.query(`INSERT INTO "ExternalSignalBrokerSendResolution"
-          ("orderIntentId","permissionId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId",outcome,"evidenceJson")
-          VALUES ($1,$2,$3,$4,$5,'{}')`, [g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId, outcome])).rejects.toThrow(/TRADINGVIEW_RESOLUTION_DISABLED_C3C1A/);
-      }
-      expect(await fenceNow(g.intentId)).toBe(beforeResolution);
-      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendResolution" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(0);
-      await expect(db.query(`UPDATE "ExternalSignalBrokerSendPermission" SET "clientOrderId"='changed' WHERE id=$1`, [permission.id])).rejects.toThrow(/append-only/);
-      await expect(db.query(`TRUNCATE "ExternalSignalBrokerSendPermission" CASCADE`)).rejects.toThrow(/append-only/);
-    });
+      const before = await fenceNow(g.intentId);
+      const resolutionId = await nextResolutionId(db);
+      await expect(db.query(consumedSql, [resolutionId, g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId])).rejects.toThrow(/INCOMPLETE_CONSUMED_GRAPH/);
+      await expect(db.query(markerSql, [g.claimId, JSON.stringify({ protocol: 'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1' }), resolutionId + 1, permission.id, g.intentId, paperId, g.clientOrderId])).rejects.toThrow(/REQUIRES_CONSUMED_RESOLUTION|foreign key/i);
+      await expect(db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson") VALUES ($1,'ADAPTER_INVOCATION_STARTED',$2)`, [g.claimId, JSON.stringify({ protocol: 'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1' })])).rejects.toThrow(/FORGED_JSON_PROTOCOL/);
+      await expect(db.query(markerSql, [g.claimId, JSON.stringify({ protocol: 'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1' }), resolutionId + 2, permission.id, g.intentId, paperId, `${g.clientOrderId}-forged`])).rejects.toThrow(/MARKER_IDENTITY_MISMATCH/);
+      await expect(db.query(`INSERT INTO "ExternalSignalBrokerSendResolution" ("orderIntentId","permissionId","tradingViewDispatchConsumptionId","marketPolicyDispatchConsumptionId",outcome,"evidenceJson") VALUES ($1,$2,$3,$4,'WITHDRAWN_NEVER_SENT','{}')`, [g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId])).rejects.toThrow(/WITHDRAWAL_DISABLED_C3C1B1/);
+      await expect(transactionA(g, 'resolution-first', { extraFence: true })).rejects.toThrow(/advance exactly twice/);
+      expect(await fenceNow(g.intentId)).toBe(before);
+    }, 120_000);
+
+    it('SET CONSTRAINTS IMMEDIATE cannot admit an incomplete graph', async () => {
+      const g = await ready('c3c-a-immediate', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      const permission = (await insertSendPermission(g.intentId, await fenceNow(g.intentId))).rows[0];
+      const client = await connect(); await client.query('BEGIN');
+      try {
+        const resolutionId = await nextResolutionId(client);
+        await client.query(consumedSql, [resolutionId, g.intentId, permission.id, permission.tradingViewDispatchConsumptionId, permission.marketPolicyDispatchConsumptionId]);
+        await expect(client.query('SET CONSTRAINTS ALL IMMEDIATE')).rejects.toThrow(/INCOMPLETE_CONSUMED_GRAPH/);
+      } finally { await client.query('ROLLBACK').catch(() => undefined); }
+    }, 120_000);
+
+    it('serializes two A attempts so exactly one complete pair commits and the fence advances only +2', async () => {
+      const g = await ready('c3c-a-racing-a', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      await insertSendPermission(g.intentId, await fenceNow(g.intentId));
+      const before = await fenceNow(g.intentId);
+      const results = await Promise.allSettled([transactionA(g, 'resolution-first'), transactionA(g, 'marker-first')]);
+      expect(results.filter(result => result.status === 'fulfilled')).toHaveLength(1);
+      expect(results.filter(result => result.status === 'rejected')).toHaveLength(1);
+      expect(await fenceNow(g.intentId)).toBe(before + 2);
+      expect((await db.query(`SELECT count(*)::int n FROM "ExternalSignalBrokerSendResolution" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0].n).toBe(1);
+    }, 120_000);
+
+    it('holds current authority locks through A commit, then permits revocation without deadlock or contradictory evidence', async () => {
+      await newDeadlocks(); // establish this test's cluster-local baseline when it is run in isolation
+      const g = await ready('c3c-a-racing-revoke', { decision: false });
+      await svc.worker.finalizeTradingViewDispatch(g.intentId);
+      await insertSendPermission(g.intentId, await fenceNow(g.intentId));
+      const before = await fenceNow(g.intentId);
+      const pending = await transactionA(g, 'resolution-first', { commit: false });
+      const base = await waiters();
+      const revocation = svc.authority.revokeExternalSignalEntryExecutionAuthorization(paperId, g.target.assignmentId, g.target.authorizationId, 'C3C A controlled race', ownerId);
+      await untilWaiters(base + 1, 'authorization revocation queued behind A');
+      await pending.client.query('COMMIT');
+      await expect(revocation).resolves.toBeDefined();
+      expect(await fenceNow(g.intentId)).toBe(before + 2);
+      expect((await db.query(`SELECT count(*)::int r,(SELECT count(*)::int FROM "EntryExposureClaimEvent" WHERE "externalSignalOrderIntentId"=$1) e FROM "ExternalSignalBrokerSendResolution" WHERE "orderIntentId"=$1`, [g.intentId])).rows[0]).toEqual({ r: 1, e: 1 });
+      expect(await newDeadlocks()).toBe(0);
+    }, 180_000);
 
     const staleAuthorityCases: Array<[string, (g: Ready) => Promise<(() => Promise<void>) | void>, RegExp]> = [
       ['account tradingBlocked', async () => { await db.query(`UPDATE "TradingAccount" SET "tradingBlocked"=true WHERE id=$1`, [paperId]); }, /TRADINGVIEW_ACCOUNT_NOT_ELIGIBLE/],
