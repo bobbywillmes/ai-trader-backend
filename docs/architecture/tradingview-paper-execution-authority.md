@@ -654,19 +654,25 @@ single commit protocol. The marker is identified by relational columns and the d
 Deferred bidirectional constraint triggers require exactly one side of each identity and permit
 either insertion order, while ordinary adapter markers remain unchanged.
 
-Both insert guards require `READ COMMITTED`, take the accepted dispatch-graph locks before the
-claim and fence, and revalidate current TradingView and Market Intelligence authority. They require
+Both insert paths require `READ COMMITTED` and revalidate current TradingView and Market
+Intelligence authority. Resolution-first takes the accepted dispatch-graph locks in its insert guard.
+Marker-first uses an earlier relational C3C prelude which sorts before the existing C2 delivery-fence
+trigger, so the canonical graph is locked before any claim or fence write; its later marker guard
+revalidates after the C2 claim update. They require
 the exact immutable send permission, PAPER BUY `submitting` intent, held `ENTRY_SUBMITTING` claim,
 matching account/security/worker/authorization/consumption/decision/obligation/client-order
 identity, no accepted EXIT or terminal cycle, no contradictory lifecycle or broker evidence, and
 at least five seconds on the database effective deadline.
 
-The resolution records the pre-A fence without advancing it. The existing marker trigger chain
+The permission's immutable `prePermissionFenceVersion = V` anchors A: P must have left the locked
+fence at exactly `V + 1`, and the resolution and marker both record that permission-derived start.
+The resolution does not advance it. The existing marker trigger chain
 advances the fence twice: once through the claim tuple evidence fence and once through the claim
-event dispatch fence. Deferred checks require the final version to equal the recorded version plus
-two. A constraint trigger on later fence updates prevents an early `SET CONSTRAINTS ... IMMEDIATE`
-from admitting a subsequent extra mutation. No resolution fence trigger exists; P retains its
-independent `+1` contract.
+event dispatch fence, ending at exactly `V + 3`. Deferred checks require the final version to equal
+the anchored start plus two. A fence constraint trigger prevents an early
+`SET CONSTRAINTS ... IMMEDIATE` from admitting a subsequent extra mutation, but only when the
+matching CONSUMED resolution was inserted by the current transaction; it is inert for all later
+lifecycle transactions. No resolution fence trigger exists; P retains its independent `+1` contract.
 
 `WITHDRAWN_NEVER_SENT` remains refused pending C3C.1B.2. A committed `CONSUMED`/marker pair is
 possible-delivery evidence: it is never withdrawal proof, never authorizes a retry POST, and is not
@@ -678,6 +684,11 @@ Lock-order carry-forward: a transaction must not mutate `EntryExposureClaim` or 
 claim-first/intent-second sequence can deadlock with broker-evidence fencing. The existing
 position-tracking flow must be corrected before TradingView broker-evidence quarantine is
 relaxed; this checkpoint does not perform that refactor.
+
+Security carry-forward: the database owner retains PostgreSQL's pre-existing ability to truncate
+`EntryExposureClaimEvent`. Runtime roles are not owners and the restricted-role suite proves they
+cannot truncate it. Removing owner bypass is a future privilege-cutover concern, not authority
+granted by this checkpoint.
 
 **Still hard-disabled before C3C.** No runtime path imports or calls
 `finalizeTradingViewDispatch()` or `processTradingViewOrderIntentForC2()`; no scheduler,

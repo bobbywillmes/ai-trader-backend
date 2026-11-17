@@ -36,6 +36,7 @@ describe('evaluateTriggerOrder (trigger firing order is name order)', () => {
   const AFTER_INSERT_ROW = 1 + 4;
   const row = (table: string, name: string, tgtype = BEFORE_INSERT_ROW): TriggerCatalogRow => ({ table_name: table, trigger_name: name, tgtype, enabled: 'O' });
   const shipped: TriggerCatalogRow[] = [
+    row('EntryExposureClaimEvent', 'EntryExposureClaimEvent_external_signal_c1_c3c_graph_lock'),
     row('EntryExposureClaimEvent', 'EntryExposureClaimEvent_external_signal_c2_delivery_fence'),
     row('EntryExposureClaimEvent', 'EntryExposureClaimEvent_external_signal_c2_not_sent_guard'),
     row('EntryExposureClaimEvent', 'EntryExposureClaimEvent_append_only', 1 + 2 + 8 + 16),
@@ -61,7 +62,7 @@ describe('evaluateTriggerOrder (trigger firing order is name order)', () => {
     for (const rule of TRIGGER_ORDER_INVARIANTS) expect(new Set(rule.sequence).size).toBe(rule.sequence.length);
   });
 
-  it('reports a new trigger that sorts between the delivery fence and the not-sent guard', () => {
+  it('reports a new trigger that sorts inside the protected C3C/C2 prelude sequence', () => {
     const violations = evaluateTriggerOrder([...shipped, row('EntryExposureClaimEvent', 'EntryExposureClaimEvent_external_signal_c2_hijack')]);
     expect(violations).toHaveLength(1);
     expect(violations[0]).toMatchObject({ table: 'EntryExposureClaimEvent', timing: 'BEFORE', event: 'INSERT' });

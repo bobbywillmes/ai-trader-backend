@@ -17,6 +17,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
   let baselineConfig: string;
   let upgradeConfig: string;
   let db: Client;
+  let historical: { intentId: number; claimId: number; fence: string; events: Array<{ id: number; eventType: string; evidenceJson: unknown; createdAt: Date }> };
 
   const prisma = (config: string, ...args: string[]) => spawnSync(process.execPath, ['node_modules/prisma/build/index.js', ...args, '--config', config], {
     env: { ...process.env, DATABASE_URL: disposable.url }, encoding: 'utf8', timeout: 180_000,
@@ -43,6 +44,24 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const baseline = prisma(baselineConfig, 'migrate', 'deploy');
     expect(baseline.status, `${baseline.stderr}\n${baseline.stdout}`).toBe(0);
     db = new Client({ connectionString: disposable.url }); await db.connect();
+    await db.query('BEGIN');
+    try {
+      await db.query(`SET LOCAL session_replication_role='replica'`);
+      const userId = (await db.query(`INSERT INTO "User" (email,"platformRole",enabled,"createdAt","updatedAt") VALUES ('c3c-upgrade-history@test','SYSTEM_OWNER',true,now(),now()) RETURNING id`)).rows[0].id as number;
+      const accountId = (await db.query(`INSERT INTO "TradingAccount" ("accountHolderUserId","displayName",environment,status,"tradingEnabled","killSwitchEnabled","tradingBlocked","createdAt","updatedAt") VALUES ($1,'C3C upgrade history','PAPER','ACTIVE',true,false,false,now(),now()) RETURNING id`, [userId])).rows[0].id as number;
+      const securityId = (await db.query(`INSERT INTO "Security" (symbol,name,enabled,"assetType","createdAt","updatedAt") VALUES ('C3CHIST','C3CHIST',true,'STOCK',now(),now()) RETURNING id`)).rows[0].id as number;
+      const intentId = (await db.query(`INSERT INTO "OrderIntent" (source,symbol,side,"orderType","timeInForce",status,"clientOrderId","rawRequestJson","tradingAccountId","createdAt","updatedAt") VALUES ('manual','C3CHIST','buy','market','day','submitting','c3c-upgrade-history','{}',$1,now()-interval '2 hours',now()-interval '2 hours') RETURNING id`, [accountId])).rows[0].id as number;
+      const claimId = (await db.query(`INSERT INTO "EntryExposureClaim" ("tradingAccountId","securityId","orderIntentId","ownerKey",status,"createdAt","updatedAt") VALUES ($1,$2,$3,'c3c-upgrade-history','UNRESOLVED',now()-interval '2 hours',now()-interval '2 hours') RETURNING id`, [accountId, securityId, intentId])).rows[0].id as number;
+      await db.query(`INSERT INTO "ExternalSignalDispatchFence" ("orderIntentId",version) VALUES ($1,9)`, [intentId]);
+      await db.query(`INSERT INTO "EntryExposureClaimEvent" ("claimId","eventType","evidenceJson","createdAt") VALUES
+        ($1,'ADAPTER_INVOCATION_STARTED','{"history":"expired"}',now()-interval '2 hours'),
+        ($1,'HISTORICAL_DIAGNOSTIC','{"history":"valid"}',now()-interval '1 minute')`, [claimId]);
+      await db.query('COMMIT');
+      historical = {
+        intentId, claimId, fence: '9',
+        events: (await db.query(`SELECT id,"eventType","evidenceJson","createdAt" FROM "EntryExposureClaimEvent" WHERE "claimId"=$1 ORDER BY id`, [claimId])).rows,
+      };
+    } catch (error) { await db.query('ROLLBACK'); throw error; }
   }, 240_000);
 
   afterAll(async () => {
@@ -55,6 +74,7 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     expect((await db.query(`SELECT count(*)::int n FROM "_prisma_migrations" WHERE finished_at IS NOT NULL`)).rows[0].n).toBe(110);
     expect((await db.query(`SELECT migration_name FROM "_prisma_migrations" WHERE finished_at IS NOT NULL ORDER BY migration_name DESC LIMIT 1`)).rows[0].migration_name).toBe(BASELINE);
     expect((await db.query(`SELECT count(*)::int n FROM information_schema.columns WHERE table_name='EntryExposureClaimEvent' AND column_name='externalSignalBrokerProtocol'`)).rows[0].n).toBe(0);
+    expect(historical.events.map(event => event.eventType)).toEqual(['ADAPTER_INVOCATION_STARTED', 'HISTORICAL_DIAGNOSTIC']);
   });
 
   it('applies only the forward C3C.1B.1 migration and leaves Prisma at zero drift', async () => {
@@ -65,5 +85,8 @@ const enabled = process.env.RUN_DATABASE_INTEGRITY_TESTS === '1' && process.env.
     const drift = prisma(upgradeConfig, 'migrate', 'diff', '--from-config-datasource', '--to-schema', 'prisma/schema.prisma', '--exit-code');
     expect(drift.status, `${drift.stderr}\n${drift.stdout}`).toBe(0);
     expect(drift.stdout).toContain('No difference detected');
+    expect((await db.query(`SELECT version::text FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=$1`, [historical.intentId])).rows[0].version).toBe(historical.fence);
+    expect((await db.query(`SELECT id,"eventType","evidenceJson","createdAt" FROM "EntryExposureClaimEvent" WHERE "claimId"=$1 ORDER BY id`, [historical.claimId])).rows).toEqual(historical.events);
+    expect((await db.query(`SELECT count(*)::int n FROM "EntryExposureClaimEvent" WHERE "claimId"=$1 AND "externalSignalBrokerProtocol" IS NOT NULL`, [historical.claimId])).rows[0].n).toBe(0);
   }, 240_000);
 });

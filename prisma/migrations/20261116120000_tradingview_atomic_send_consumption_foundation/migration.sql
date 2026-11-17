@@ -63,6 +63,42 @@ END $$;
 
 -- A C3C marker is relational evidence. The JSON protocol label is duplicated only for diagnostics and cannot
 -- create a marker by itself. Preserve every ordinary adapter marker exactly as before.
+-- This prelude sorts before the C2 delivery-fence trigger. A marked row is identified by its relational
+-- discriminator and immutable permission FK, so it obtains the canonical graph locks before C2 can touch the
+-- claim or fence. It is deliberately inert for ordinary adapter markers.
+CREATE FUNCTION external_signal_c3c_marker_lock_prelude() RETURNS trigger LANGUAGE plpgsql
+SET search_path = pg_catalog, public, pg_temp AS $$
+DECLARE
+  p "ExternalSignalBrokerSendPermission"%ROWTYPE;
+  fence_v bigint;
+  required_start bigint;
+BEGIN
+  IF NEW."externalSignalBrokerProtocol" IS DISTINCT FROM 'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1' THEN
+    RETURN NEW;
+  END IF;
+  IF current_setting('transaction_isolation') <> 'read committed' THEN
+    RAISE EXCEPTION 'TRADINGVIEW_CONSUMPTION_REQUIRES_READ_COMMITTED';
+  END IF;
+  SELECT * INTO p FROM "ExternalSignalBrokerSendPermission" WHERE id=NEW."externalSignalBrokerSendPermissionId";
+  IF p.id IS NULL THEN RAISE EXCEPTION 'TRADINGVIEW_C3C_PERMISSION_MISSING'; END IF;
+  PERFORM external_signal_lock_dispatch_graph(p."orderIntentId", p."marketPolicyDispatchDecisionId");
+  SELECT version INTO fence_v FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=p."orderIntentId" FOR UPDATE;
+  SELECT * INTO p FROM "ExternalSignalBrokerSendPermission" WHERE id=p.id FOR SHARE;
+  required_start := p."prePermissionFenceVersion" + 1;
+  IF fence_v IS DISTINCT FROM required_start THEN
+    RAISE EXCEPTION 'TRADINGVIEW_C3C_PERMISSION_FENCE_MISMATCH';
+  END IF;
+  PERFORM external_signal_validate_current_send_authority(p."orderIntentId", p."marketPolicyDispatchDecisionId");
+  IF p."effectiveDeadlineAt" - clock_timestamp() < external_signal_c3c_a_minimum_remaining() THEN
+    RAISE EXCEPTION 'TRADINGVIEW_C3C_DEADLINE_INSUFFICIENT';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE TRIGGER "EntryExposureClaimEvent_external_signal_c1_c3c_graph_lock"
+  BEFORE INSERT ON "EntryExposureClaimEvent" FOR EACH ROW
+  EXECUTE FUNCTION external_signal_c3c_marker_lock_prelude();
+
 CREATE FUNCTION external_signal_c3c_adapter_marker_guard() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE
@@ -70,6 +106,7 @@ DECLARE
   r "ExternalSignalBrokerSendResolution"%ROWTYPE;
   c "EntryExposureClaim"%ROWTYPE;
   fence_v bigint;
+  required_start bigint;
 BEGIN
   IF NEW."eventType" <> 'ADAPTER_INVOCATION_STARTED' THEN
     IF NEW."externalSignalBrokerProtocol" IS NOT NULL THEN RAISE EXCEPTION 'TRADINGVIEW_C3C_MARKER_EVENT_TYPE_INVALID'; END IF;
@@ -91,6 +128,7 @@ BEGIN
   SELECT * INTO c FROM "EntryExposureClaim" WHERE id=NEW."claimId";
   SELECT * INTO r FROM "ExternalSignalBrokerSendResolution" WHERE id=NEW."externalSignalBrokerSendResolutionId";
   PERFORM external_signal_validate_current_send_authority(p."orderIntentId", p."marketPolicyDispatchDecisionId");
+  required_start := p."prePermissionFenceVersion" + 1;
   IF ROW(NEW."claimId",NEW."externalSignalBrokerSendPermissionId",NEW."externalSignalOrderIntentId",
          NEW."externalSignalTradingAccountId",NEW."externalSignalClientOrderId") IS DISTINCT FROM
      ROW(p."entryExposureClaimId",p.id,p."orderIntentId",p."tradingAccountId",p."clientOrderId")
@@ -101,9 +139,10 @@ BEGIN
      OR r."orderIntentId" IS DISTINCT FROM p."orderIntentId") THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_MARKER_RESOLUTION_MISMATCH';
   END IF;
-  -- The existing C2 delivery fence is deliberately the first BEFORE INSERT trigger. It has already performed
-  -- the claim no-op update and the first of A's two fence increments when this guard runs.
-  IF r.id IS NOT NULL AND fence_v IS DISTINCT FROM r."preResolutionFenceVersion" + 1 THEN
+  -- The earlier C3C prelude locked the permission-anchored V+1 fence. The existing C2 delivery trigger then
+  -- performed the claim no-op update and the first of A's two fence increments before this guard runs.
+  IF fence_v IS DISTINCT FROM required_start + 1
+     OR (r.id IS NOT NULL AND r."preResolutionFenceVersion" IS DISTINCT FROM required_start) THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_STARTING_FENCE_MISMATCH';
   END IF;
   IF EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=c.id
@@ -114,7 +153,7 @@ BEGIN
   IF p."effectiveDeadlineAt" - clock_timestamp() < external_signal_c3c_a_minimum_remaining() THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_DEADLINE_INSUFFICIENT';
   END IF;
-  NEW."preAdapterFenceVersion" := coalesce(r."preResolutionFenceVersion", fence_v - 1);
+  NEW."preAdapterFenceVersion" := required_start;
   RETURN NEW;
 END $$;
 
@@ -134,6 +173,7 @@ DECLARE
   c "EntryExposureClaim"%ROWTYPE;
   marker "EntryExposureClaimEvent"%ROWTYPE;
   fence_v bigint;
+  required_start bigint;
 BEGIN
   IF NEW.outcome <> 'CONSUMED' THEN RAISE EXCEPTION 'TRADINGVIEW_WITHDRAWAL_DISABLED_C3C1B1'; END IF;
   IF current_setting('transaction_isolation') <> 'read committed' THEN RAISE EXCEPTION 'TRADINGVIEW_CONSUMPTION_REQUIRES_READ_COMMITTED'; END IF;
@@ -152,6 +192,7 @@ BEGIN
   SELECT * INTO c FROM "EntryExposureClaim" WHERE id=p."entryExposureClaimId";
   SELECT * INTO marker FROM "EntryExposureClaimEvent" WHERE "externalSignalBrokerSendResolutionId"=NEW.id;
   PERFORM external_signal_validate_current_send_authority(p."orderIntentId", p."marketPolicyDispatchDecisionId");
+  required_start := p."prePermissionFenceVersion" + 1;
   IF ROW(NEW."orderIntentId",NEW."permissionId",NEW."tradingViewDispatchConsumptionId",NEW."marketPolicyDispatchConsumptionId") IS DISTINCT FROM
      ROW(p."orderIntentId",p.id,p."tradingViewDispatchConsumptionId",p."marketPolicyDispatchConsumptionId")
      OR ROW(tv."orderIntentId",tv."marketPolicyDispatchConsumptionId",mi."orderIntentId",mi."decisionId") IS DISTINCT FROM
@@ -160,7 +201,9 @@ BEGIN
         ROW(tv."executionObligationId",tv."workerClaimId",c.id,i."tradingAccountId",c."securityId",i."clientOrderId") THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_RESOLUTION_IDENTITY_MISMATCH';
   END IF;
-  IF marker.id IS NOT NULL AND marker."preAdapterFenceVersion" IS DISTINCT FROM fence_v - 2 THEN
+  IF (marker.id IS NULL AND fence_v IS DISTINCT FROM required_start)
+     OR (marker.id IS NOT NULL AND (marker."preAdapterFenceVersion" IS DISTINCT FROM required_start
+       OR fence_v IS DISTINCT FROM required_start + 2)) THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_STARTING_FENCE_MISMATCH';
   END IF;
   IF EXISTS (SELECT 1 FROM "EntryExposureClaimEvent" e WHERE e."claimId"=c.id
@@ -173,17 +216,20 @@ BEGIN
   IF p."effectiveDeadlineAt" - clock_timestamp() < external_signal_c3c_a_minimum_remaining() THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_DEADLINE_INSUFFICIENT';
   END IF;
-  NEW."preResolutionFenceVersion" := coalesce(marker."preAdapterFenceVersion", fence_v);
+  NEW."preResolutionFenceVersion" := required_start;
   NEW."resolvedAt" := clock_timestamp();
   RETURN NEW;
 END $$;
 
--- The commit check is relational and bidirectional. It also owns the exact +2 postcondition. Attaching the
--- same check to fence updates prevents SET CONSTRAINTS ... IMMEDIATE followed by an extra fenced mutation.
+-- The commit check is relational and bidirectional. It also owns the exact permission-anchored +2
+-- postcondition. The fence trigger is transaction-scoped: it participates only while the matching immutable
+-- CONSUMED resolution was inserted by the current top-level transaction. This catches fenced mutations before
+-- or after either A insert without imposing A's delta on later lifecycle transactions.
 CREATE FUNCTION external_signal_c3c_consumed_graph_check() RETURNS trigger LANGUAGE plpgsql
 SET search_path = pg_catalog, public, pg_temp AS $$
 DECLARE intent_id integer; r "ExternalSignalBrokerSendResolution"%ROWTYPE;
   p "ExternalSignalBrokerSendPermission"%ROWTYPE; e "EntryExposureClaimEvent"%ROWTYPE; fence_v bigint;
+  resolution_is_current_xact boolean;
 BEGIN
   IF TG_TABLE_NAME = 'ExternalSignalBrokerSendResolution' THEN intent_id := (to_jsonb(NEW)->>'orderIntentId')::integer;
   ELSIF TG_TABLE_NAME = 'EntryExposureClaimEvent' THEN intent_id := (to_jsonb(NEW)->>'externalSignalOrderIntentId')::integer;
@@ -196,6 +242,9 @@ BEGIN
     END IF;
     RETURN NULL;
   END IF;
+  SELECT xmin::text = (pg_current_xact_id()::text::bigint % 4294967296)::text
+    INTO resolution_is_current_xact FROM "ExternalSignalBrokerSendResolution" WHERE id=r.id;
+  IF TG_TABLE_NAME = 'ExternalSignalDispatchFence' AND NOT resolution_is_current_xact THEN RETURN NULL; END IF;
   SELECT * INTO p FROM "ExternalSignalBrokerSendPermission" WHERE id=r."permissionId";
   SELECT * INTO e FROM "EntryExposureClaimEvent" WHERE "externalSignalBrokerSendResolutionId"=r.id;
   SELECT version INTO fence_v FROM "ExternalSignalDispatchFence" WHERE "orderIntentId"=intent_id;
@@ -207,6 +256,9 @@ BEGIN
         ROW(p."entryExposureClaimId",'ADAPTER_INVOCATION_STARTED'::text,'TRADINGVIEW_C3C_ADAPTER_INVOCATION_STARTED_V1'::text,
             p.id,p."orderIntentId",p."tradingAccountId",p."clientOrderId") THEN
     RAISE EXCEPTION 'TRADINGVIEW_C3C_CONSUMED_GRAPH_MISMATCH';
+  END IF;
+  IF r."preResolutionFenceVersion" IS DISTINCT FROM p."prePermissionFenceVersion" + 1 THEN
+    RAISE EXCEPTION 'TRADINGVIEW_C3C_PERMISSION_FENCE_MISMATCH';
   END IF;
   IF fence_v IS DISTINCT FROM r."preResolutionFenceVersion" + 2 THEN
     RAISE EXCEPTION 'TradingView consumed marker fence did not advance exactly twice (stored %, current %)',r."preResolutionFenceVersion",fence_v;

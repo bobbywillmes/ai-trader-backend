@@ -1303,7 +1303,8 @@ Table ExternalSignalBrokerSendResolution {
   marketPolicyDispatchConsumption MarketPolicyBrokerDispatchConsumption [not null]
   adapterInvocationMarker EntryExposureClaimEvent
 
-  Note: 'C3C.1A immutable terminal identity. No runtime resolution writer exists in this checkpoint.'
+  Note: 'C3C.1B.1 immutable terminal identity. Only atomic CONSUMED/adapter-marker evidence is database-permitted;
+no runtime resolution writer exists and withdrawal remains disabled in this checkpoint.'
 }
 
 Table BrokerOrder {

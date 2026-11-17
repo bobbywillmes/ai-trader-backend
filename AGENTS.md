@@ -415,7 +415,9 @@ combined claim transaction and deferred lifecycle work are implemented. See
 Phase 4A.2C3C.1B.1 adds the broker-inert Transaction A database contract. Exactly one
 `CONSUMED` send resolution and its relationally identified C3C
 `ADAPTER_INVOCATION_STARTED` marker must commit together under current authority and the canonical
-dispatch graph locks. The marker supplies the existing exact `+2` fence advancement; the resolution
+dispatch graph locks. An early relational marker prelude takes that graph before the existing C2
+claim/fence triggers. The immutable permission anchors A at P's `V + 1`; the marker supplies the
+existing exact `+2` advancement to `V + 3`, enforced only in A's transaction, while the resolution
 does not advance the fence. Withdrawal, broker evidence, runtime writers, adapter capability and
 transport remain disabled. A committed pair means possible delivery and permanently prohibits a
 second POST. See `docs/architecture/tradingview-paper-execution-authority.md`.

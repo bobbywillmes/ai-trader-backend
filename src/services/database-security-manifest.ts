@@ -350,7 +350,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "b1ff9f878b7af6223843628dc4e874251d5d99abdcb33520c6a1e69372f0bde4"
+      "bodySha256": "5c9f49c318a8ed9d816894cd3d1095d2f72b08cccca93d53b068204fec6a0cd8"
     },
     "external_signal_broker_worker_claim_guard()": {
       "language": "plpgsql",
@@ -395,7 +395,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "c1950bac64b225d6b14a833868f81ab2fca3fb7b693ba2cb23254d9edd726948"
+      "bodySha256": "eb07a552232bcd75e075f7ac1c1d00ead90aabdbcceea0d8dc08ceb0a3a6b128"
     },
     "external_signal_c3c_consumed_graph_check()": {
       "language": "plpgsql",
@@ -404,7 +404,7 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "securityDefiner": false,
       "strict": false,
       "result": "trigger",
-      "bodySha256": "f2e583e7ebd6eaea74a58c21151debaddd851345813736a7ac971b9ff5c2ddae"
+      "bodySha256": "a52297b3f8e2e7adc7045a3dfaaa4c89ca3020f28277bfb924c0bd2c56f8a57e"
     },
     "external_signal_c3c_f_minimum_remaining()": {
       "language": "sql",
@@ -414,6 +414,15 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "strict": false,
       "result": "interval",
       "bodySha256": "20b5737f47f58583cceb4222b85052513f4be31e273f6d0abd4887245a40e6fb"
+    },
+    "external_signal_c3c_marker_lock_prelude()": {
+      "language": "plpgsql",
+      "volatility": "v",
+      "kind": "f",
+      "securityDefiner": false,
+      "strict": false,
+      "result": "trigger",
+      "bodySha256": "ff7beaea548d2e88020aeb5aae94fd120805ec6d13549a7154de86ad7955a93d"
     },
     "external_signal_c3c_p_minimum_remaining()": {
       "language": "sql",
@@ -1604,6 +1613,19 @@ export const SECURITY_MANIFEST: { version: string; migration: string; functions:
       "function": "external_signal_dispatch_fence_bump_claim_event()",
       "enabled": "O",
       "timing": "AFTER",
+      "events": "INSERT",
+      "scope": "ROW",
+      "when": "",
+      "columns": "",
+      "arguments": "",
+      "deferrable": false,
+      "initiallyDeferred": false,
+      "transitionTables": "/"
+    },
+    "EntryExposureClaimEvent/EntryExposureClaimEvent_external_signal_c1_c3c_graph_lock": {
+      "function": "external_signal_c3c_marker_lock_prelude()",
+      "enabled": "O",
+      "timing": "BEFORE",
       "events": "INSERT",
       "scope": "ROW",
       "when": "",
